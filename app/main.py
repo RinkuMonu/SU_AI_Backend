@@ -84,3 +84,5 @@ app.include_router(fashion_router)
 @app.get("/")
 async def root():
     return {"message": "Welcome to SevenUnique AI API"}
+
+
