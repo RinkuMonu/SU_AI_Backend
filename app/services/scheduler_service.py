@@ -64,7 +64,8 @@ class SchedulerService:
     async def execute_pending_posts(self):
         """
         Scans the `post_queue` for posts scheduled to go out now or in the past,
-        and publishes them to Instagram.
+        and publishes them to Instagram (or other platforms).
+        Supports both new Instagram Login flow and legacy business token flow.
         """
         now = datetime.now(timezone.utc)
         logger.info(f"Running executor job at {now.isoformat()}")
@@ -81,31 +82,78 @@ class SchedulerService:
                 return
                 
             from app.services.social_service import SocialService
+            from app.services.instagram_service import InstagramService
             social_svc = SocialService()
             
             for item in pending_items:
                 item_id = item["_id"]
-                content_id = item["content_id"]
-                user_id = item["user_id"]
+                content_id = item.get("content_id", "")
+                user_id = item.get("user_id", "")
                 platform = item.get("platform", "instagram")
+                media_type = item.get("media_type", "image")
                 
                 logger.info(f"Autopilot publishing content {content_id} for user {user_id} on {platform}")
                 
                 try:
                     if platform == "instagram":
-                        await social_svc.publish_to_instagram(self.db, content_id, user_id)
+                        # Try new Instagram Login flow first
+                        ig_conn = await self.db["instagram_connections"].find_one({
+                            "user_id": user_id,
+                            "platform": "instagram",
+                            "connected": True,
+                        })
+                        
+                        if ig_conn:
+                            # New flow: use Instagram Login service
+                            if media_type == "reel" and item.get("video_url"):
+                                await InstagramService.publish_reel(
+                                    db=self.db,
+                                    user_id=user_id,
+                                    video_url=item["video_url"],
+                                    caption=item.get("caption", ""),
+                                    content_id=content_id,
+                                )
+                            else:
+                                # Image post
+                                image_url = item.get("image_url", "")
+                                if not image_url and content_id:
+                                    # Try to get image from content record
+                                    from bson import ObjectId as OID
+                                    if OID.is_valid(content_id):
+                                        content = await self.db["contents"].find_one({"_id": OID(content_id)})
+                                        if content:
+                                            image_url = content.get("image_url", "")
+                                            if not item.get("caption"):
+                                                item["caption"] = content.get("caption", "")
+                                
+                                if image_url:
+                                    await InstagramService.publish_image(
+                                        db=self.db,
+                                        user_id=user_id,
+                                        image_url=image_url,
+                                        caption=item.get("caption", ""),
+                                        content_id=content_id,
+                                    )
+                                else:
+                                    raise Exception("No image URL available for Instagram post")
+                        else:
+                            # Legacy flow: business-level token
+                            await social_svc.publish_to_instagram(self.db, content_id, user_id)
                         
                     # Mark success
                     await self.db["post_queue"].update_one(
                         {"_id": item_id},
-                        {"$set": {"status": "published", "error_message": None}}
+                        {"$set": {"status": "published", "error_message": None, "published_at": now}}
                     )
                 except Exception as post_err:
                     logger.error(f"Failed to auto-publish item {item_id}: {post_err}")
-                    # Mark failure
+                    # Mark failure — never log tokens
+                    safe_error = str(post_err)
+                    if "access_token" in safe_error.lower():
+                        safe_error = "Publishing failed due to authentication error"
                     await self.db["post_queue"].update_one(
                         {"_id": item_id},
-                        {"$set": {"status": "failed", "error_message": str(post_err)}}
+                        {"$set": {"status": "failed", "error_message": safe_error}}
                     )
                     
         except Exception as e:

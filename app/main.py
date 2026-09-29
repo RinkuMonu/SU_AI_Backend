@@ -17,6 +17,7 @@ from app.api.endpoints.subscription import router as subscription_router
 from app.api.endpoints.festivals import router as festivals_router
 from app.api.endpoints.agent import router as agent_router
 from app.api.endpoints.fashion import router as fashion_router
+from app.api.endpoints.instagram import router as instagram_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -80,6 +81,7 @@ app.include_router(subscription_router)
 app.include_router(festivals_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(fashion_router)
+app.include_router(instagram_router)
 
 @app.get("/")
 async def root():
