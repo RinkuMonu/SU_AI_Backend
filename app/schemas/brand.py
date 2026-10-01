@@ -6,7 +6,7 @@ from pydantic import BaseModel, EmailStr, Field, HttpUrl
 
 class ContactInfo(BaseModel):
     phone: Optional[str] = None
-    email: Optional[EmailStr] = None
+    email: Optional[str] = None
 
 
 class LocationInfo(BaseModel):
@@ -17,15 +17,9 @@ class LocationInfo(BaseModel):
 class BrandCreate(BaseModel):
     logo_url: Optional[str] = None
 
-    primary_color: Optional[str] = Field(
-        default=None,
-        pattern=r"^#[0-9A-Fa-f]{6}$"
-    )
+    primary_color: Optional[str] = None
 
-    secondary_color: Optional[str] = Field(
-        default=None,
-        pattern=r"^#[0-9A-Fa-f]{6}$"
-    )
+    secondary_color: Optional[str] = None
 
     font: Optional[str] = None
 
@@ -35,7 +29,7 @@ class BrandCreate(BaseModel):
 
     target_audience: Optional[str] = None
 
-    website: Optional[HttpUrl] = None
+    website: Optional[str] = None
 
     instagram: Optional[str] = None
 
@@ -49,15 +43,9 @@ class BrandCreate(BaseModel):
 class BrandUpdate(BaseModel):
     logo_url: Optional[str] = None
 
-    primary_color: Optional[str] = Field(
-        default=None,
-        pattern=r"^#[0-9A-Fa-f]{6}$"
-    )
+    primary_color: Optional[str] = None
 
-    secondary_color: Optional[str] = Field(
-        default=None,
-        pattern=r"^#[0-9A-Fa-f]{6}$"
-    )
+    secondary_color: Optional[str] = None
 
     font: Optional[str] = None
 
@@ -67,7 +55,7 @@ class BrandUpdate(BaseModel):
 
     target_audience: Optional[str] = None
 
-    website: Optional[HttpUrl] = None
+    website: Optional[str] = None
 
     instagram: Optional[str] = None
 
