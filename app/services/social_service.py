@@ -5,6 +5,11 @@ from bson import ObjectId
 class SocialService:
     @staticmethod
     async def publish_to_instagram(db, business_id: str, content_id: str):
+        """
+        Legacy Instagram publishing via business-level tokens.
+        For new integrations, prefer InstagramService (instagram_service.py)
+        which uses Instagram Login with encrypted tokens.
+        """
         business = await db["businesses"].find_one({"_id": ObjectId(business_id)})
         if not business:
             raise HTTPException(status_code=404, detail="Business not found")
@@ -42,8 +47,8 @@ class SocialService:
             
         async with httpx.AsyncClient() as client:
             try:
-                # 1. Create Media Container
-                create_url = f"https://graph.facebook.com/v19.0/{ig_account_id}/media"
+                # 1. Create Media Container (using graph.instagram.com for Instagram Login flow)
+                create_url = f"https://graph.instagram.com/{ig_account_id}/media"
                 payload = {
                     "image_url": image_url,
                     "caption": full_caption,
@@ -54,7 +59,7 @@ class SocialService:
                 creation_id = res.json().get("id")
                 
                 # 2. Publish Media Container
-                publish_url = f"https://graph.facebook.com/v19.0/{ig_account_id}/media_publish"
+                publish_url = f"https://graph.instagram.com/{ig_account_id}/media_publish"
                 pub_payload = {
                     "creation_id": creation_id,
                     "access_token": ig_access_token
@@ -66,10 +71,9 @@ class SocialService:
                 
             except httpx.HTTPStatusError as e:
                 err_detail = e.response.json()
-                print(f"Instagram API Error: {err_detail}")
+                # Never log the access token
                 raise HTTPException(status_code=400, detail=f"Instagram API Error: {err_detail.get('error', {}).get('message', str(e))}")
             except Exception as e:
-                print(f"Failed to publish to Instagram: {e}")
                 raise HTTPException(status_code=500, detail="Failed to communicate with Instagram API")
 
     @staticmethod

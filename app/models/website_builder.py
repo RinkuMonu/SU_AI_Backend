@@ -10,6 +10,7 @@ class ChatMessage(BaseModel):
 class WebsiteProject(MongoBaseModel):
     user_id: str
     business_id: Optional[str] = None
+    business_name: Optional[str] = None
     session_id: str
     template_id: Optional[str] = None
     language: str

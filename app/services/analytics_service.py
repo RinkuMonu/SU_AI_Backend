@@ -31,7 +31,6 @@ Marketing Score (deterministic, 0–100)
 ======================================
     content_activity  = min(posts_in_range * 5, 25)
     ai_usage          = min(total_generations_in_range * 2, 25)
-    calendar_usage    = 15 if calendars_in_range > 0 else 0
     product_catalogue = min(current_product_count * 5, 20)
     reel_activity     = min(reels_in_range * 5, 15)
     score             = min(sum, 100)
@@ -142,12 +141,7 @@ class AnalyticsService:
                 {"business_id": ObjectId(business_id)},
             )
 
-        calendar_count = await self._count(
-            "calendars",
-            {"user_id": user_id, "created_at": {"$gte": start_date}},
-        )
-
-        business = {"products": product_count, "calendars": calendar_count}
+        business = {"products": product_count}
 
         # ── Daily activity buckets ───────────────────────────────────
         activity = await self._daily_activity(
@@ -164,13 +158,13 @@ class AnalyticsService:
 
         # ── Marketing score ──────────────────────────────────────────
         marketing_score = self._marketing_score(
-            posts, reels, total_generations, calendar_count, product_count,
+            posts, reels, total_generations, product_count,
         )
 
         # ── Recommendation ───────────────────────────────────────────
         recommendation = self._recommendation(
             posts, reels, images, photoshoots, captions,
-            calendar_count, product_count,
+            product_count,
         )
 
         return {
@@ -356,7 +350,6 @@ class AnalyticsService:
         posts: int,
         reels: int,
         total_generations: int,
-        calendars: int,
         products: int,
     ) -> dict:
         """
@@ -367,21 +360,18 @@ class AnalyticsService:
         Formula:
             content_activity  = min(posts_in_range * 5, 25)
             ai_usage          = min(total_generations_in_range * 2, 25)
-            calendar_usage    = 15 if calendars_in_range > 0 else 0
             product_catalogue = min(current_product_count * 5, 20)
             reel_activity     = min(reels_in_range * 5, 15)
             score             = min(sum, 100)
         """
         content_activity = min(posts * 5, 25)
         ai_usage_pts = min(total_generations * 2, 25)
-        calendar_usage = 15 if calendars > 0 else 0
         product_catalogue = min(products * 5, 20)
         reel_activity = min(reels * 5, 15)
 
         raw = (
             content_activity
             + ai_usage_pts
-            + calendar_usage
             + product_catalogue
             + reel_activity
         )
@@ -392,14 +382,12 @@ class AnalyticsService:
             "breakdown": {
                 "content_activity": content_activity,
                 "ai_usage": ai_usage_pts,
-                "calendar_usage": calendar_usage,
                 "product_catalogue": product_catalogue,
                 "reel_activity": reel_activity,
             },
             "formula": (
                 "content_activity = min(posts_in_range * 5, 25); "
                 "ai_usage = min(total_generations_in_range * 2, 25); "
-                "calendar_usage = 15 if calendars_in_range > 0 else 0; "
                 "product_catalogue = min(current_product_count * 5, 20); "
                 "reel_activity = min(reels_in_range * 5, 15); "
                 "score = min(sum, 100)"
@@ -417,7 +405,6 @@ class AnalyticsService:
         images: int,
         photoshoots: int,
         captions: int,
-        calendars: int,
         products: int,
     ) -> dict:
         """
@@ -457,15 +444,7 @@ class AnalyticsService:
                 "type": "reels",
             }
 
-        if calendars == 0:
-            return {
-                "text": (
-                    "Plan your content ahead with a 30-day social media "
-                    "calendar. Consistent posting is key to growing your "
-                    "audience."
-                ),
-                "type": "calendar",
-            }
+
 
         if photoshoots == 0:
             return {

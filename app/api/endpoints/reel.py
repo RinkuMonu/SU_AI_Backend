@@ -9,20 +9,21 @@ from app.services.brand_service import get_brand_kit
 from app.services.product_service import get_products, serialize_product
 from app.services.reel_service import ReelService
 
+from app.api.dependencies import require_feature, require_credits, require_usage_limit
+from app.services.subscription_service import SubscriptionService
+from app.services.credit_service import CreditService
+
 router = APIRouter(
     prefix="/api/v1/content",
     tags=["Reels"]
 )
 
-@router.post("/generate-reel", response_model=ReelGenerationResponse)
+@router.post("/generate-reel", response_model=ReelGenerationResponse, dependencies=[Depends(require_feature("ai_reel")), Depends(require_credits("ai_reel")), Depends(require_usage_limit("reel"))])
 async def generate_reel(
     request: GenerateReelRequest,
     current_user = Depends(get_current_user)
 ):
     db = get_database()
-    
-    from app.services.credit_service import CreditService
-    await CreditService.check_credits(db, current_user.id, "reel_generation")
     
     business = await BusinessService.get_business_by_owner(str(current_user.id))
     if not business:
@@ -78,6 +79,10 @@ async def generate_reel(
             brand=brand
         )
         
+        # Deduct credits & log usage
+        await CreditService.deduct_credits(db, str(current_user.id), "ai_reel")
+        await SubscriptionService.increment_usage(db, str(current_user.id), "reel")
+        
         return ReelGenerationResponse(
             success=True,
             job_id=job_id,
@@ -86,7 +91,7 @@ async def generate_reel(
         )
     except Exception as exc:
         # Refund if queueing failed
-        await CreditService.refund_credits(db, current_user.id, "reel_generation")
+        await CreditService.refund_credits(db, str(current_user.id), "ai_reel")
         raise HTTPException(status_code=500, detail=f"Failed to start reel generation: {exc}")
 
 @router.get("/reel/{job_id}/status", response_model=ReelJobStatus)

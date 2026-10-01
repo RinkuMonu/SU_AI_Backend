@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     FASHION_IMAGE_API_KEY: str | None = None
     VIRTUAL_TRYON_PROVIDER: str = ""  # fashn_ai | replicate | huggingface
     VIRTUAL_TRYON_API_KEY: str | None = None
+
+    # Instagram API with Instagram Login
+    INSTAGRAM_APP_ID: str | None = None
+    INSTAGRAM_APP_SECRET: str | None = None
+    INSTAGRAM_API_VERSION: str = "v21.0"
+    INSTAGRAM_REDIRECT_URI: str = "http://localhost:8000/api/instagram/callback"
+
+    # Facebook API
+    FACEBOOK_APP_ID: str | None = None
+    FACEBOOK_APP_SECRET: str | None = None
+    FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
+
     
     # SMTP Configuration
     SMTP_HOST: str | None = None

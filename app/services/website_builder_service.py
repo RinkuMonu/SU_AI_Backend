@@ -23,6 +23,16 @@ class WebsiteBuilderService:
         return db["website_projects"]
 
     @staticmethod
+    async def get_website(project_id: str, user_id: str):
+        collection = await WebsiteBuilderService.get_project_collection()
+        if not ObjectId.is_valid(project_id):
+            return None
+        doc = await collection.find_one({"_id": ObjectId(project_id), "user_id": user_id})
+        if doc:
+            return WebsiteProject(**doc)
+        return None
+
+    @staticmethod
     async def save_session(session: WebsiteBuilderSession):
         collection = await WebsiteBuilderService.get_session_collection()
         update_data = session.model_dump(by_alias=True, exclude={"id", "created_at"})
@@ -32,9 +42,7 @@ class WebsiteBuilderService:
     @staticmethod
     async def create_session(user_id: str) -> WebsiteBuilderSession:
         collection = await WebsiteBuilderService.get_session_collection()
-        existing_doc = await collection.find_one({"user_id": user_id, "status": "active"})
-        if existing_doc:
-            return WebsiteBuilderSession(**existing_doc)
+        await collection.update_many({"user_id": user_id, "status": "active"}, {"$set": {"status": "archived"}})
 
         session = WebsiteBuilderSession(
             user_id=user_id,
@@ -42,7 +50,7 @@ class WebsiteBuilderService:
                 {
                     "id": str(uuid.uuid4()),
                     "role": "ai",
-                    "content": "Hi! I can build your business website. Let's create it together. Which language do you prefer?",
+                    "content": "Hi! I can build your custom website. Tell me what kind of website you want to create (e.g. online clothing website, coffee shop, real estate)!",
                     "type": "text"
                 }
             ]
@@ -50,7 +58,6 @@ class WebsiteBuilderService:
         doc = session.model_dump(by_alias=True, exclude={"id"})
         result = await collection.insert_one(doc)
         session.id = str(result.inserted_id)
-        await WebsiteBuilderService.load_existing_user_data(user_id, session)
         return session
 
     @staticmethod
@@ -111,31 +118,44 @@ class WebsiteBuilderService:
         if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]):
             return await WebsiteBuilderService.generate_recommendations(session)
             
-        if "build my website" in lower_msg:
+        if any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
+            return await WebsiteBuilderService.generate_website(session)
+            
+        if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
             return await WebsiteBuilderService.generate_website(session)
             
         ai = AIProviderFactory.get_provider()
-        extract_prompt = f"Extract structured fields from user message: '{message}'. Current collected data: {json.dumps(session.collected_data, default=str)}. Do NOT invent data. Return JSON with extracted fields."
-        extracted = await ai.generate_json(extract_prompt, system_prompt="Extract business details (name, category, location, phone, products) from user messages.")
+        extract_prompt = f"Extract structured fields from user message: '{message}'. Current collected data: {json.dumps(session.collected_data, default=str)}. Do NOT invent fake data. Return JSON with extracted fields using exactly these keys: 'Business Name', 'Business Category', 'Location', 'Phone', 'Products'."
+        extracted = await ai.generate_json(extract_prompt, system_prompt="Extract business details from user messages using strict keys.")
         if extracted and not extracted.get("error"):
-            session.collected_data.update(extracted)
-            
-        chat_prompt = f"User said: '{message}'. We have this data: {json.dumps(session.collected_data, default=str)}. Respond in {session.language or 'English'}. If we have Name and Category, summarize and ask if they want to 'Recommend' a template or 'Build My Website'. Or ask for missing info."
-        chat_result = await ai.generate_text(chat_prompt, system_prompt="You are a helpful AI website builder assistant. Keep it short and conversational.")
-        reply_msg = chat_result.get("text", "Got it. Tell me more.")
+            for k, v in extracted.items():
+                if v and str(v).strip() not in ["None", "null", ""]:
+                    session.collected_data[k] = str(v).strip()
+                    
+        b_name = session.collected_data.get("Business Name")
+        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business"]:
+            b_cat = session.collected_data.get("Business Category")
+            if b_cat and str(b_cat).strip() not in ["None", "null"]:
+                session.collected_data["Business Name"] = str(b_cat).strip().title()
+            else:
+                clean_msg = message.replace("website", "").replace("build", "").replace("create", "").replace("my", "").replace("want", "").replace("for", "").strip().title()
+                if clean_msg:
+                    session.collected_data["Business Name"] = clean_msg
+                    session.collected_data["Business Category"] = clean_msg
+
+        chat_prompt = f"User prompt: '{message}'. Collected details: {json.dumps(session.collected_data, default=str)}. Respond in {session.language or 'English'}. Acknowledge their website request, summarize what brand/topic will be built, and ask if they would like to 'Recommend' templates or 'Build My Website'."
+        chat_result = await ai.generate_text(chat_prompt, system_prompt="You are an expert AI website builder assistant. Keep it short, friendly, and enthusiastic.")
+        reply_msg = chat_result.get("text", f"Awesome! I will create your {session.collected_data.get('Business Name', 'website')}. Would you like me to recommend templates or build your website directly?")
         
-        actions = []
-        if "Business Name" in session.collected_data and "Business Category" in session.collected_data:
-             actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
+        actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
              
         msg_obj = {
             "id": str(uuid.uuid4()),
             "role": "ai",
             "content": reply_msg,
-            "type": "confirmation" if actions else "text",
+            "type": "confirmation",
+            "options": actions
         }
-        if actions:
-            msg_obj["options"] = actions
             
         session.messages.append(msg_obj)
         await WebsiteBuilderService.save_session(session)
@@ -151,14 +171,14 @@ class WebsiteBuilderService:
         recs = result.get("recommendations", [])
         if len(recs) != 3:
             recs = [
-                {"id": "rec1", "name": "Premium Luxury", "description": "High end look", "reason": "Fits your brand", "palette": "Black/Gold", "style": "Luxury"},
-                {"id": "rec2", "name": "Modern Minimal", "description": "Clean look", "reason": "Contemporary style", "palette": "Blue/White", "style": "Minimal"},
-                {"id": "rec3", "name": "Vibrant Casual", "description": "Energetic", "reason": "Attracts youth", "palette": "Orange/Yellow", "style": "Bold"}
+                {"id": "rec1", "name": "Modern Fashion", "description": "Sleek and stylish layout", "reason": "Fits your online brand", "palette": "Purple/Black", "style": "Modern"},
+                {"id": "rec2", "name": "Clean Minimal", "description": "Minimalist grid showcase", "reason": "Focus on products", "palette": "Blue/White", "style": "Minimal"},
+                {"id": "rec3", "name": "Vibrant Store", "description": "Energetic and bold", "reason": "Attracts customer engagement", "palette": "Pink/Gold", "style": "Bold"}
             ]
         
         session.recommendations = recs
         session.current_step = 5
-        reply_msg = "Here are 3 recommendations for you. Please select one."
+        reply_msg = "Here are 3 website style recommendations tailored for your prompt. Please select one to proceed!"
         
         msg_obj = {
             "id": str(uuid.uuid4()),
@@ -182,7 +202,7 @@ class WebsiteBuilderService:
         session.messages.append({
             "id": str(uuid.uuid4()),
             "role": "ai",
-            "content": f"You selected {template_id}. Ready to generate?",
+            "content": f"You selected the {template_id} template! Click 'Build My Website' to generate your site.",
             "type": "summary",
             "data": {
                 "business": session.collected_data.get("Business Name", "Your Business"),
@@ -199,35 +219,161 @@ class WebsiteBuilderService:
         session.messages.append({
             "id": str(uuid.uuid4()),
             "role": "ai",
-            "content": "Generating your website...",
+            "content": "Generating your custom website based on your chatbot prompt...",
             "type": "generation_status",
             "data": { "progress": ["Business Information", "Brand Style", "Website Structure"] }
         })
         await WebsiteBuilderService.save_session(session)
         
-        ai = AIProviderFactory.get_provider()
-        prompt = f"Generate a structured website JSON representation based on this data: {session.collected_data}. Include pages (Home, About, Products, Services, Contact) and sections. Use {session.language}."
-        result = await ai.generate_json(prompt, system_prompt="You are an expert website generator.")
+        user_prompts = [m.get("content") for m in session.messages if m.get("role") == "user" and m.get("content")]
+        full_user_intent = " | ".join(user_prompts) if user_prompts else "Website"
         
-        if not result or result.get("error"):
-             result = {
-                 "pages": {
-                     "home": {"hero": f"Welcome to {session.collected_data.get('Business Name', 'Your Brand')}", "features": []},
-                     "about": {"content": "About us section..."}
-                 }
-             }
+        b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category") or full_user_intent.title()
+        b_cat = session.collected_data.get("Business Category", full_user_intent)
+
+        # Dynamic topic-aligned schema example & fallback
+        schema_example = json.dumps({
+            "theme": {"primary": "purple", "font": "inter"},
+            "pages": [
+                {
+                    "name": "Home",
+                    "sections": [
+                        {"type": "hero", "title": f"Welcome to {b_name}", "subtitle": f"Your trusted destination for premium {b_cat} services & products.", "cta": f"Explore {b_cat}", "image_prompt": f"high quality beautiful {b_cat} background banner", "image_url": ""},
+                        {
+                            "type": "features", 
+                            "title": f"Featured {b_cat} Highlights", 
+                            "items": [
+                                {"title": f"Top Quality {b_cat}", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
+                                {"title": "Specialized Solutions", "description": f"Customized features and tailored packages designed for {b_cat}.", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
+                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "About",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": f"About {b_name}", 
+                            "items": [
+                                {"title": "Our Mission", "description": f"How {b_name} strives to deliver unmatched excellence in {b_cat}.", "image_prompt": f"professional team working on {b_cat}"},
+                                {"title": "Our Quality Commitment", "description": f"Rigorous standards and dedication to perfection in every {b_cat} project.", "image_prompt": f"quality guarantee badge for {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Products",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": f"Our {b_cat} Offerings", 
+                            "items": [
+                                {"title": f"Flagship {b_cat} Collection", "description": f"Best-in-class products and gear for {b_cat}.", "image_prompt": f"featured product showcase {b_cat}"},
+                                {"title": f"Custom {b_cat} Packages", "description": f"Tailored options engineered specifically for your {b_cat} requirements.", "image_prompt": f"custom designed {b_cat} item"},
+                                {"title": f"Popular Essentials", "description": f"Top trending items highly recommended in {b_cat}.", "image_prompt": f"popular essential collection {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Services",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": f"Professional {b_cat} Services", 
+                            "items": [
+                                {"title": "Expert Consultation", "description": f"Professional advisory and strategic planning for {b_cat}.", "image_prompt": f"professional consultant working on {b_cat}"},
+                                {"title": "Dedicated Support", "description": f"24/7 client service and complete care for all {b_cat} queries.", "image_prompt": f"customer care team supporting {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Contact",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": "Get In Touch", 
+                            "items": [
+                                {"title": "Email Us", "description": f"contact@{b_name.lower().replace(' ', '')}.com", "image_prompt": "modern contact support desk email"},
+                                {"title": "Phone Helpline", "description": "+1 (800) 555-0199", "image_prompt": "phone hotline customer support"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "WhatsApp",
+                    "sections": [
+                        {"type": "hero", "title": "WhatsApp Support", "subtitle": f"Connect directly with our {b_cat} specialists on WhatsApp 24/7.", "cta": "Chat on WhatsApp"}
+                    ]
+                },
+                {
+                    "name": "Google Map",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": "Location & Address", 
+                            "items": [
+                                {"title": "Main Office & Showroom", "description": f"742 Innovation Parkway, Suite 100", "image_prompt": f"modern building exterior facade for {b_cat}"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        })
+        ai = AIProviderFactory.get_provider()
+        prompt = (
+            f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
+
+User Prompt / Intent: '{full_user_intent}'
+Business Name: '{b_name}'
+Business Topic / Category: '{b_cat}'
+Language: {session.language or 'English'}.
+
+CRITICAL REQUIREMENTS:
+1. EVERYTHING (titles, descriptions, section headlines, image_prompts) MUST be 100% relevant and tailored strictly to the topic '{b_cat}' and business name '{b_name}'.
+2. Absolutely DO NOT include generic apparel or fashion text unless the topic '{b_cat}' is explicitly about fashion.
+3. Every item MUST include a detailed English 'image_prompt' that describes crisp visual photography relevant to '{b_cat}'.
+4. Generate ALL 7 pages specified in the schema: Home, About, Products, Services, Contact, WhatsApp, and Google Map.
+5. Return ONLY valid JSON matching this structure: {schema_example}."""
+        )
+        
+        try:
+            result = await ai.generate_json(prompt, system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure.")
+        except Exception as e:
+            import logging
+            logging.error(f"AI generation failed: {e}")
+            result = {"error": str(e)}
+        
+        if not result or result.get("error") or not result.get("pages"):
+             result = json.loads(schema_example)
         
         raw_pages = result.get("pages", [])
-        if not raw_pages:
-             raw_pages = []
-        elif not isinstance(raw_pages, list):
-             raw_pages = [raw_pages]
+        if not isinstance(raw_pages, list) or len(raw_pages) == 0:
+             raw_pages = json.loads(schema_example)["pages"]
              
+        import urllib.parse
+        for page in raw_pages:
+            for section in page.get("sections", []):
+                # For hero sections with an image prompt
+                if section.get("type") == "hero" and section.get("image_prompt"):
+                    if not section.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
+                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
+                # For features sections with items
+                for item in section.get("items", []):
+                    if item.get("image_prompt") and not item.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
+                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+
         project = WebsiteProject(
             user_id=session.user_id,
             business_id=session.collected_data.get("business_id"),
+            business_name=b_name,
             session_id=str(session.id),
-            template_id=session.selected_template or "default",
+            template_id=str(session.selected_template) if session.selected_template is not None else "default",
             language=session.language or "English",
             pages=raw_pages,
             theme=result.get("theme", {}),
@@ -245,41 +391,8 @@ class WebsiteBuilderService:
         session.messages.append({
             "id": str(uuid.uuid4()),
             "role": "ai",
-            "content": "Website generated! You can now preview it on the right and ask for revisions.",
+            "content": f"Website for '{b_name}' generated successfully! You can preview it on the right sidebar or click 'Preview Website'.",
             "type": "text"
         })
         await WebsiteBuilderService.save_session(session)
-        return type('obj', (object,), {'message': "Generated", 'quick_actions': [], 'session': session})
-        
-    @staticmethod
-    async def get_website(site_id: str, user_id: str) -> WebsiteProject | None:
-        collection = await WebsiteBuilderService.get_project_collection()
-        if not ObjectId.is_valid(site_id):
-            return None
-        doc = await collection.find_one({"_id": ObjectId(site_id), "user_id": user_id})
-        if doc:
-            return WebsiteProject(**doc)
-        return None
-
-    @staticmethod
-    async def revise_website(site_id: str, user_id: str, message: str) -> WebsiteProject:
-        project = await WebsiteBuilderService.get_website(site_id, user_id)
-        if not project:
-            raise Exception("Project not found")
-            
-        ai = AIProviderFactory.get_provider()
-        prompt = f"Revise this website JSON based on user request: '{message}'. Current website: {json.dumps(project.website_data)}. Return updated website JSON."
-        result = await ai.generate_json(prompt, system_prompt="You are an expert website reviser.")
-        
-        if result and not result.get("error"):
-            project.website_data = result
-            project.pages = result.get("pages", project.pages) if isinstance(result.get("pages"), list) else [result.get("pages")]
-            project.theme = result.get("theme", project.theme)
-            project.version += 1
-            
-        collection = await WebsiteBuilderService.get_project_collection()
-        update_data = project.model_dump(by_alias=True, exclude={"id", "created_at"})
-        update_data["updated_at"] = datetime.now(timezone.utc)
-        await collection.update_one({"_id": ObjectId(project.id)}, {"$set": update_data})
-        
-        return project
+        return type('obj', (object,), {'message': "Generated", 'quick_actions': [], 'session': session, 'site_id': project.id, 'generated_site_data': doc})
