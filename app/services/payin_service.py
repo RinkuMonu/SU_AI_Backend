@@ -56,7 +56,7 @@ class PayinService:
                     settings.PAYIN_URL,
                     json=payload,
                     headers=headers,
-                    timeout=15.0
+                    timeout=30.0
                 )
                 
                 if response.status_code >= 400:
@@ -70,7 +70,8 @@ class PayinService:
                 
                 payment_url = None
                 if data.get("data") and isinstance(data["data"], dict):
-                    payment_url = data["data"].get("redirectURL")
+                    # Use redirectEx for the web checkout gateway instead of upi:// intent
+                    payment_url = data["data"].get("redirectEx") or data["data"].get("redirectURL")
                 
                 if not payment_url:
                     await db["payment_transactions"].update_one(
