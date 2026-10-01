@@ -1,38 +1,25 @@
 def build_ad_prompt(
     product: dict,
-    platform: str,
-    objective: str,
-    language: str,
-    target_audience: str | None,
-    cta: str | None,
-    additional_instruction: str | None,
+    prompt: str | None = None,
+    platform: str | None = None,
+    objective: str | None = None,
+    language: str | None = None,
+    target_audience: str | None = None,
+    cta: str | None = None,
+    additional_instruction: str | None = None,
 ):
-
+    user_prompt = prompt or additional_instruction or ""
+    
     return f"""
-Create a high-converting digital advertisement.
+Create a high-converting digital advertisement based on the user's prompt.
 
 PRODUCT
 Name: {product.get("name", "")}
 Description: {product.get("description", "")}
-Price: {product.get("selling_price", "")}
+Price: {product.get("price", "")}
 
-PLATFORM
-{platform}
-
-OBJECTIVE
-{objective}
-
-LANGUAGE
-{language}
-
-TARGET AUDIENCE
-{target_audience or "General relevant audience"}
-
-CTA
-{cta or "Shop Now"}
-
-Additional instructions:
-{additional_instruction or "None"}
+USER PROMPT (Instructions for Ad):
+{user_prompt}
 
 Return JSON with:
 
@@ -45,9 +32,6 @@ Return JSON with:
 }}
 
 Rules:
-- Keep product claims accurate.
-- Do not invent discounts.
-- Do not invent product features.
-- Keep language natural.
-- Adapt copy to the selected platform.
+- Keep product claims accurate based on the prompt.
+- Ensure the output strictly follows the JSON format.
 """

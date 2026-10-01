@@ -4,19 +4,9 @@ from typing import Optional, Literal
 class AdRequest(BaseModel):
     product_id: Optional[str] = None
     content_id: Optional[str] = None
-    platform: Literal[
-        "instagram",
-        "facebook",
-        "google",
-        "whatsapp",
-    ]
-    objective: Literal[
-        "product_promotion",
-        "sales",
-        "awareness",
-        "engagement",
-        "lead_generation",
-    ]
+    prompt: Optional[str] = None
+    platform: Optional[str] = None
+    objective: Optional[str] = None
     language: str = "English"
     target_audience: Optional[str] = None
     additional_instruction: Optional[str] = None

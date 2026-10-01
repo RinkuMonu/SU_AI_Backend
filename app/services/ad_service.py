@@ -12,12 +12,13 @@ async def generate_ad(
 
     prompt = build_ad_prompt(
         product=product,
-        platform=request.platform,
-        objective=request.objective,
-        language=request.language,
-        target_audience=request.target_audience,
-        cta=request.cta,
-        additional_instruction=request.additional_instruction,
+        prompt=getattr(request, 'prompt', None),
+        platform=getattr(request, 'platform', None),
+        objective=getattr(request, 'objective', None),
+        language=getattr(request, 'language', None),
+        target_audience=getattr(request, 'target_audience', None),
+        cta=getattr(request, 'cta', None),
+        additional_instruction=getattr(request, 'additional_instruction', None),
     )
 
     # Generate ad copy
@@ -58,7 +59,7 @@ Suitable for {request.platform}.
 
     image_result = await image_generator.generate(
         prompt=creative_prompt,
-        product_image=product.get("image"),
+        product_image=product.get("image_url"),
     )
 
     result = {
@@ -73,10 +74,11 @@ Suitable for {request.platform}.
     ad_document = {
         "user_id": user_id,
         "product_id": request.product_id,
-        "platform": request.platform,
-        "objective": request.objective,
-        "language": request.language,
-        "target_audience": request.target_audience,
+        "prompt": getattr(request, 'prompt', None),
+        "platform": getattr(request, 'platform', None),
+        "objective": getattr(request, 'objective', None),
+        "language": getattr(request, 'language', None),
+        "target_audience": getattr(request, 'target_audience', None),
         "headline": result["headline"],
         "primary_text": result["primary_text"],
         "description": result["description"],
@@ -97,7 +99,7 @@ Suitable for {request.platform}.
         "title": result["headline"],
         "media_url": result["creative_url"],
         "caption": result["primary_text"],
-        "platform": request.platform,
+        "platform": getattr(request, 'platform', None),
         "status": "generated",
     })
 
