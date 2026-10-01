@@ -12,8 +12,11 @@ from app.models.user import User
 from app.core.database import get_database
 from bson import ObjectId
 
-router = APIRouter()
+from app.api.dependencies import require_feature, require_credits, require_usage_limit
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
 
+router = APIRouter()
 async def get_history_collection():
     db = get_database()
     return db["ai_generations"]
@@ -30,7 +33,7 @@ async def get_ai_context(current_user: User = Depends(get_current_user)):
     context = await BusinessContextService.get_business_context(str(business.id))
     return context
 
-@router.post("/caption", response_model=dict)
+@router.post("/caption", response_model=dict, dependencies=[Depends(require_feature("ai_caption")), Depends(require_credits("ai_caption")), Depends(require_usage_limit("post"))])
 async def generate_caption(request: CaptionRequest, current_user: User = Depends(get_current_user)):
     """
     Generates a social media caption based on business context and product.
@@ -85,6 +88,12 @@ async def generate_caption(request: CaptionRequest, current_user: User = Depends
                 "model_name": metadata.get("model", "unknown")
             }}
         )
+        
+        # Deduct credits & log usage
+        db = get_database()
+        await CreditService.deduct_credits(db, str(current_user.id), "ai_caption")
+        await SubscriptionService.increment_usage(db, str(current_user.id), "post")
+
         
         return {
             "success": True,
@@ -152,11 +161,9 @@ async def get_generation_by_id(generation_id: str, current_user: User = Depends(
     return doc
 
 
-@router.post("/image", response_model=dict)
+@router.post("/image", response_model=dict, dependencies=[Depends(require_feature("ai_post")), Depends(require_credits("ai_post")), Depends(require_usage_limit("post"))])
 async def generate_image(request: ImageGenerationRequest, current_user: User = Depends(get_current_user)):
     db = get_database()
-    from app.services.credit_service import CreditService
-    await CreditService.check_credits(db, current_user.id, "image_generation")
     
     start_time = time.time()
     
@@ -218,7 +225,8 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
             }}
         )
         
-        await CreditService.deduct_credits(db, current_user.id, "image_generation")
+        await CreditService.deduct_credits(db, str(current_user.id), "ai_post")
+        await SubscriptionService.increment_usage(db, str(current_user.id), "post")
 
         return {
             "success": True,

@@ -13,6 +13,8 @@ from app.core.database import get_database
 from app.core.security import get_current_user
 from app.utils.upload import save_image
 from app.ai.factory import AIProviderFactory
+from app.api.dependencies import require_feature, require_credits, require_usage_limit
+from app.services.subscription_service import SubscriptionService
 
 from app.schemas.fashion import (
     FashionProductCreate,
@@ -230,6 +232,7 @@ async def delete_fashion_product(
     response_model=PhotoshootGenerateResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Start AI Fashion Photoshoot generation (async)",
+    dependencies=[Depends(require_feature("ai_photoshoot")), Depends(require_credits("ai_photoshoot")), Depends(require_usage_limit("photoshoot"))]
 )
 async def generate_fashion_photoshoot(
     request: PhotoshootGenerateRequest,
@@ -274,15 +277,15 @@ async def generate_fashion_photoshoot(
     if request.background == "custom" and not request.custom_background_description:
         raise HTTPException(status_code=400, detail="custom_background_description is required when background=custom")
 
-    # Deduct credits (skipped in dev mode)
+    # Deduct credits & log usage
     from app.services.credit_service import CreditService
-    await CreditService.check_credits(db, user_id, "photoshoot")
+    await CreditService.deduct_credits(db, user_id, "ai_photoshoot")
+    await SubscriptionService.increment_usage(db, user_id, "photoshoot")
 
     # Create pending job
     generation_id = await create_fashion_generation_job(db, user_id, product_data, request)
 
-    # Deduct credits
-    await CreditService.deduct_credits(db, user_id, "photoshoot")
+    # Credits deducted before job creation
 
     # Get text generator for prompt enhancement
     text_generator = None
@@ -353,6 +356,7 @@ async def get_photoshoot_status(
     response_model=VirtualTryOnResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Start Virtual Try-On (async)",
+    dependencies=[Depends(require_feature("ai_photoshoot")), Depends(require_credits("ai_photoshoot")), Depends(require_usage_limit("photoshoot"))]
 )
 async def start_virtual_tryon(
     request: VirtualTryOnRequest,
@@ -397,6 +401,11 @@ async def start_virtual_tryon(
             status_code=400,
             detail="Invalid person_image_url. Upload a person photo first via POST /fashion/products/upload-person-image"
         )
+
+    # Deduct credits & log usage
+    from app.services.credit_service import CreditService
+    await CreditService.deduct_credits(db, user_id, "ai_photoshoot")
+    await SubscriptionService.increment_usage(db, user_id, "photoshoot")
 
     # Create pending job
     job_id = await create_tryon_job(db, user_id, product_data, request.person_image_url)

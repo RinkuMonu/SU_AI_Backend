@@ -12,11 +12,17 @@ from app.schemas.website_builder import (
 from app.services.website_builder_service import WebsiteBuilderService
 from app.core.security import get_current_user
 from app.models.user import User
+from app.api.dependencies import require_feature, require_credits
 
 router = APIRouter()
 
-@router.post("/session", response_model=FrontendSessionResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/session", response_model=FrontendSessionResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_feature("website_builder")), Depends(require_credits("website_builder"))])
 async def create_session(request: CreateSessionRequest, current_user: User = Depends(get_current_user)):
+    from app.core.database import get_database
+    from app.services.credit_service import CreditService
+    db = get_database()
+    await CreditService.deduct_credits(db, str(current_user.id), "website_builder")
+    
     session = await WebsiteBuilderService.create_session(str(current_user.id))
     session.language = request.language
     # Optionally re-save session with language, but the service handles it.
