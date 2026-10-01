@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str | None = None
     SMTP_FROM_EMAIL: str = "noreply@sevenunique.com"
 
+    # Finunique Payin
+    PAYIN_URL: str = ""
+    PAYIN_TOKEN: str = ""
+    
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
 
