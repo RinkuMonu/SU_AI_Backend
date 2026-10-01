@@ -30,14 +30,11 @@ class AIUsageAnalytics(BaseModel):
 
 
 class BusinessAnalytics(BaseModel):
-    """
     Business-related analytics.
 
     products: Current catalogue size (NOT date-filtered).
-    calendars: Calendar plans generated within the date range.
     """
     products: int = 0
-    calendars: int = 0
 
 
 class ExternalAnalytics(BaseModel):
@@ -80,7 +77,6 @@ class MarketingScoreBreakdown(BaseModel):
     """Individual components of the marketing score."""
     content_activity: int = 0
     ai_usage: int = 0
-    calendar_usage: int = 0
     product_catalogue: int = 0
     reel_activity: int = 0
 
@@ -94,7 +90,6 @@ class MarketingScore(BaseModel):
     Formula (documented in ``formula`` field):
         content_activity  = min(posts_in_range * 5, 25)
         ai_usage          = min(total_generations_in_range * 2, 25)
-        calendar_usage    = 15 if calendars_in_range > 0 else 0
         product_catalogue = min(current_product_count * 5, 20)
         reel_activity     = min(reels_in_range * 5, 15)
         score             = min(sum, 100)
@@ -104,7 +99,6 @@ class MarketingScore(BaseModel):
     formula: str = (
         "content_activity = min(posts_in_range * 5, 25); "
         "ai_usage = min(total_generations_in_range * 2, 25); "
-        "calendar_usage = 15 if calendars_in_range > 0 else 0; "
         "product_catalogue = min(current_product_count * 5, 20); "
         "reel_activity = min(reels_in_range * 5, 15); "
         "score = min(sum, 100)"
@@ -112,11 +106,10 @@ class MarketingScore(BaseModel):
 
 
 class Recommendation(BaseModel):
-    """
     A deterministic recommendation that varies based on actual user data.
 
     ``type`` indicates the area the recommendation targets, e.g.
-    "content", "reels", "calendar", "products", "photoshoots",
+    "content", "reels", "products", "photoshoots",
     "images", or "general".
     """
     text: str

@@ -238,14 +238,14 @@ class WebsiteBuilderService:
                 {
                     "name": "Home",
                     "sections": [
-                        {"type": "hero", "title": f"Welcome to {b_name}", "subtitle": f"Your trusted destination for premium {b_cat} services & products.", "cta": f"Explore {b_cat}"},
+                        {"type": "hero", "title": f"Welcome to {b_name}", "subtitle": f"Your trusted destination for premium {b_cat} services & products.", "cta": f"Explore {b_cat}", "image_prompt": f"high quality beautiful {b_cat} background banner", "image_url": ""},
                         {
                             "type": "features", 
                             "title": f"Featured {b_cat} Highlights", 
                             "items": [
-                                {"title": f"Top Quality {b_cat}", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase"},
-                                {"title": "Specialized Solutions", "description": f"Customized features and tailored packages designed for {b_cat}.", "image_prompt": f"high quality {b_cat} service feature banner"},
-                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "image_prompt": f"modern sleek design for {b_cat}"}
+                                {"title": f"Top Quality {b_cat}", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
+                                {"title": "Specialized Solutions", "description": f"Customized features and tailored packages designed for {b_cat}.", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
+                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
                             ]
                         }
                     ]
@@ -354,6 +354,20 @@ CRITICAL REQUIREMENTS:
         if not isinstance(raw_pages, list) or len(raw_pages) == 0:
              raw_pages = json.loads(schema_example)["pages"]
              
+        import urllib.parse
+        for page in raw_pages:
+            for section in page.get("sections", []):
+                # For hero sections with an image prompt
+                if section.get("type") == "hero" and section.get("image_prompt"):
+                    if not section.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
+                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
+                # For features sections with items
+                for item in section.get("items", []):
+                    if item.get("image_prompt") and not item.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
+                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+
         project = WebsiteProject(
             user_id=session.user_id,
             business_id=session.collected_data.get("business_id"),

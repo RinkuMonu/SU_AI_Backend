@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     INSTAGRAM_API_VERSION: str = "v21.0"
     INSTAGRAM_REDIRECT_URI: str = "http://localhost:8000/api/instagram/callback"
 
+    # Facebook API
+    FACEBOOK_APP_ID: str | None = None
+    FACEBOOK_APP_SECRET: str | None = None
+    FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
+
     
     # SMTP Configuration
     SMTP_HOST: str | None = None

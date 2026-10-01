@@ -83,8 +83,8 @@ def decrypt_token(encrypted_str: str) -> str:
 # Instagram API Service
 # ──────────────────────────────────────────────
 
-IG_API_BASE = "https://graph.instagram.com"
-# Some endpoints (OAuth token exchange) still need graph.facebook.com per Meta docs
+IG_API_BASE = f"https://graph.facebook.com/{settings.INSTAGRAM_API_VERSION}"
+# FB_API_BASE is used for token endpoints and generic Facebook calls
 FB_API_BASE = "https://graph.facebook.com"
 
 
@@ -122,7 +122,7 @@ class InstagramService:
             )
 
         # Instagram Business Login OAuth URL
-        scopes = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages"
+        scopes = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish"
 
         auth_url = (
             f"https://www.instagram.com/oauth/authorize"
@@ -152,43 +152,42 @@ class InstagramService:
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             # Step 1: Exchange code for short-lived token
-            token_url = f"https://api.instagram.com/oauth/access_token"
+            api_version = settings.INSTAGRAM_API_VERSION
+            token_url = f"{FB_API_BASE}/{api_version}/oauth/access_token"
             token_payload = {
                 "client_id": app_id,
                 "client_secret": app_secret,
-                "grant_type": "authorization_code",
                 "redirect_uri": redirect_uri,
                 "code": code,
             }
 
             try:
-                res = await client.post(token_url, data=token_payload)
+                res = await client.get(token_url, params=token_payload)
                 res.raise_for_status()
                 token_data = res.json()
             except httpx.HTTPStatusError as e:
                 err = e.response.json() if e.response.content else {}
-                logger.error(f"Instagram token exchange failed: {err}")
+                logger.error(f"Facebook token exchange failed: {err}")
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Instagram OAuth failed: {err.get('error_message', str(e))}"
+                    detail=f"Facebook OAuth failed: {err.get('error', {}).get('message', str(e))}"
                 )
 
             short_lived_token = token_data.get("access_token")
-            ig_user_id = str(token_data.get("user_id", ""))
 
             if not short_lived_token:
                 raise HTTPException(
                     status_code=400,
-                    detail="Failed to obtain Instagram access token"
+                    detail="Failed to obtain Facebook access token"
                 )
 
             # Step 2: Exchange for long-lived token
-            api_version = settings.INSTAGRAM_API_VERSION
             long_lived_url = (
-                f"{IG_API_BASE}/access_token"
-                f"?grant_type=ig_exchange_token"
+                f"{FB_API_BASE}/{api_version}/oauth/access_token"
+                f"?grant_type=fb_exchange_token"
+                f"&client_id={app_id}"
                 f"&client_secret={app_secret}"
-                f"&access_token={short_lived_token}"
+                f"&fb_exchange_token={short_lived_token}"
             )
 
             try:
@@ -202,16 +201,16 @@ class InstagramService:
 
             return {
                 "access_token": long_lived_token,
-                "user_id": ig_user_id,
+                "user_id": "", # Will be extracted from profile
             }
 
     @staticmethod
     async def get_instagram_profile(access_token: str) -> Dict[str, Any]:
-        """Fetch Instagram professional account profile info."""
+        """Fetch Instagram professional account profile info via Facebook Pages."""
         api_version = settings.INSTAGRAM_API_VERSION
-        url = f"{IG_API_BASE}/me"
+        url = f"{FB_API_BASE}/{api_version}/me/accounts"
         params = {
-            "fields": "user_id,username,name,account_type,profile_picture_url,followers_count,media_count",
+            "fields": "instagram_business_account{id,username,profile_picture_url,followers_count,media_count,name,account_type}",
             "access_token": access_token,
         }
 
@@ -219,7 +218,27 @@ class InstagramService:
             try:
                 res = await client.get(url, params=params)
                 res.raise_for_status()
-                return res.json()
+                data = res.json()
+                pages = data.get("data", [])
+                
+                # Find the first page with an instagram_business_account
+                for page in pages:
+                    if "instagram_business_account" in page:
+                        ig_account = page["instagram_business_account"]
+                        return {
+                            "user_id": ig_account.get("id"),
+                            "username": ig_account.get("username"),
+                            "name": ig_account.get("name"),
+                            "account_type": ig_account.get("account_type", "BUSINESS"),
+                            "profile_picture_url": ig_account.get("profile_picture_url"),
+                            "followers_count": ig_account.get("followers_count"),
+                            "media_count": ig_account.get("media_count"),
+                        }
+                        
+                raise HTTPException(
+                    status_code=400,
+                    detail="No Instagram Professional Account linked to your Facebook Pages."
+                )
             except httpx.HTTPStatusError as e:
                 err = e.response.json() if e.response.content else {}
                 logger.error(f"Instagram profile fetch failed: {err}")
@@ -306,7 +325,7 @@ class InstagramService:
         )
         return result.modified_count > 0
 
-    # ─── Image Publishing ─────────────────────
+    # ─── Image Publishing ────
 
     @staticmethod
     async def create_image_container(
@@ -509,7 +528,7 @@ class InstagramService:
                 )
             return data["id"]
 
-    # ─── Media Retrieval ──────────────────────
+    # ─── Media Retrieval ────────
 
     @staticmethod
     async def get_media(

@@ -79,12 +79,6 @@ async def instagram_connect(
     """
     user_id = str(current_user.get("id") or current_user.get("_id"))
 
-    if InstagramService.is_demo_mode():
-        logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
-        return InstagramConnectResponse(
-            authorization_url="https://www.instagram.com/oauth/authorize?client_id=DEMO_APP_ID&redirect_uri=http://localhost:8000/api/instagram/callback&response_type=code&scope=instagram_business_basic,instagram_business_content_publish&state=demo_state"
-        )
-
     # Generate a state token for CSRF protection, store in DB
     state = secrets.token_urlsafe(32)
     await db["instagram_oauth_states"].insert_one({
@@ -92,6 +86,13 @@ async def instagram_connect(
         "user_id": user_id,
         "created_at": datetime.now(timezone.utc),
     })
+
+    if InstagramService.is_demo_mode():
+        logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
+        # Bypass Facebook and redirect directly to the callback to simulate success
+        return InstagramConnectResponse(
+            authorization_url=f"http://localhost:8000/api/instagram/callback?code=demo_code&state={state}"
+        )
 
     auth_url = InstagramService.get_authorization_url(state=state)
 
@@ -115,7 +116,13 @@ async def instagram_callback(
 
     if InstagramService.is_demo_mode():
         logger.info("[DEMO MODE] Instagram callback — simulating successful connection")
-        demo_user_id = "60a7b45c342d3c148c2e6d5a"
+        # Try to extract user ID from state
+        demo_user_id = "60a7b45c342d3c148c2e6d5a"  # Fallback
+        if state:
+            state_doc = await db["instagram_oauth_states"].find_one_and_delete({"state": state})
+            if state_doc and "user_id" in state_doc:
+                demo_user_id = state_doc["user_id"]
+        
         from app.services.instagram_service import encrypt_token
         demo_connection = {
             "user_id": demo_user_id,
