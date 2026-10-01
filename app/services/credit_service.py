@@ -129,6 +129,6 @@ class CreditService:
         cursor = db["credit_transactions"].find({"user_id": user_id}).sort("created_at", -1)
         history = []
         async for tx in cursor:
-            tx["id"] = str(tx["_id"])
+            tx["id"] = str(tx.pop("_id"))
             history.append(tx)
         return history
