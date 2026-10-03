@@ -34,7 +34,7 @@ PLANS = {
         "billing_cycle": "monthly",
         "credits": 50,
         "post_limit": 15,
-        "reel_limit": 5,
+        "reel_limit": -1,
         "team_members": 1,
         "features": ["ai_caption", "ai_photoshoot", "content_calendar", "ai_reel", "ai_post"],
         "watermark": False,
