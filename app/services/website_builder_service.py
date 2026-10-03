@@ -333,8 +333,8 @@ Business Topic / Category: '{b_cat}'
 Language: {session.language or 'English'}.
 
 CRITICAL REQUIREMENTS:
-1. EVERYTHING (titles, descriptions, section headlines, image_prompts) MUST be 100% relevant and tailored strictly to the topic '{b_cat}' and business name '{b_name}'.
-2. Absolutely DO NOT include generic apparel or fashion text unless the topic '{b_cat}' is explicitly about fashion.
+1. You MUST heavily prioritize and implement ALL specific instructions, custom content, themes, and image concepts mentioned in the 'User Prompt / Intent' above.
+2. EVERYTHING (titles, descriptions, section headlines, image_prompts) MUST be tailored to the topic '{b_cat}', business name '{b_name}', AND the user's specific prompt.
 3. Every item MUST include a detailed English 'image_prompt' that describes crisp visual photography relevant to '{b_cat}'.
 4. Generate ALL 7 pages specified in the schema: Home, About, Products, Services, Contact, WhatsApp, and Google Map.
 5. Return ONLY valid JSON matching this structure: {schema_example}."""
@@ -396,3 +396,57 @@ CRITICAL REQUIREMENTS:
         })
         await WebsiteBuilderService.save_session(session)
         return type('obj', (object,), {'message': "Generated", 'quick_actions': [], 'session': session, 'site_id': project.id, 'generated_site_data': doc})
+
+    @staticmethod
+    async def revise_website(project_id: str, user_id: str, instructions: str) -> WebsiteProject:
+        site = await WebsiteBuilderService.get_website(project_id, user_id)
+        if not site:
+            raise Exception("Website not found")
+            
+        ai = AIProviderFactory.get_provider()
+        prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."
+        result = await ai.generate_text(prompt, system_prompt="You are an expert web designer. Return ONLY the JSON array representing the revised pages.")
+        
+        raw_text = result.get("text", "[]").strip()
+        import re
+        raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
+        
+        if "```" in raw_text:
+            parts = raw_text.split("```")
+            for part in parts:
+                cleaned = part.strip()
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].strip()
+                if cleaned.startswith("[") or cleaned.startswith("{"):
+                    raw_text = cleaned
+                    break
+                    
+        first_bracket = raw_text.find("[")
+        last_bracket = raw_text.rfind("]")
+        if first_bracket != -1 and last_bracket != -1:
+            raw_text = raw_text[first_bracket:last_bracket+1]
+            
+        try:
+            revised_pages = json.loads(raw_text)
+            if isinstance(revised_pages, dict) and "pages" in revised_pages:
+                revised_pages = revised_pages["pages"]
+        except:
+            raise Exception("Failed to parse AI revision")
+            
+        import urllib.parse
+        for page in revised_pages:
+            for section in page.get("sections", []):
+                if section.get("type") == "hero" and section.get("image_prompt"):
+                    if not section.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
+                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
+                for item in section.get("items", []):
+                    if item.get("image_prompt") and not item.get("image_url"):
+                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
+                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+                        
+        site.pages = revised_pages
+        collection = await WebsiteBuilderService.get_project_collection()
+        await collection.update_one({"_id": ObjectId(project_id)}, {"$set": {"pages": revised_pages}})
+        
+        return site

@@ -4,6 +4,7 @@ from app.core.database import get_database
 from app.services.festival_service import (
     get_upcoming_festivals,
     generate_festival_campaign,
+    INDIAN_FESTIVALS,
 )
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
@@ -58,7 +59,12 @@ async def get_upcoming(
     can show a preview even if no campaign is generated yet.
     """
     business_id = await _resolve_business_id(current_user, db)
-    upcoming_festivals = get_upcoming_festivals(days_ahead=30)
+    from datetime import date
+    today = date.today()
+    upcoming_festivals = []
+    for f in INDIAN_FESTIVALS:
+        fest_date = date.fromisoformat(f["date"])
+        upcoming_festivals.append({**f, "days_left": (fest_date - today).days})
 
     campaigns = []
     if business_id:
@@ -91,23 +97,27 @@ async def generate_campaign(
         return {"success": False, "message": "No business profile found."}
 
     # Find the festival in our list
-    upcoming = get_upcoming_festivals(days_ahead=60)
+    from datetime import date
+    today = date.today()
     festival = next(
-        (f for f in upcoming if f["name"].lower() == festival_name.lower()), None
+        (f for f in INDIAN_FESTIVALS if f["name"].lower() == festival_name.lower()), None
     )
     if not festival:
-        return {"success": False, "message": f"Festival '{festival_name}' not found in upcoming 60 days."}
+        return {"success": False, "message": f"Festival '{festival_name}' not found."}
+    
+    fest_date = date.fromisoformat(festival["date"])
+    festival_with_days = {**festival, "days_left": (fest_date - today).days}
 
     # Check if already exists
     existing = await db["festival_campaigns"].find_one({
         "business_id": business_id,
-        "festival_name": festival["name"],
-        "festival_date": festival["date"],
+        "festival_name": festival_with_days["name"],
+        "festival_date": festival_with_days["date"],
     })
     if existing:
         return {"success": True, "message": "Campaign already exists.", "data": _serialize(existing)}
 
-    campaign = await generate_festival_campaign(db, business_id, festival)
+    campaign = await generate_festival_campaign(db, business_id, festival_with_days)
     if not campaign:
         return {"success": False, "message": "AI failed to generate campaign. Please try again."}
 
