@@ -18,6 +18,10 @@ from app.api.endpoints.fashion import router as fashion_router
 from app.api.endpoints.instagram import router as instagram_router
 from app.api.endpoints.facebook import router as facebook_router
 from app.api.endpoints.influencers import router as influencers_router
+from app.api.endpoints.influencer_profile import router as influencer_profile_router
+from app.api.endpoints.business_collaborations import router as business_collaborations_router
+from app.api.endpoints.influencer_content import router as influencer_content_router
+from app.api.endpoints.influencer_earnings import router as influencer_earnings_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -73,6 +77,10 @@ app.include_router(fashion_router)
 app.include_router(instagram_router)
 app.include_router(facebook_router)
 app.include_router(influencers_router, prefix="/api/v1")
+app.include_router(influencer_profile_router, prefix="/api/v1")
+app.include_router(business_collaborations_router, prefix="/api/v1")
+app.include_router(influencer_content_router, prefix="/api/v1")
+app.include_router(influencer_earnings_router, prefix="/api/v1")
 @app.get("/")
 async def root():
     return {"message": "Welcome to SevenUnique AI API"}

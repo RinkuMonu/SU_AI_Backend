@@ -131,7 +131,7 @@ class AuthService:
             email=email,
             hashed_password=doc["hashed_password"],
             email_verified=True,
-            role="user"
+            role=doc.get("role", "business")
         )
         
         user_doc = user.model_dump(by_alias=True, exclude={"id"})
@@ -191,6 +191,7 @@ class AuthService:
             {"email": email},
             {"$set": {
                 "name": user_name,
+                "role": user_in.role or "business",
                 "hashed_password": hashed_password,
                 "otp_hash": otp_hash,
                 "expires_at": expires_at,

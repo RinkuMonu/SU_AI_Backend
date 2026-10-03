@@ -9,6 +9,7 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str
     confirmPassword: str | None = None
+    role: str | None = "business"
 
     @field_validator('password')
     @classmethod
