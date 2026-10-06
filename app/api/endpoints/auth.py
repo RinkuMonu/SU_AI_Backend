@@ -7,14 +7,9 @@ from app.models.user import User
 
 router = APIRouter()
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/signup", status_code=status.HTTP_201_CREATED, response_model=TokenResponse)
 async def signup(user_in: UserCreate):
-    await AuthService.handle_signup(user_in)
-    return {"detail": "OTP verification required."}
-
-@router.post("/verify-otp", response_model=TokenResponse)
-async def verify_otp(request: OTPVerifyRequest):
-    user = await AuthService.verify_otp(request.email, request.otp)
+    user = await AuthService.handle_signup(user_in)
     access_token = create_access_token(subject=str(user.id))
     return TokenResponse(
         access_token=access_token,
@@ -26,11 +21,6 @@ async def verify_otp(request: OTPVerifyRequest):
             email_verified=True
         )
     )
-
-@router.post("/resend-otp")
-async def resend_otp(request: OTPResendRequest):
-    await AuthService.resend_otp(request.email)
-    return {"detail": "OTP resent successfully."}
 
 @router.post("/login", response_model=TokenResponse)
 async def login(user_in: UserLogin):
@@ -56,9 +46,18 @@ async def login(user_in: UserLogin):
     )
 
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import ValidationError
+from fastapi import HTTPException
+
 @router.post("/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user_in = UserLogin(email=form_data.username, password=form_data.password)
+    try:
+        user_in = UserLogin(email=form_data.username, password=form_data.password)
+    except ValidationError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format. Please enter a valid email address in the Username field."
+        )
     try:
         user = await AuthService.authenticate_user(user_in)
     except EmailNotVerifiedException as e:

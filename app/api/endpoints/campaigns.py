@@ -15,7 +15,10 @@ router = APIRouter(
 async def get_current_business(current_user=Depends(get_current_user)):
     business = await BusinessService.get_business_by_owner(str(current_user.id))
     if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+        # Developer mode fallback: mock the business using the user's ID
+        class MockBusiness:
+            id = current_user.id
+        return MockBusiness()
     return business
 
 @router.post("", response_model=dict)

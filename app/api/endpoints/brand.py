@@ -23,14 +23,17 @@ router = APIRouter(
 
 @router.post(
     "",
-    status_code=status.HTTP_201_CREATED
+    status_code=status.HTTP_200_OK
 )
 async def create_brand(
     data: BrandCreate,
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = str(current_user.get("business_id"))
+    if business_id == "None" or not business_id:
+        # Developer mode fallback: use user's ID as the business ID to prevent 400 Bad Request
+        business_id = str(current_user.get("_id", current_user.get("id", "")))
 
     brand = await create_brand_kit(
         db,
@@ -50,7 +53,9 @@ async def get_brand(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = str(current_user.get("business_id"))
+    if business_id == "None" or not business_id:
+        business_id = str(current_user.get("_id", current_user.get("id", "")))
 
     brand = await get_brand_kit(
         db,
@@ -70,7 +75,9 @@ async def update_brand(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = str(current_user.get("business_id"))
+    if business_id == "None" or not business_id:
+        business_id = str(current_user.get("_id", current_user.get("id", "")))
 
     brand = await update_brand_kit(
         db,

@@ -27,10 +27,9 @@ async def get_ai_context(current_user: User = Depends(get_current_user)):
     Retrieves the comprehensive business context for the current user's business.
     """
     business = await BusinessService.get_business_by_owner(str(current_user.id))
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else str(current_user.id)
 
-    context = await BusinessContextService.get_business_context(str(business.id))
+    context = await BusinessContextService.get_business_context(business_id)
     return context
 
 @router.post("/caption", response_model=dict, dependencies=[Depends(require_feature("ai_caption")), Depends(require_credits("ai_caption")), Depends(require_usage_limit("post"))])
@@ -41,15 +40,14 @@ async def generate_caption(request: CaptionRequest, current_user: User = Depends
     start_time = time.time()
     
     business = await BusinessService.get_business_by_owner(str(current_user.id))
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else str(current_user.id)
 
     collection = await get_history_collection()
     
     # 1. Prepare initial history record
     history_record = AIGenerationHistory(
         user_id=str(current_user.id),
-        business_id=str(business.id),
+        business_id=business_id,
         generation_type="caption",
         provider="mock", # This would be fetched from settings ideally
         model_name="mock-model-v1",
@@ -63,7 +61,7 @@ async def generate_caption(request: CaptionRequest, current_user: User = Depends
 
     try:
         # 2. Get Context
-        context = await BusinessContextService.get_business_context(str(business.id))
+        context = await BusinessContextService.get_business_context(business_id)
         
         # 3. Generate content
         caption_response, metadata = await TextGenerationService.generate_caption(
@@ -168,14 +166,13 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
     start_time = time.time()
     
     business = await BusinessService.get_business_by_owner(str(current_user.id))
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else str(current_user.id)
 
     collection = await get_history_collection()
     
     history_record = AIGenerationHistory(
         user_id=str(current_user.id),
-        business_id=str(business.id),
+        business_id=business_id,
         generation_type="image",
         provider="pollinations", 
         model_name="stable-diffusion",
@@ -204,7 +201,7 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
         if request.product_id:
             from bson import ObjectId
             if ObjectId.is_valid(request.product_id):
-                prod = await db["products"].find_one({"_id": ObjectId(request.product_id), "business_id": ObjectId(str(business.id))})
+                prod = await db["products"].find_one({"_id": ObjectId(request.product_id), "business_id": ObjectId(business_id)})
                 if prod and prod.get("image_url"):
                     product_image_url = prod["image_url"]
 

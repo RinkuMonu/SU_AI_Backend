@@ -149,7 +149,7 @@ class AuthService:
         return user
 
     @staticmethod
-    async def handle_signup(user_in: UserCreate):
+    async def handle_signup(user_in: UserCreate) -> User:
         email = user_in.email.lower().strip()
         existing_user = await AuthService.get_user_by_email(email)
         if existing_user:
@@ -159,48 +159,28 @@ class AuthService:
             )
 
         hashed_password = get_password_hash(user_in.password)
-        collection = await AuthService.get_otp_collection()
         
-        user_name = user_in.name or user_in.fullName or user_in.full_name or "User"
+        user_name = user_in.name or getattr(user_in, "fullName", None) or getattr(user_in, "full_name", None) or "User"
         
-        now = datetime.now(timezone.utc)
-        
-        # Check cooldown
-        existing_pending = await collection.find_one({"email": email})
-        if existing_pending and existing_pending.get("last_sent_at"):
-            last_sent = existing_pending["last_sent_at"]
-            if last_sent.tzinfo is None:
-                last_sent = last_sent.replace(tzinfo=timezone.utc)
-            if (now - last_sent).total_seconds() < 60:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Please wait before requesting another OTP."
-                )
-        
-        from app.core.config import settings
-        if settings.ENVIRONMENT == "development":
-            otp = "123456"
-        else:
-            otp = ''.join(random.choices(string.digits, k=6))
-        otp_hash = get_password_hash(otp)
-        expires_at = now + timedelta(minutes=10)
-        
-        await EmailService.send_otp_email(email, otp)
-        
-        await collection.update_one(
-            {"email": email},
-            {"$set": {
-                "name": user_name,
-                "role": user_in.role or "business",
-                "hashed_password": hashed_password,
-                "otp_hash": otp_hash,
-                "expires_at": expires_at,
-                "attempts": 0,
-                "last_sent_at": now,
-                "created_at": now
-            }},
-            upsert=True
+        users = await AuthService.get_collection()
+        user = User(
+            name=user_name,
+            email=email,
+            hashed_password=hashed_password,
+            email_verified=True,
+            role=user_in.role or "business"
         )
+        
+        user_doc = user.model_dump(by_alias=True, exclude={"id"})
+        result = await users.insert_one(user_doc)
+        user.id = str(result.inserted_id)
+        
+        # Provision default Free plan immediately
+        from app.services.credit_service import CreditService
+        from app.core.database import get_database
+        await CreditService.get_or_create_subscription(get_database(), user.id)
+        
+        return user
 
     @staticmethod
     async def authenticate_user(user_login: UserLogin) -> User:

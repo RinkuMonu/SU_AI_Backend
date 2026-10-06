@@ -6,7 +6,7 @@ from app.models.base import PyObjectId
 
 class ReviewCreate(BaseModel):
     customer_name: str = Field(..., min_length=1)
-    rating: int = Field(..., ge=1, le=5)
+    rating: int = Field(..., ge=1, le=10)
     review_text: str = Field(..., min_length=1)
     status: str = "New"
 

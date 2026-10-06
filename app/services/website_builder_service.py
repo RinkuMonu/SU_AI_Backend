@@ -2,6 +2,7 @@ from bson import ObjectId
 from datetime import datetime, timezone
 import json
 import uuid
+from fastapi import HTTPException
 
 from app.core.database import get_database
 from app.models.website_builder import WebsiteProject, WebsiteBuilderSession
@@ -401,7 +402,7 @@ CRITICAL REQUIREMENTS:
     async def revise_website(project_id: str, user_id: str, instructions: str) -> WebsiteProject:
         site = await WebsiteBuilderService.get_website(project_id, user_id)
         if not site:
-            raise Exception("Website not found")
+            raise HTTPException(status_code=404, detail="Website not found")
             
         ai = AIProviderFactory.get_provider()
         prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."

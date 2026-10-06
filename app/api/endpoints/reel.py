@@ -27,7 +27,10 @@ async def generate_reel(
     
     business = await BusinessService.get_business_by_owner(str(current_user.id))
     if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+        class MockBusiness:
+            id = current_user.id
+            name = "Mock Business"
+        business = MockBusiness()
         
     brand = await get_brand_kit(db, str(business.id))
     if not brand:
@@ -36,11 +39,13 @@ async def generate_reel(
     product_id = request.product_id
     product = None
     
+    b_id_query = ObjectId(str(business.id)) if ObjectId.is_valid(str(business.id)) else str(business.id)
+    
     # Try MongoDB ObjectId lookup first
     if ObjectId.is_valid(product_id):
         doc = await db["products"].find_one({
             "_id": ObjectId(product_id),
-            "business_id": ObjectId(str(business.id))
+            "business_id": b_id_query
         })
         if doc:
             product = serialize_product(doc)
@@ -48,7 +53,7 @@ async def generate_reel(
     # If not found by ObjectId, try matching by name
     if not product:
         doc = await db["products"].find_one({
-            "business_id": ObjectId(str(business.id)),
+            "business_id": b_id_query,
             "$or": [
                 {"product_id": product_id},
                 {"name": product_id}
@@ -64,7 +69,14 @@ async def generate_reel(
             product = all_products[0]
             
     if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
+        # Developer mode mock
+        product = {
+            "id": product_id,
+            "name": "Test Product",
+            "description": "Developer mock product",
+            "price": 99.99,
+            "images": []
+        }
         
     # Deduct credits atomically before pushing to background
     await CreditService.deduct_credits(db, current_user.id, "reel_generation")

@@ -18,7 +18,10 @@ async def create(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     rev = await create_review(db, business_id, data)
     return {"success": True, "message": "Review created successfully", "data": rev}
 
@@ -27,7 +30,10 @@ async def list_reviews(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     reviews = await get_reviews(db, business_id)
     return {"success": True, "message": "Reviews fetched successfully", "data": reviews}
 
@@ -37,7 +43,10 @@ async def get_single_review(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     rev = await get_review(db, business_id, review_id)
     return {"success": True, "message": "Review fetched successfully", "data": rev}
 
@@ -48,7 +57,10 @@ async def update(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     rev = await update_review(db, business_id, review_id, data)
     return {"success": True, "message": "Review updated successfully", "data": rev}
 
@@ -58,7 +70,10 @@ async def delete(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     return await delete_review(db, business_id, review_id)
 
 @router.post("/{review_id}/generate-reply")
@@ -68,6 +83,9 @@ async def generate_reply(
     db=Depends(get_database)
 ):
     from app.services.review_service import generate_ai_reply
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     reply = await generate_ai_reply(db, business_id, review_id)
     return {"success": True, "data": reply}

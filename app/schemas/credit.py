@@ -20,8 +20,10 @@ class CreditBalanceResponse(BaseModel):
 
 class CreditTransactionResponse(BaseModel):
     id: str
-    action: str
-    credits: int
+    transaction_type: str
+    feature: Optional[str] = None
+    amount: int
+    balance_before: int
     balance_after: int
     created_at: datetime
 

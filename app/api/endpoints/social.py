@@ -15,7 +15,10 @@ async def publish_instagram(
     current_user = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     
     result = await SocialService.publish_to_instagram(
         db=db,
@@ -31,7 +34,10 @@ async def publish_facebook(
     current_user = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     
     result = await SocialService.publish_to_facebook(
         db=db,
@@ -47,7 +53,10 @@ async def publish_linkedin(
     current_user = Depends(get_current_user),
     db = Depends(get_database)
 ):
-    business_id = str(current_user["business_id"])
+    business_id = current_user.get("business_id")
+    if not business_id:
+        business_id = current_user["id"]
+    business_id = str(business_id)
     
     result = await SocialService.publish_to_linkedin(
         db=db,

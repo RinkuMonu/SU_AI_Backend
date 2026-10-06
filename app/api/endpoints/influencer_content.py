@@ -24,6 +24,36 @@ async def get_my_submissions(current_user: CurrentUser = Depends(get_current_use
         
     return {"success": True, "data": result}
 
+@router.get("/collaborations")
+async def get_my_collaborations(current_user: CurrentUser = Depends(get_current_user)):
+    db = get_database()
+    
+    # For demo/testing: Fetch collaborations targeted at them OR any active collaboration
+    cursor = db["collaborations"].find({
+        "$or": [
+            {"influencer_id": str(current_user.id)},
+            {"status": "active"}
+        ]
+    }).sort("created_at", -1)
+    collabs = await cursor.to_list(length=100)
+    
+    result = []
+    for c in collabs:
+        c["id"] = str(c.pop("_id"))
+        
+        # Attach campaign info
+        camp = await db["influencer_campaigns"].find_one({"_id": ObjectId(c["campaign_id"])})
+        if camp:
+            c["campaign_name"] = camp.get("name", "Campaign")
+            
+            business = await db["businesses"].find_one({"_id": ObjectId(camp["business_id"])})
+            if business:
+                c["business_name"] = business.get("name", "Unknown Brand")
+                
+        result.append(c)
+        
+    return {"success": True, "data": result}
+
 @router.post("/{collaboration_id}")
 async def submit_content(
     collaboration_id: str,

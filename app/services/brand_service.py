@@ -105,13 +105,16 @@ async def update_brand_kit(
 
     update_data["updated_at"] = datetime.now(timezone.utc)
 
+    # Use upsert=True so if a Brand Kit doesn't exist yet, it is automatically created!
     result = await collection.find_one_and_update(
         {
             "business_id": ObjectId(business_id)
         },
         {
-            "$set": update_data
+            "$set": update_data,
+            "$setOnInsert": {"created_at": datetime.now(timezone.utc)}
         },
+        upsert=True,
         return_document=True
     )
 

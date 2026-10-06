@@ -114,6 +114,8 @@ async def session_message(session_id: str, request: SendMessageRequest, current_
                 
             return FrontendMessageResponse(**msg_data)
             
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -124,6 +126,8 @@ async def revise_website(site_id: str, request: ReviseSiteRequest, current_user:
     try:
         site = await WebsiteBuilderService.revise_website(site_id, str(current_user.id), request.instructions)
         return {"generatedSiteData": site.pages}
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -157,7 +161,7 @@ async def get_site(site_id: str):
     from bson import ObjectId
     collection = await WebsiteBuilderService.get_project_collection()
     if not ObjectId.is_valid(site_id):
-        raise HTTPException(status_code=400, detail="Invalid site ID")
+        raise HTTPException(status_code=404, detail="Site not found")
     doc = await collection.find_one({"_id": ObjectId(site_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="Site not found")

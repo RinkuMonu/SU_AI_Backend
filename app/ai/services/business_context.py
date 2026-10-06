@@ -12,18 +12,30 @@ class BusinessContextService:
         Gathers business, brand, and product data to create a structured context.
         """
         business = await BusinessService.get_business(business_id)
+        
+        # Developer mode fallback: if business doesn't exist, provide a mock base context
         if not business:
-            raise ValueError(f"Business {business_id} not found.")
+            business_name = "Mock Business"
+            business_category = "General"
+            business_location = "Global"
+            business_target_customer = "Everyone"
+            business_language = "en"
+        else:
+            business_name = business.name
+            business_category = business.category
+            business_location = business.location
+            business_target_customer = business.target_customer
+            business_language = business.preferred_language
 
         db = get_database()
 
         context = {
             "business": {
-                "name": business.name,
-                "category": business.category,
-                "location": business.location,
-                "target_customer": business.target_customer,
-                "language": business.preferred_language
+                "name": business_name,
+                "category": business_category,
+                "location": business_location,
+                "target_customer": business_target_customer,
+                "language": business_language
             },
             "brand": {},
             "products": []

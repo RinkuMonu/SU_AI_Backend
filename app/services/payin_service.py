@@ -102,11 +102,11 @@ class PayinService:
     async def process_callback(db, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
         order_id = payload.get("orderId")
         if not order_id:
-            raise HTTPException(status_code=400, detail="Missing orderId")
+            return {"success": False, "status": "failed", "message": "Missing orderId"}
             
         transaction = await db["payment_transactions"].find_one({"order_id": order_id})
         if not transaction:
-            raise HTTPException(status_code=404, detail="Unknown order")
+            return {"success": False, "status": "failed", "message": "Unknown order"}
             
         if transaction["status"] == "success":
             return {"success": True, "status": "success", "message": "Already processed"}

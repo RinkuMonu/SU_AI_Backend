@@ -179,5 +179,28 @@ async def review_submission(
         {"$set": {"status": status, "updated_at": datetime.now(timezone.utc)}}
     )
     
+    # If approved, generate InfluencerEarning
+    if status == "approved":
+        collab = await db["collaborations"].find_one({"_id": ObjectId(sub["collaboration_id"])})
+        if collab and collab.get("agreed_price", 0) > 0:
+            existing_earning = await db["influencer_earnings"].find_one({"collaboration_id": str(collab["_id"])})
+            if not existing_earning:
+                # get campaign info
+                camp = await db["influencer_campaigns"].find_one({"_id": ObjectId(collab["campaign_id"])})
+                camp_name = camp.get("name", "Influencer Campaign") if camp else "Campaign"
+                
+                earning_doc = {
+                    "influencer_id": collab["influencer_id"],
+                    "campaign_id": collab["campaign_id"],
+                    "collaboration_id": str(collab["_id"]),
+                    "business_name": business.get("name", "Unknown"),
+                    "campaign_name": camp_name,
+                    "amount": collab.get("agreed_price", 0),
+                    "status": "pending",
+                    "created_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc)
+                }
+                await db["influencer_earnings"].insert_one(earning_doc)
+    
     return {"success": True, "message": f"Content {status}"}
 
