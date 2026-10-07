@@ -116,47 +116,97 @@ class WebsiteBuilderService:
         })
         
         lower_msg = message.lower()
-        if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]):
-            return await WebsiteBuilderService.generate_recommendations(session)
-            
         if any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
-            return await WebsiteBuilderService.generate_website(session)
+            if session.collected_data.get("Business Name"):
+                return await WebsiteBuilderService.generate_website(session)
             
         if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
             return await WebsiteBuilderService.generate_website(session)
             
         ai = AIProviderFactory.get_provider()
-        extract_prompt = f"Extract structured fields from user message: '{message}'. Current collected data: {json.dumps(session.collected_data, default=str)}. Do NOT invent fake data. Return JSON with extracted fields using exactly these keys: 'Business Name', 'Business Category', 'Location', 'Phone', 'Products'."
-        extracted = await ai.generate_json(extract_prompt, system_prompt="Extract business details from user messages using strict keys.")
-        if extracted and not extracted.get("error"):
-            for k, v in extracted.items():
-                if v and str(v).strip() not in ["None", "null", ""]:
-                    session.collected_data[k] = str(v).strip()
-                    
-        b_name = session.collected_data.get("Business Name")
-        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business"]:
-            b_cat = session.collected_data.get("Business Category")
-            if b_cat and str(b_cat).strip() not in ["None", "null"]:
-                session.collected_data["Business Name"] = str(b_cat).strip().title()
-            else:
-                clean_msg = message.replace("website", "").replace("build", "").replace("create", "").replace("my", "").replace("want", "").replace("for", "").strip().title()
-                if clean_msg:
-                    session.collected_data["Business Name"] = clean_msg
-                    session.collected_data["Business Category"] = clean_msg
-
-        chat_prompt = f"User prompt: '{message}'. Collected details: {json.dumps(session.collected_data, default=str)}. Respond in {session.language or 'English'}. Acknowledge their website request, summarize what brand/topic will be built, and ask if they would like to 'Recommend' templates or 'Build My Website'."
-        chat_result = await ai.generate_text(chat_prompt, system_prompt="You are an expert AI website builder assistant. Keep it short, friendly, and enthusiastic.")
-        reply_msg = chat_result.get("text", f"Awesome! I will create your {session.collected_data.get('Business Name', 'website')}. Would you like me to recommend templates or build your website directly?")
         
-        actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
-             
+        # 1. Fetch Business Profile if not checked yet
+        if not session.collected_data.get("profile_checked"):
+            try:
+                from app.core.database import get_database
+                db = get_database()
+                business_profile = await db.business.find_one({"owner_id": user_id})
+                if business_profile:
+                    session.collected_data["Business Name"] = business_profile.get("name")
+                    session.collected_data["Business Category"] = business_profile.get("category")
+                    session.collected_data["Location"] = business_profile.get("location")
+                    session.collected_data["Description"] = business_profile.get("description")
+                    session.collected_data["Website"] = business_profile.get("website")
+                    session.collected_data["Target Audience"] = business_profile.get("target_customer")
+                    session.collected_data["Email"] = business_profile.get("contact_email")
+                    session.collected_data["Phone"] = business_profile.get("contact_phone")
+                    session.collected_data["Instagram"] = business_profile.get("instagram")
+                    session.collected_data["profile_found"] = True
+            except:
+                pass
+            session.collected_data["profile_checked"] = True
+
+        # 2. Extract fields
+        extract_system = "Extract fields into JSON."
+        extract_prompt = f"""Extract from: '{message}'.
+Data: {json.dumps(session.collected_data, default=str)}
+Keys: 'Language', 'Business Name', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'WhatsApp', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
+        
+        try:
+            extracted = await ai.generate_json(extract_prompt, system_prompt=extract_system)
+            if extracted and not extracted.get("error"):
+                for k, v in extracted.items():
+                    if v and str(v).strip() not in ["None", "null", ""]:
+                        session.collected_data[k] = str(v).strip()
+        except:
+            pass
+
+        if session.collected_data.get("Language"):
+            session.language = session.collected_data.get("Language")
+            
+        # 3. Consultant Response
+        consultant_system = """You are an AI Website Builder Consultant. 
+Keep your response EXTREMELY short, punchy, and direct (max 1 or 2 short sentences). 
+Ask EXACTLY ONE missing question based on the collected data. 
+If all essential data is collected, ask if they want to 'Recommend templates' or 'Build My Website'. Do NOT write long paragraphs."""
+
+        consultant_prompt = f"""Data: {json.dumps(session.collected_data, default=str)}
+User Message: '{message}'
+Language: {session.language or 'English'}
+Respond very briefly."""
+
+        try:
+            chat_result = await ai.generate_text(consultant_prompt, system_prompt=consultant_system)
+            reply_msg = chat_result.get("text", "Got it! What else would you like to add?")
+        except:
+            reply_msg = "Could you tell me more about your business?"
+
+        # 4. Quick Actions
+        actions = []
+        lower_reply = reply_msg.lower()
+        if "language" in lower_reply and not session.language:
+            actions = [{"label": "English", "action": "lang_en"}, {"label": "Hindi", "action": "lang_hi"}, {"label": "Hinglish", "action": "lang_hin"}]
+        elif "existing website" in lower_reply:
+            actions = [{"label": "Yes", "action": "has_website"}, {"label": "No", "action": "no_website"}]
+        elif "google maps" in lower_reply:
+            actions = [{"label": "Yes", "action": "yes_maps"}, {"label": "No", "action": "no_maps"}]
+        elif "recommend" in lower_reply and "build" in lower_reply:
+            actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
+        elif session.collected_data.get("profile_found") and "correct" in lower_reply:
+            actions = [{"label": "Yes, continue", "action": "yes_continue"}, {"label": "Edit information", "action": "edit_info"}]
+            session.collected_data["profile_found"] = False
+
+        if any(x in lower_msg for x in ["you decide", "recommend"]) and ("template" in lower_msg or "recommend" in lower_msg):
+            return await WebsiteBuilderService.generate_recommendations(session)
+
         msg_obj = {
             "id": str(uuid.uuid4()),
             "role": "ai",
             "content": reply_msg,
-            "type": "confirmation",
-            "options": actions
+            "type": "confirmation" if actions else "text",
         }
+        if actions:
+            msg_obj["options"] = actions
             
         session.messages.append(msg_obj)
         await WebsiteBuilderService.save_session(session)
