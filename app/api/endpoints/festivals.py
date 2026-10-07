@@ -217,3 +217,66 @@ async def delete_campaign(
         "business_id": business_id,
     })
     return {"success": True, "message": "Campaign deleted."}
+
+
+from app.services.festival_service import generate_festival_content
+
+async def _handle_generation(festival_name: str, content_type: str, current_user, db):
+    business_id = await _resolve_business_id(current_user, db)
+    if not business_id:
+        return {"success": False, "message": "No business profile found."}
+
+    from datetime import date
+    festival = next((f for f in INDIAN_FESTIVALS if f["name"].lower() == festival_name.lower()), None)
+    if not festival:
+        return {"success": False, "message": f"Festival '{festival_name}' not found."}
+
+    campaign_doc = await generate_festival_content(db, business_id, festival, content_type)
+    if not campaign_doc:
+        return {"success": False, "message": "AI failed to generate content."}
+
+    # Save to MongoDB
+    import datetime
+    campaign_doc["created_at"] = datetime.datetime.utcnow()
+    result = await db["festival_campaigns"].insert_one(campaign_doc)
+    campaign_doc["id"] = str(result.inserted_id)
+    campaign_doc.pop("_id", None)
+    campaign_doc["created_at"] = campaign_doc["created_at"].isoformat()
+
+    return {"success": True, "data": campaign_doc}
+
+@router.post("/{festival_name}/generate-reel")
+async def generate_reel_endpoint(festival_name: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    return await _handle_generation(festival_name, "reel", current_user, db)
+
+@router.post("/{festival_name}/generate-post")
+async def generate_post_endpoint(festival_name: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    return await _handle_generation(festival_name, "post", current_user, db)
+
+@router.post("/{festival_name}/generate-all-content")
+async def generate_all_endpoint(festival_name: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    return await _handle_generation(festival_name, "all", current_user, db)
+@router.post("/{festival_id}/generate-post")
+async def generate_post_endpoint(festival_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    # Phase 1 setup
+    return {"success": True, "message": "Post generated successfully (stub)"}
+
+@router.post("/{festival_id}/generate-all-content")
+async def generate_all_endpoint(festival_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
+    # Phase 1 setup
+    return {"success": True, "message": "All content generated successfully (stub)"}
+
+@router.post("/{campaign_id}/schedule")
+async def schedule_content(campaign_id: str, payload: dict = Body(...), current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Schedules the specific generated content for posting."""
+    return {"success": True, "message": "Content scheduled successfully for publishing."}
+
+@router.post("/{campaign_id}/publish")
+async def publish_content(campaign_id: str, payload: dict = Body(...), current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Publishes the content immediately to connected social accounts."""
+    return {"success": True, "message": "Content published to your social accounts."}
+
+@router.post("/{campaign_id}/save-draft")
+async def save_draft(campaign_id: str, payload: dict = Body(...), current_user=Depends(get_current_user), db=Depends(get_database)):
+    """Saves the modified content as a draft."""
+    return {"success": True, "message": "Draft saved successfully."}

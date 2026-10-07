@@ -248,3 +248,99 @@ async def generate_all_upcoming_campaigns(db) -> int:
                 logger.info(f"Generated {festival['name']} campaign for business {business_id}")
 
     return count
+
+async def generate_festival_content(db, business_id: str, festival: dict, content_type: str) -> dict:
+    from app.ai.factory import AIProviderFactory
+    import json
+    import re
+    from datetime import date, timedelta
+    from bson import ObjectId
+
+    business = await db["businesses"].find_one({"_id": ObjectId(business_id)})
+    if not business:
+        return None
+
+    business_name = business.get("name", "Our Business")
+    category = business.get("category", "General")
+    target_audience = business.get("target_audience", "All customers")
+    tone = business.get("brand_tone", "Friendly and professional")
+
+    fest_name = festival["name"]
+    fest_date = festival["date"]
+
+    if content_type == "reel":
+        prompt = f"""You are an AI marketing strategist for Indian businesses.
+Create a Reel specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+
+Output valid JSON only matching this schema:
+{{
+  "reel": {{
+    "title": "", "concept": "", "hook": "", "duration": "30 seconds",
+    "caption": "", "hashtags": [], "cta": "", "music": "", "thumbnail_text": "",
+    "scenes": [
+      {{"scene_number": 1, "duration": "0-5 sec", "visual": "", "on_screen_text": "", "voiceover": "", "image_prompt": ""}}
+    ]
+  }}
+}}"""
+    elif content_type == "post":
+        prompt = f"""You are an AI marketing strategist for Indian businesses.
+Create a Social Media Post specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+
+Output valid JSON only matching this schema:
+{{
+  "post": {{
+    "title": "", "headline": "", "caption": "", "body": "", "cta": "",
+    "hashtags": [], "visual_concept": "", "image_prompt": ""
+  }}
+}}"""
+    else:
+        prompt = f"""You are an AI marketing strategist for Indian businesses.
+Create a complete campaign specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+
+Output valid JSON only matching this schema:
+{{
+  "campaign": {{"name": "", "objective": "", "target_audience": "", "offer": "", "duration": ""}},
+  "reel": {{ "title": "...", "concept": "...", "caption": "..." }},
+  "post": {{ "title": "...", "caption": "...", "image_prompt": "..." }}
+}}"""
+
+    ai_provider = AIProviderFactory.get_provider()
+    try:
+        res = await ai_provider.generate_text(
+            prompt=prompt,
+            system_prompt="You are an expert Indian marketing strategist. Output only raw JSON with no markdown.",
+            max_tokens=4096
+        )
+        raw = res.get("text", "{}").strip()
+        raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+        
+        if "`" in raw:
+            parts = raw.split("`")
+            for part in parts:
+                cleaned = part.strip()
+                if cleaned.startswith("json"):
+                    cleaned = cleaned[4:].strip()
+                if cleaned.startswith("{"):
+                    raw = cleaned
+                    break
+                    
+        first_brace = raw.find("{")
+        last_brace = raw.rfind("}")
+        if first_brace != -1 and last_brace != -1:
+            raw = raw[first_brace:last_brace + 1]
+            
+        data = json.loads(raw)
+        
+        # Prepare document
+        campaign_doc = {
+            "business_id": business_id,
+            "festival_name": fest_name,
+            "festival_date": fest_date,
+            "content_type": content_type,
+            "generated_content": data,
+            "status": "generated"
+        }
+        return campaign_doc
+    except Exception as e:
+        print("Error generating festival content:", e)
+        return None
