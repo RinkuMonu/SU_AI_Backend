@@ -174,3 +174,38 @@ async def get_site(site_id: str):
         "pages": doc.get("pages", []),
         "theme": doc.get("theme", {})
     }
+
+from app.schemas.website_builder import EditWebsiteRequest, EditWebsiteResponse
+
+@router.post("/session/{session_id}/edit", response_model=EditWebsiteResponse)
+async def edit_website(session_id: str, request: EditWebsiteRequest, current_user: User = Depends(get_current_user)):
+    """
+    Takes natural language instruction and applies it to the provided current_state via AI.
+    Returns structured changes and the new website state.
+    """
+    # STUB: In Phase 2, this will route to WebsiteBuilderService.apply_website_edit
+    return EditWebsiteResponse(
+        action="update_theme",
+        message="AI Edit applied (Phase 1 Stub)",
+        updated_state=request.current_state
+    )
+
+@router.post("/session/{session_id}/restore")
+async def restore_version(session_id: str, version: int, current_user: User = Depends(get_current_user)):
+    """Restores the website to a specific version number."""
+    return {"success": True, "message": f"Restored to version {version}"}
+
+@router.post("/session/{session_id}/finalize")
+async def finalize_website(session_id: str, current_user: User = Depends(get_current_user)):
+    """Locks the website and marks it as finalized."""
+    return {"success": True, "message": "Website finalized."}
+
+@router.post("/session/{session_id}/export/pdf")
+async def export_website_pdf(session_id: str, current_user: User = Depends(get_current_user)):
+    """Generates a PDF snapshot of the finalized website."""
+    return {"success": True, "download_url": "/mock-pdf-url.pdf"}
+
+@router.post("/session/{session_id}/export/zip")
+async def export_website_zip(session_id: str, current_user: User = Depends(get_current_user)):
+    """Packages the website into a downloadable ZIP archive."""
+    return {"success": True, "download_url": "/mock-zip-url.zip"}

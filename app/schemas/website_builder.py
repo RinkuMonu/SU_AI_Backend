@@ -49,3 +49,44 @@ class WebsiteBuilderSessionResponse(BaseModel):
     model_config = {
         "populate_by_name": True
     }
+
+
+# Structured Website Schemas (Phase 1)
+class WebsiteThemeSchema(BaseModel):
+    primary_color: Optional[str] = None
+    secondary_color: Optional[str] = None
+    background_color: Optional[str] = None
+    text_color: Optional[str] = None
+    font_family: Optional[str] = None
+    heading_font: Optional[str] = None
+    border_radius: Optional[str] = None
+
+class WebsiteSectionSchema(BaseModel):
+    id: str
+    type: str
+    order: int
+    content: Optional[Dict[str, Any]] = {}
+    styles: Optional[Dict[str, Any]] = {}
+    media: Optional[Dict[str, Any]] = {}
+
+class WebsitePageSchema(BaseModel):
+    id: str
+    name: str
+    sections: List[WebsiteSectionSchema] = []
+
+class WebsiteStateSchema(BaseModel):
+    version: int = 1
+    theme: Optional[WebsiteThemeSchema] = None
+    pages: List[WebsitePageSchema] = []
+
+class EditWebsiteRequest(BaseModel):
+    page_id: Optional[str] = "home"
+    user_instruction: str
+    current_state: WebsiteStateSchema
+
+class EditWebsiteResponse(BaseModel):
+    action: str
+    target: Optional[str] = None
+    changes: Optional[Dict[str, Any]] = None
+    message: str
+    updated_state: WebsiteStateSchema

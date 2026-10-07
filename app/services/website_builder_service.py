@@ -451,3 +451,101 @@ CRITICAL REQUIREMENTS:
         await collection.update_one({"_id": ObjectId(project_id)}, {"$set": {"pages": revised_pages}})
         
         return site
+
+    @staticmethod
+    async def apply_website_edit(user_id: str, session_id: str, instruction: str, current_state: dict):
+        """
+        Executes the AI logic for Phase 2: Natural Language to Structured JSON Edit.
+        """
+        from app.ai.factory import AIProviderFactory
+        import json
+        import re
+
+        # Grab Business Profile
+        # db = get_database()
+        # In a full implementation we'd inject the business context, brand kit, etc.
+        
+        system_prompt = """You are an AI Website Editor for SevenUnique AI.
+Your job is to modify an existing website based on the user's natural-language instructions.
+You are NOT generating a completely new website unless explicitly requested.
+You must preserve all existing website content and structure unless the user asks you to change it.
+Identify the exact page, section, component, property or style that the user wants to modify.
+Make the smallest safe change necessary.
+
+Allowed actions:
+update_theme, update_text, update_style, add_section, remove_section, replace_image, add_logo, update_navigation.
+
+Return structured JSON ONLY matching this exact format:
+{
+  "action": "...",
+  "target": "...",
+  "changes": {},
+  "message": "Human-readable confirmation message."
+}"""
+
+        prompt = f"""User Instruction: {instruction}
+Current Website State:
+{json.dumps(current_state, indent=2)[:2000]} # Truncated for token limit in stub
+
+Return ONLY valid JSON with the modification."""
+
+        ai_provider = AIProviderFactory.get_provider()
+        try:
+            res = await ai_provider.generate_text(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                max_tokens=2048
+            )
+            raw = res.get("text", "{}").strip()
+            raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+            
+            if "`" in raw:
+                parts = raw.split("`")
+                for part in parts:
+                    cleaned = part.strip()
+                    if cleaned.startswith("json"):
+                        cleaned = cleaned[4:].strip()
+                    if cleaned.startswith("{"):
+                        raw = cleaned
+                        break
+                        
+            first_brace = raw.find("{")
+            last_brace = raw.rfind("}")
+            if first_brace != -1 and last_brace != -1:
+                raw = raw[first_brace:last_brace + 1]
+                
+            data = json.loads(raw)
+            return data
+            
+        except Exception as e:
+            return {"action": "error", "message": f"AI Edit Failed: {str(e)}"}
+
+    @staticmethod
+    async def generate_pdf_snapshot(website_id: str) -> str:
+        """
+        Phase 4: Generates a PDF snapshot of the finalized website.
+        In a production environment, this would spin up Pyppeteer/Playwright
+        to render the JSON state to HTML and capture a PDF.
+        """
+        # Mock PDF generation
+        pdf_filename = f"website_{website_id}_snapshot.pdf"
+        # ... logic to render and save to S3 or local ...
+        return f"/downloads/pdfs/{pdf_filename}"
+
+    @staticmethod
+    async def generate_zip_archive(website_state: dict, website_id: str) -> str:
+        """
+        Phase 4: Generates a downloadable ZIP of the website.
+        Packages the structured JSON into an HTML/React boilerplate.
+        """
+        import zipfile
+        import io
+        
+        # Mock ZIP generation
+        zip_filename = f"website_{website_id}_source.zip"
+        # In production:
+        # 1. Iterate over website_state['pages']
+        # 2. Convert each section JSON to HTML templates
+        # 3. Create style.css from website_state['theme']
+        # 4. Write to zip archive
+        return f"/downloads/archives/{zip_filename}"

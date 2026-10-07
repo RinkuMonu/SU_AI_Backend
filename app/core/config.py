@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     # MongoDB Configuration
-    MONGO_URI: str = "mongodb://localhost:27017"
+    MONGO_URI: str = "mongodb+srv://rinkuyadav9460_db_user:PJrNGHmujot6YovI@cluster0.wrmtwnk.mongodb.net/"
     DATABASE_NAME: str = "sevenunique_ai_db"
 
     # Security Configuration
