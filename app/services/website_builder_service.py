@@ -104,7 +104,7 @@ class WebsiteBuilderService:
         await WebsiteBuilderService.save_session(session)
 
     @staticmethod
-    async def process_chat(session_id: str, user_id: str, message: str, language: str = None):
+    async def process_chat(session_id: str, user_id: str, message: str, language: str = None, data: dict = None):
         session = await WebsiteBuilderService.get_session(session_id, user_id)
         if not session:
             raise Exception("Session not found")
@@ -164,6 +164,127 @@ Keys: 'Language', 'Business Name', 'Business Category', 'Description', 'Location
         if session.collected_data.get("Language"):
             session.language = session.collected_data.get("Language")
             
+
+        # Logo Interception Flow
+        import urllib.parse
+        if data and data.get("action") == "upload_logo" and data.get("base64"):
+            session.collected_data["Logo"] = data.get("base64")
+            session.collected_data["logo_status"] = "finalized"
+            session.collected_data["logo_source"] = "uploaded"
+            reply_msg = "✅ Your logo has been uploaded. Is this logo okay, or would you like to modify it?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": data.get("base64")},
+                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") == "create_logo":
+            b_name = session.collected_data.get("Business Name", "Your Business")
+            urls = []
+            for style in ["modern", "elegant", "minimal"]:
+                prompt_encoded = urllib.parse.quote(f"{style} logo for {b_name} high quality")
+                urls.append(f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}")
+            
+            session.collected_data["generated_logos"] = urls
+            reply_msg = "Here are 3 logo options based on your business. Which one would you like to use?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"images": urls},
+                "options": [{"label": "Logo 1", "action": "select_logo_1"}, {"label": "Logo 2", "action": "select_logo_2"}, {"label": "Logo 3", "action": "select_logo_3"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") in ["select_logo_1", "select_logo_2", "select_logo_3"]:
+            idx = int(data.get("action")[-1]) - 1
+            selected = session.collected_data.get("generated_logos", [])[idx]
+            session.collected_data["Logo"] = selected
+            session.collected_data["logo_source"] = "generated"
+            reply_msg = "Great! You've selected this logo. Would you like to modify it?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": selected},
+                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") == "use_existing_logo":
+            session.collected_data["Logo"] = session.collected_data.get("Existing Logo")
+            session.collected_data["logo_source"] = "existing"
+            session.collected_data["logo_status"] = "finalized"
+            reply_msg = "Perfect! I'll use this logo on your website."
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": session.collected_data.get("Logo")},
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        elif data and data.get("action") == "keep_logo":
+            session.collected_data["logo_status"] = "finalized"
+            reply_msg = "Perfect! I'll use this logo on your website."
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": session.collected_data.get("Logo")},
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        elif data and data.get("action") == "modify_logo":
+            reply_msg = "What would you like to change in the logo? (e.g., 'Make it blue', 'Change the font')"
+            session.collected_data["logo_status"] = "modifying"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        if session.collected_data.get("logo_status") == "modifying":
+            try:
+                prompt_encoded = urllib.parse.quote(f"{message} logo for {session.collected_data.get('Business Name', 'business')} high quality")
+                new_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}"
+                session.collected_data["Logo"] = new_url
+                reply_msg = "Here's the modified version. Is this okay?"
+                msg_obj = {
+                    "id": str(uuid.uuid4()),
+                    "role": "ai",
+                    "content": reply_msg,
+                    "type": "text",
+                    "data": {"logo_url": new_url},
+                    "options": [{"label": "Yes, keep this logo", "action": "keep_logo"}, {"label": "Modify again", "action": "modify_logo"}]
+                }
+                session.messages.append(msg_obj)
+                await WebsiteBuilderService.save_session(session)
+                return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+            except:
+                pass
         # 3. Consultant Response
         consultant_system = """You are an AI Website Builder Consultant. 
 Keep your response EXTREMELY short, punchy, and direct (max 1 or 2 short sentences). 
@@ -284,6 +405,7 @@ Respond very briefly."""
 
         # Dynamic topic-aligned schema example & fallback
         schema_example = json.dumps({
+            "logo": {"source": "uploaded", "url": "https://example.com/logo.png"},
             "theme": {"primary": "purple", "font": "inter"},
             "pages": [
                 {

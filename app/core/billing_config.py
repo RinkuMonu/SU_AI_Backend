@@ -27,11 +27,12 @@ PLANS = {
         "api_access": False,
         "white_label": False
     },
-    "STARTER": {
-        "name": "STARTER",
-        "price": 499,
+    "BASIC": {
+        "name": "BASIC",
+        "price": 799,
         "currency": "INR",
         "billing_cycle": "monthly",
+        "gst_applicable": True,
         "credits": 50,
         "post_limit": 15,
         "reel_limit": -1,
@@ -44,9 +45,10 @@ PLANS = {
     },
     "PRO": {
         "name": "PRO",
-        "price": 1999,
+        "price": 2999,
         "currency": "INR",
         "billing_cycle": "monthly",
+        "gst_applicable": True,
         "credits": 400,
         "post_limit": -1,
         "reel_limit": -1,
@@ -62,6 +64,7 @@ PLANS = {
         "price": 4999,
         "currency": "INR",
         "billing_cycle": "monthly",
+        "gst_applicable": True,
         "credits": 1000,
         "post_limit": -1,
         "reel_limit": -1,

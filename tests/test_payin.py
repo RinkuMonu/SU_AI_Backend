@@ -48,7 +48,7 @@ async def get_token():
 @pytest.mark.skipif(settings.ENVIRONMENT == "development", reason="Dev mode allows unauth")
 async def test_create_payment_unauthenticated():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        res = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "STARTER"})
+        res = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "BASIC"})
         assert res.status_code == 401
 
 async def test_create_payment_free_plan():
@@ -83,7 +83,7 @@ async def test_create_payment_success(mock_post):
     
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.post("/api/v1/payments/payin/create", 
-            json={"plan_id": "STARTER"}, headers={"Authorization": f"Bearer {token}"})
+            json={"plan_id": "BASIC"}, headers={"Authorization": f"Bearer {token}"})
         assert res.status_code == 200
         data = res.json()
         assert data["success"] is True
@@ -94,7 +94,7 @@ async def test_create_payment_success(mock_post):
         db = get_database()
         tx = await db["payment_transactions"].find_one({"order_id": data["order_id"]})
         assert tx is not None
-        assert tx["amount"] == 499.0 # 499 INR
+        assert tx["amount"] == 799.0 # 799 INR
 
 async def mock_post_fail(self, url, *args, **kwargs):
     if "finuniques.in" in str(url) or "mock.payin.com" in str(url) or "test" in str(url):
@@ -109,7 +109,7 @@ async def test_create_payment_api_failure(mock_post):
     
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res = await ac.post("/api/v1/payments/payin/create", 
-            json={"plan_id": "STARTER"}, headers={"Authorization": f"Bearer {token}"})
+            json={"plan_id": "BASIC"}, headers={"Authorization": f"Bearer {token}"})
         assert res.status_code == 502
 
 async def test_callback_success():
@@ -118,8 +118,8 @@ async def test_callback_success():
     order_id = "ORDER_TEST_SUCCESS"
     await db["payment_transactions"].insert_one({
         "user_id": "some_user",
-        "plan_id": "STARTER",
-        "amount": 499.0,
+        "plan_id": "BASIC",
+        "amount": 799.0,
         "order_id": order_id,
         "status": "initiated"
     })
@@ -127,7 +127,7 @@ async def test_callback_success():
     payload = {
         "orderId": order_id,
         "responseCode": "100",
-        "amount": "49900",
+        "amount": "79900",
         "pgTransId": "TX123"
     }
     
@@ -146,8 +146,8 @@ async def test_callback_amount_mismatch():
     order_id = "ORDER_TEST_MISMATCH"
     await db["payment_transactions"].insert_one({
         "user_id": "some_user",
-        "plan_id": "STARTER",
-        "amount": 499.0,
+        "plan_id": "BASIC",
+        "amount": 799.0,
         "order_id": order_id,
         "status": "initiated"
     })

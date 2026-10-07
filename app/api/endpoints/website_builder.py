@@ -93,7 +93,8 @@ async def session_message(session_id: str, request: SendMessageRequest, current_
                 session_id,
                 str(current_user.id),
                 request.message,
-                None # Language already in session
+                None, # Language already in session
+                data=request.data
             )
             session = resp.session
             
