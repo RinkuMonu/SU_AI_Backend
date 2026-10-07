@@ -112,75 +112,45 @@ Business Details:
 - Top Products: {products_str}
 - Festival: {fest_name} {fest_emoji} on {fest_date}
 
-Create a complete festival campaign with the following assets. Output ONLY valid JSON, no markdown:
+Generate exactly ONE Instagram Reel and ONE Instagram Post specifically for {fest_name}.
+
+Output ONLY valid JSON, no markdown.
 
 {{
-  "offer_strategy": "Short 1-2 sentence discount or offer idea for {fest_name}",
   "assets": [
-    {{
-      "id": "post_1",
-      "type": "post",
-      "platform": "instagram",
-      "day": 1,
-      "content": {{
-        "headline": "Post headline here",
-        "body": "Caption text here with hashtags",
-        "image_prompt": "Detailed DALL-E style prompt for the image"
-      }}
-    }},
-    {{
-      "id": "post_2",
-      "type": "post",
-      "platform": "instagram",
-      "day": 5,
-      "content": {{
-        "headline": "Post headline here",
-        "body": "Caption text with hashtags",
-        "image_prompt": "Detailed DALL-E style prompt for the image"
-      }}
-    }},
-    {{
-      "id": "post_3",
-      "type": "post",
-      "platform": "instagram",
-      "day": 9,
-      "content": {{
-        "headline": "Final day post headline",
-        "body": "Final caption with hashtags",
-        "image_prompt": "Image prompt"
-      }}
-    }},
     {{
       "id": "reel_1",
       "type": "reel",
       "platform": "instagram",
-      "day": 3,
       "content": {{
-        "hook": "First 3 seconds hook text",
-        "script": "Full reel script with scene descriptions",
-        "voiceover": "What the voice should say",
-        "cta": "Call to action text"
+        "concept": "Reel concept",
+        "title": "Reel title",
+        "script": "Short video script",
+        "scenes": ["Scene 1 description", "Scene 2 description", "Scene 3 description"],
+        "visual_suggestions": "Visual suggestions",
+        "image_prompt": "A highly detailed, photorealistic image prompt describing the cover image for this reel, visually stunning, festival theme",
+        "on_screen_text": "On-screen text",
+        "voiceover": "Voiceover/dialogue if required",
+        "caption": "Instagram Caption",
+        "description": "Description",
+        "hashtags": "#Hashtag1 #Hashtag2",
+        "cta": "Call-to-action (CTA)"
       }}
     }},
     {{
-      "id": "ad_1",
-      "type": "ad",
-      "platform": "meta",
-      "day": 2,
+      "id": "post_1",
+      "type": "post",
+      "platform": "instagram",
       "content": {{
-        "headline": "Ad headline (max 40 chars)",
-        "primary_text": "Ad primary text",
-        "cta": "Shop Now",
-        "image_prompt": "Ad creative image prompt"
-      }}
-    }},
-    {{
-      "id": "whatsapp_1",
-      "type": "whatsapp",
-      "platform": "whatsapp",
-      "day": 1,
-      "content": {{
-        "message": "WhatsApp broadcast message (friendly, short, with offer details and emoji)"
+        "concept": "Post concept",
+        "title": "Post title",
+        "post_copy": "Post copy",
+        "visual_suggestion": "Visual/design suggestion",
+        "image_prompt": "A highly detailed, photorealistic image prompt describing the final image for this post, no text in image, beautiful lighting, festival theme",
+        "caption": "Instagram Caption",
+        "description": "Description",
+        "hashtags": "#Hashtag1 #Hashtag2",
+        "cta": "Call-to-action (CTA)"
       }}
     }}
   ]

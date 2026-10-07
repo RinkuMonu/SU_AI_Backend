@@ -62,9 +62,12 @@ async def get_upcoming(
     from datetime import date
     today = date.today()
     upcoming_festivals = []
+    
+    # Filter to only show festivals for the current year (Jan to Dec)
     for f in INDIAN_FESTIVALS:
         fest_date = date.fromisoformat(f["date"])
-        upcoming_festivals.append({**f, "days_left": (fest_date - today).days})
+        if fest_date.year == today.year:
+            upcoming_festivals.append({**f, "days_left": (fest_date - today).days})
 
     campaigns = []
     if business_id:

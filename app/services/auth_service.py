@@ -168,7 +168,31 @@ class AuthService:
             email=email,
             hashed_password=hashed_password,
             email_verified=True,
-            role=user_in.role or "business"
+            role=user_in.role or "business",
+            business_logo=user_in.business_logo,
+            brand_color=user_in.brand_color,
+            business_name=user_in.business_name,
+            business_type=user_in.business_type,
+            business_category=user_in.business_category,
+            sub_category=user_in.sub_category,
+            business_description=user_in.business_description,
+            tagline=user_in.tagline,
+            registration_number=user_in.registration_number,
+            year_established=user_in.year_established,
+            number_of_employees=user_in.number_of_employees,
+            country=user_in.country,
+            state=user_in.state,
+            city=user_in.city,
+            area=user_in.area,
+            pincode=user_in.pincode,
+            full_address=user_in.full_address,
+            google_maps_url=user_in.google_maps_url,
+            business_model=user_in.business_model,
+            selling_model=user_in.selling_model,
+            target_age_group=user_in.target_age_group,
+            target_gender=user_in.target_gender,
+            target_location=user_in.target_location,
+            customer_type=user_in.customer_type
         )
         
         user_doc = user.model_dump(by_alias=True, exclude={"id"})

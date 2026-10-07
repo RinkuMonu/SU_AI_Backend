@@ -5,10 +5,7 @@ from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.services.scheduler_service import scheduler_service
 from app.api.api_router import api_router
-from app.api.endpoints.brand import router as brand_router
-from app.api.endpoints.products import router as products_router
 from app.api.endpoints import content, insights, messages, reviews, social
-from app.api.endpoints.ad import router as ad_router
 from app.api.endpoints.reel import router as reel_router
 from app.api.endpoints.credits import router as credits_router
 from app.api.endpoints.subscription import router as subscription_router
@@ -68,7 +65,6 @@ app.include_router(
     prefix="/api/v1/reviews",
     tags=["Reviews"]
 )
-app.include_router(ad_router)
 app.include_router(reel_router)
 app.include_router(credits_router)
 app.include_router(subscription_router)

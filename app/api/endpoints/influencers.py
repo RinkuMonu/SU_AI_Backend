@@ -302,4 +302,27 @@ async def get_campaign_insights(campaign_id: str, current_user = Depends(get_cur
             }
         }
 
+@router.get("/locations/search")
+async def search_locations(text: str, current_user = Depends(get_current_user)):
+    import httpx
+    from app.core.config import settings
+    import os
+    
+    # Optionally load from environment explicitly if not in settings yet
+    api_key = os.getenv("GEOAPIFY_API_KEY", "")
+    if not api_key:
+        api_key = getattr(settings, "GEOAPIFY_API_KEY", "")
+        
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GEOAPIFY_API_KEY is not configured")
+        
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            url = f"https://api.geoapify.com/v1/geocode/search?text={text}&apiKey={api_key}"
+            response = await client.get(url)
+            response.raise_for_status()
+            return {"success": True, "data": response.json()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch locations: {str(e)}")
+
 
