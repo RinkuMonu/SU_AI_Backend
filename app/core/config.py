@@ -36,9 +36,11 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # AI Configuration
-    AI_PROVIDER: str = "mock"
+    AI_PROVIDER: str = "gemini"
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-1.5-flash"
 
     # Fashion AI Configuration
     FASHION_IMAGE_PROVIDER: str = "pollinations"  # pollinations | replicate | custom

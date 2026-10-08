@@ -21,6 +21,9 @@ class AIProviderFactory:
         elif provider_name == "groq":
             from app.ai.providers.groq_provider import GroqProvider
             provider = GroqProvider()
+        elif provider_name == "gemini":
+            from app.ai.providers.gemini_provider import GeminiProvider
+            provider = GeminiProvider()
         else:
             # Fallback to mock for development safety if configured incorrectly
             provider = MockAIProvider()

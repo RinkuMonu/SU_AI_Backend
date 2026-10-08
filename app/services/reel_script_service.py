@@ -1,6 +1,6 @@
 import json
 import logging
-from app.ai.providers.groq_provider import GroqProvider
+from app.ai.factory import AIProviderFactory
 from app.ai.prompts.reel import get_reel_script_prompt
 from app.schemas.reel import ReelScript
 
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 class ReelScriptService:
     def __init__(self):
-        self.provider = GroqProvider()
+        self.provider = AIProviderFactory.get_provider()
 
     async def generate_script(
         self,
@@ -57,7 +57,7 @@ class ReelScriptService:
                 if json_match:
                     parsed_json = json.loads(json_match.group(1).strip())
                 else:
-                    raise ValueError("Failed to parse JSON from Groq response.")
+                    raise ValueError("Failed to parse JSON from AI response.")
                     
             # Validate with Pydantic
             script = ReelScript(**parsed_json)
