@@ -22,13 +22,15 @@ class PayinService:
             raise HTTPException(status_code=500, detail="Finunique Payin configuration missing")
 
         order_id = f"ORDER_{uuid.uuid4().hex[:12].upper()}"
-        amount_inr = float(plan["price"])
+        base_amount = float(plan["price"])
+        amount_inr = round(base_amount * 1.18, 2) if base_amount > 0 else base_amount
         
         now = datetime.now(timezone.utc)
         transaction = {
             "user_id": user_id,
             "plan_id": plan_id,
             "plan_name": plan["name"],
+            "base_amount": base_amount,
             "amount": amount_inr,
             "currency": plan["currency"],
             "order_id": order_id,
