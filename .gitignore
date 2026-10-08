@@ -18,3 +18,20 @@ ENV/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# ── Uploads / runtime-generated files ──────────────────────────
+uploads/temp/
+uploads/videos/
+uploads/audio/
+# Keep the uploads folder itself but ignore its contents
+uploads/*
+!uploads/.gitkeep
+
+# ── Scratch / temporary frontend files dropped in backend ──────
+frontend_*.tsx
+frontend_*.ts
+temp_*.tsx
+temp_*.ts
+temp_*.txt
+*_temp.*
+*_scratch.*

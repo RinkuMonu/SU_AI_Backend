@@ -25,10 +25,10 @@ async def generate_reel(
 ):
     db = get_database()
     
-    business = await BusinessService.get_business_by_owner(str(current_user.id))
+    business = await BusinessService.get_business_by_owner(str(current_user["id"]))
     if not business:
         class MockBusiness:
-            id = current_user.id
+            id = current_user["id"]
             name = "Mock Business"
         business = MockBusiness()
         
@@ -79,12 +79,12 @@ async def generate_reel(
         }
         
     # Deduct credits atomically before pushing to background
-    await CreditService.deduct_credits(db, current_user.id, "reel_generation")
+    await CreditService.deduct_credits(db, current_user["id"], "reel_generation")
     
     try:
         reel_service = ReelService(db)
         job_id = await reel_service.create_reel_job(
-            user_id=str(current_user.id),
+            user_id=str(current_user["id"]),
             business_id=str(business.id),
             request=request,
             product=product,
@@ -92,8 +92,8 @@ async def generate_reel(
         )
         
         # Deduct credits & log usage
-        await CreditService.deduct_credits(db, str(current_user.id), "ai_reel")
-        await SubscriptionService.increment_usage(db, str(current_user.id), "reel")
+        await CreditService.deduct_credits(db, str(current_user["id"]), "ai_reel")
+        await SubscriptionService.increment_usage(db, str(current_user["id"]), "reel")
         
         return ReelGenerationResponse(
             success=True,
@@ -103,7 +103,7 @@ async def generate_reel(
         )
     except Exception as exc:
         # Refund if queueing failed
-        await CreditService.refund_credits(db, str(current_user.id), "ai_reel")
+        await CreditService.refund_credits(db, str(current_user["id"]), "ai_reel")
         raise HTTPException(status_code=500, detail=f"Failed to start reel generation: {exc}")
 
 @router.get("/reel/{job_id}/status", response_model=ReelJobStatus)
@@ -125,7 +125,7 @@ async def get_reels(
     current_user = Depends(get_current_user)
 ):
     db = get_database()
-    business = await BusinessService.get_business_by_owner(str(current_user.id))
+    business = await BusinessService.get_business_by_owner(str(current_user["id"]))
     if not business:
         return {"success": True, "data": []}
         
@@ -174,7 +174,7 @@ async def delete_reel(
     if not ObjectId.is_valid(reel_id):
         raise HTTPException(status_code=400, detail="Invalid reel ID format")
         
-    business = await BusinessService.get_business_by_owner(str(current_user.id))
+    business = await BusinessService.get_business_by_owner(str(current_user["id"]))
     
     result = await db["reel_jobs"].delete_one({
         "_id": ObjectId(reel_id),
