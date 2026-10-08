@@ -11,28 +11,27 @@ logger = logging.getLogger(__name__)
 
 class GeminiProvider(AIProvider):
     """
-    Google Gemini AI integration using the google-generativeai SDK.
+    Google Gemini AI integration using the new google-genai SDK (google.genai).
     Reads GEMINI_API_KEY from config/env.
     """
 
     def __init__(self):
-        try:
-            import google.generativeai as genai
-        except ImportError:
-            raise RuntimeError(
-                "google-generativeai package is not installed. "
-                "Run: pip install google-generativeai"
-            )
-
         api_key = getattr(settings, "GEMINI_API_KEY", None)
         if not api_key:
             raise ValueError("GEMINI_API_KEY is missing from configuration.")
 
-        genai.configure(api_key=api_key)
-        model_name = getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash")
-        self.model = genai.GenerativeModel(model_name)
+        try:
+            from google import genai
+            self._client = genai.Client(api_key=api_key)
+        except ImportError:
+            raise RuntimeError(
+                "google-genai package is not installed. "
+                "Run: pip install google-genai"
+            )
+
+        # Use a stable, widely available model
+        self._model_name = getattr(settings, "GEMINI_MODEL", "gemini-2.0-flash")
         self._provider_name = "gemini"
-        self._model_name = model_name
 
     async def generate_text(
         self,
@@ -41,27 +40,27 @@ class GeminiProvider(AIProvider):
         **kwargs,
     ) -> Dict[str, Any]:
         """
-        Generates text using the Gemini API.
-        Combines system_prompt + prompt into a single message (Gemini doesn't
-        have a separate system-role in the basic API).
+        Generates text using the new google.genai async client.
         """
         full_prompt = prompt
         if system_prompt:
             full_prompt = f"{system_prompt}\n\n{prompt}"
 
-        # If caller wants JSON, append a reminder
+        # If caller wants JSON output, append instruction
         if kwargs.get("response_format", {}).get("type") == "json_object":
-            full_prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation."
+            full_prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation, no code fences."
 
         try:
-            generation_config = {
-                "temperature": kwargs.get("temperature", 0.7),
-                "max_output_tokens": kwargs.get("max_tokens", 2048),
-            }
+            from google import genai
+            from google.genai import types
 
-            response = await self.model.generate_content_async(
-                full_prompt,
-                generation_config=generation_config,
+            response = await self._client.aio.models.generate_content(
+                model=self._model_name,
+                contents=full_prompt,
+                config=types.GenerateContentConfig(
+                    temperature=kwargs.get("temperature", 0.7),
+                    max_output_tokens=kwargs.get("max_tokens", 2048),
+                ),
             )
 
             content = response.text if response.text else ""
@@ -84,21 +83,19 @@ class GeminiProvider(AIProvider):
         system_prompt: str = None,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Override to strip markdown fences before JSON parsing."""
+        """Override to ensure robust JSON parsing."""
         kwargs["response_format"] = {"type": "json_object"}
         result = await self.generate_text(prompt, system_prompt, **kwargs)
-        text = result.get("text", "")
+        text = result.get("text", "").strip()
 
-        # Strip markdown code fences
+        # Strip markdown code fences if model ignores instructions
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
         if match:
             text = match.group(1).strip()
 
-        # Strip any leading/trailing non-JSON characters
-        text = text.strip()
+        # Fallback: find first JSON object/array
         if not text.startswith("{") and not text.startswith("["):
-            # Try to find JSON object
-            obj_match = re.search(r"\{.*\}", text, re.DOTALL)
+            obj_match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
             if obj_match:
                 text = obj_match.group(0)
 
