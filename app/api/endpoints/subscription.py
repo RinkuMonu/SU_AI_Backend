@@ -35,7 +35,7 @@ async def get_my_subscription(
         usage = {"posts_created": 0, "reels_created": 0}
         
     sub["usage"] = usage
-    sub["plan_details"] = PLANS.get(sub.get("plan_id", "FREE"))
+    sub["plan_details"] = PLANS.get(sub.get("plan_id", "FREE"), PLANS["FREE"])
     
     # Exclude _id to avoid serialization issues
     if "_id" in sub:

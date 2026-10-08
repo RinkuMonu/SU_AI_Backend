@@ -4,6 +4,7 @@ from typing import Optional, List
 
 class GeneratePostRequest(BaseModel):
     product_id: str
+    product_ids: Optional[List[str]] = None
     platform: str = Field(
         default="instagram",
         description="Target social platform"

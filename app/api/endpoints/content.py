@@ -58,38 +58,44 @@ async def generate_post(
     )
 
     # ---------------------------------
-    # 3. Get product (flexible ID lookup)
+    # 3. Get products (flexible ID lookup)
     # ---------------------------------
 
-    product = {}
-    product_id = request.product_id
+    products_data = []
+    
+    # Use product_ids if provided, otherwise fallback to product_id
+    target_ids = request.product_ids if request.product_ids else [request.product_id]
+    
+    for pid in target_ids:
+        product_doc = None
+        # Try MongoDB ObjectId lookup first
+        if ObjectId.is_valid(pid):
+            product_doc = await db["products"].find_one({
+                "_id": ObjectId(pid),
+                "business_id": ObjectId(str(business.id))
+            })
 
-    # Try MongoDB ObjectId lookup first
-    if ObjectId.is_valid(product_id):
-        doc = await db["products"].find_one({
-            "_id": ObjectId(product_id),
-            "business_id": ObjectId(str(business.id))
-        })
-        if doc:
-            product = serialize_product(doc)
+        # If not found by ObjectId, try matching by custom product_id field or name
+        if not product_doc:
+            product_doc = await db["products"].find_one({
+                "business_id": ObjectId(str(business.id)),
+                "$or": [
+                    {"product_id": pid},
+                    {"name": pid}
+                ]
+            })
 
-    # If not found by ObjectId, try matching by custom product_id field or name
-    if not product:
-        doc = await db["products"].find_one({
-            "business_id": ObjectId(str(business.id)),
-            "$or": [
-                {"product_id": product_id},
-                {"name": product_id}
-            ]
-        })
-        if doc:
-            product = serialize_product(doc)
+        if product_doc:
+            products_data.append(serialize_product(product_doc))
 
-    # If still not found, use first product of the business as fallback
-    if not product:
+    # If still no products found, use first product of the business as fallback
+    if not products_data:
         all_products = await get_products(db, str(business.id))
         if all_products:
-            product = all_products[0]
+            products_data.append(all_products[0])
+            
+    # For backward compatibility with existing single-product references
+    product = products_data[0] if products_data else {}
 
     # ---------------------------------
     # 4. Generate AI Post
@@ -101,6 +107,7 @@ async def generate_post(
         business=business.model_dump(mode="json"),
         brand=brand,
         product=product,
+        products=products_data,
         platform=request.platform,
         objective=request.objective,
         language=request.language,
@@ -112,6 +119,7 @@ async def generate_post(
     # ---------------------------------
 
     generated["product_id"] = request.product_id
+    generated["product_ids"] = request.product_ids if request.product_ids else [request.product_id]
     generated["platform"] = request.platform
     generated["objective"] = request.objective
 
