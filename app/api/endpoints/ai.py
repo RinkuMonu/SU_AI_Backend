@@ -119,6 +119,87 @@ async def generate_caption(request: CaptionRequest, current_user: User = Depends
             }
         }
 
+@router.post("/image", response_model=dict, dependencies=[Depends(require_feature("ai_image")), Depends(require_credits("ai_image")), Depends(require_usage_limit("image"))])
+async def generate_image(request: ImageGenerationRequest, current_user: User = Depends(get_current_user)):
+    """
+    Generates an image based on the provided prompt and optional reference images.
+    """
+    start_time = time.time()
+    
+    business = await BusinessService.get_business_by_owner(str(current_user.id))
+    business_id = str(business.id) if business else str(current_user.id)
+    
+    collection = await get_history_collection()
+    
+    history_record = AIGenerationHistory(
+        user_id=str(current_user.id),
+        business_id=business_id,
+        generation_type="image",
+        provider="mock",
+        model_name="mock-model-v1",
+        input_params=request.model_dump(),
+        status="processing"
+    )
+    
+    doc = history_record.model_dump(by_alias=True, exclude={"id"})
+    result = await collection.insert_one(doc)
+    history_id = result.inserted_id
+    
+    try:
+        from app.ai.image.generator import ImageGenerator
+        from app.core.config import settings
+        
+        image_gen = ImageGenerator(
+            api_url=getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations"),
+            api_key=getattr(settings, "IMAGE_API_KEY", "your_api_key_here")
+        )
+        
+        # Determine the primary reference image if multiple were uploaded
+        primary_ref = None
+        if request.reference_images and len(request.reference_images) > 0:
+            primary_ref = request.reference_images[0]
+            
+        img_res = await image_gen.generate(prompt=request.prompt, product_image=primary_ref)
+        image_url = img_res.get("image_url", "")
+        
+        if not image_url:
+            raise Exception("No image generated")
+            
+        execution_time = int((time.time() - start_time) * 1000)
+        await collection.update_one(
+            {"_id": history_id},
+            {"$set": {
+                "status": "success",
+                "output_data": {"image_url": image_url},
+                "execution_time_ms": execution_time
+            }}
+        )
+        
+        db = get_database()
+        await CreditService.deduct_credits(db, str(current_user.id), "ai_image")
+        await SubscriptionService.increment_usage(db, str(current_user.id), "image")
+        
+        return {
+            "success": True,
+            "message": "Image generated successfully",
+            "data": {"image_url": image_url}
+        }
+    except Exception as e:
+        execution_time = int((time.time() - start_time) * 1000)
+        await collection.update_one(
+            {"_id": history_id},
+            {"$set": {
+                "status": "failed",
+                "error_message": str(e),
+                "execution_time_ms": execution_time
+            }}
+        )
+        return {
+            "success": False,
+            "message": "AI image generation failed. Please try again.",
+            "error": {"code": "AI_GENERATION_FAILED", "details": str(e)}
+        }
+
 @router.get("/generations", response_model=List[dict])
 async def get_generations(skip: int = 0, limit: int = 20, current_user: User = Depends(get_current_user)):
     """

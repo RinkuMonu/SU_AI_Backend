@@ -116,7 +116,7 @@ class WebsiteBuilderService:
         })
         
         lower_msg = message.lower()
-        if any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
+        if ("website" in lower_msg and any(x in lower_msg for x in ["build", "generate", "create", "make"])) or any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
             if session.collected_data.get("Business Name"):
                 return await WebsiteBuilderService.generate_website(session)
             
@@ -150,7 +150,7 @@ class WebsiteBuilderService:
         extract_system = "Extract fields into JSON."
         extract_prompt = f"""Extract from: '{message}'.
 Data: {json.dumps(session.collected_data, default=str)}
-Keys: 'Language', 'Business Name', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'WhatsApp', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
+Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'WhatsApp', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
         
         try:
             extracted = await ai.generate_json(extract_prompt, system_prompt=extract_system)
@@ -406,7 +406,7 @@ Respond very briefly."""
         # Dynamic topic-aligned schema example & fallback
         schema_example = json.dumps({
             "logo": {"source": "uploaded", "url": "https://example.com/logo.png"},
-            "theme": {"primary": "purple", "font": "inter"},
+            "theme": {"primary": session.collected_data.get("Primary Color") or session.collected_data.get("Theme") or "purple", "font": "inter"},
             "pages": [
                 {
                     "name": "Home",

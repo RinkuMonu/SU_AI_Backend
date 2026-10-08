@@ -17,7 +17,17 @@ class UpgradeRequest(BaseModel):
 
 @router.get("/plans")
 async def get_plans():
-    return {"success": True, "data": PLANS}
+    enriched_plans = {}
+    for k, v in PLANS.items():
+        enriched = dict(v)
+        if enriched.get('gst_applicable'):
+            enriched['gst_amount'] = int(enriched['price'] * 0.18)
+            enriched['total_price'] = enriched['price'] + enriched['gst_amount']
+        else:
+            enriched['gst_amount'] = 0
+            enriched['total_price'] = enriched['price']
+        enriched_plans[k] = enriched
+    return {'success': True, 'data': enriched_plans}
 
 @router.get("/me")
 async def get_my_subscription(
@@ -84,3 +94,4 @@ async def get_credit_transactions(
 ):
     history = await CreditService.get_history(db, str(current_user["id"]))
     return {"success": True, "data": history}
+
