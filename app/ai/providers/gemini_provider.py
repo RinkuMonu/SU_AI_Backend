@@ -30,7 +30,7 @@ class GeminiProvider(AIProvider):
             )
 
         # Use a stable, widely available model
-        self._model_name = getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash")
+        self._model_name = getattr(settings, "GEMINI_MODEL", "gemini-1.5-flash")
         self._provider_name = "gemini"
 
     async def generate_text(
