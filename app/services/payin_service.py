@@ -23,7 +23,10 @@ class PayinService:
 
         order_id = f"ORDER_{uuid.uuid4().hex[:12].upper()}"
         base_amount = float(plan["price"])
-        amount_inr = round(base_amount * 1.18, 2) if base_amount > 0 else base_amount
+        if plan_id == "HIRE_INFLUENCER":
+            amount_inr = base_amount
+        else:
+            amount_inr = round(base_amount * 1.18, 2) if base_amount > 0 else base_amount
         
         now = datetime.now(timezone.utc)
         transaction = {
