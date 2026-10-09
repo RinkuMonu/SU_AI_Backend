@@ -17,12 +17,9 @@ class UserCreate(BaseModel):
     business_name: str | None = None
     business_type: str | None = None
     business_category: str | None = None
-    sub_category: str | None = None
     business_description: str | None = None
-    tagline: str | None = None
     registration_number: str | None = None
     year_established: str | None = None
-    number_of_employees: str | None = None
 
     # Business Location
     country: str | None = None
