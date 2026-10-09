@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # AI Configuration
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-1.5-pro"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
 
     # Fashion AI Configuration
     FASHION_IMAGE_PROVIDER: str = "pollinations"  # pollinations | replicate | custom
