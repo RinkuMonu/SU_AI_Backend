@@ -74,5 +74,20 @@ PLANS = {
         "multiple_businesses": True,
         "api_access": True,
         "white_label": True
+    },
+    "HIRE_INFLUENCER": {
+        "name": "Hire Influencer",
+        "price": 100,
+        "currency": "INR",
+        "billing_cycle": "one-time",
+        "credits": 0,
+        "post_limit": 0,
+        "reel_limit": 0,
+        "team_members": 0,
+        "features": [],
+        "watermark": False,
+        "multiple_businesses": False,
+        "api_access": False,
+        "white_label": False
     }
 }

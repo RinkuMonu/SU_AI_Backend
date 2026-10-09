@@ -144,7 +144,8 @@ class PayinService:
                 }}
             )
             
-            await SubscriptionService.upgrade_plan(db, transaction["user_id"], transaction["plan_id"])
+            if transaction["plan_id"] != "HIRE_INFLUENCER":
+                await SubscriptionService.upgrade_plan(db, transaction["user_id"], transaction["plan_id"])
             return {"success": True, "status": "success", "message": "Payment verified"}
         
         else:
