@@ -36,7 +36,7 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     # AI Configuration
-    AI_PROVIDER: str = "gemini"
+    AI_PROVIDER: str = "groq"
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
     GEMINI_API_KEY: str | None = None
