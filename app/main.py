@@ -31,14 +31,17 @@ async def lifespan(app: FastAPI):
     close_mongo_connection()
 from fastapi.staticfiles import StaticFiles
 app = FastAPI(
-    title="SevenUnique AI API",
-    description="Backend API for SevenUnique AI Marketing Platform",
+    title="Dhanda Grow API",
+    description="Backend API for Dhanda Grow Platform",
     version="1.0.0",
     lifespan=lifespan,
 )
 import os
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+if os.path.exists("assets"):
+    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
 # Set up CORS
 app.add_middleware(
     CORSMiddleware,
@@ -81,4 +84,19 @@ app.include_router(influencer_earnings_router, prefix="/api/v1")
 app.include_router(influencer_marketplace_router, prefix="/api/v1")
 @app.get("/")
 async def root():
-    return {"message": "Welcome to SevenUnique AI API"}
+    return {"message": "Welcome to Dhanda Grow API"}
+
+
+from fastapi.responses import JSONResponse
+from fastapi import Request
+import traceback
+import sys
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("GLOBAL EXCEPTION:", exc, file=sys.stderr)
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
+    )

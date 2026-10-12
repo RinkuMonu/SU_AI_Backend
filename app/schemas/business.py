@@ -1,52 +1,35 @@
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
+from typing import Optional, List
 
 class BusinessCreate(BaseModel):
-    name: str
-    category: str
-    location: str
+    businessName: str
+    businessType: str
+    industry: str
     website: Optional[str] = None
-    instagram: Optional[str] = None
-    target_customer: Optional[str] = None
-    preferred_language: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    description: Optional[str] = None
-    whatsapp_phone_id: Optional[str] = None
-    whatsapp_token: Optional[str] = None
-    ig_access_token: Optional[str] = None
-    ig_account_id: Optional[str] = None
-    fb_access_token: Optional[str] = None
-    fb_page_id: Optional[str] = None
-    linkedin_author_id: Optional[str] = None
-    linkedin_access_token: Optional[str] = None
-    auto_publish_enabled: bool = False
-    autopilot_schedule: Optional[dict] = None
-
-from app.models.base import PyObjectId
-
-class BusinessResponse(BusinessCreate):
-    id: PyObjectId
-    owner_id: str
+    preferredLanguage: Optional[str] = None
+    targetAudience: Optional[str] = None
+    primaryGoal: Optional[str] = None
 
 class BusinessUpdate(BaseModel):
-    name: Optional[str] = None
-    category: Optional[str] = None
-    location: Optional[str] = None
+    businessName: Optional[str] = None
+    businessType: Optional[str] = None
+    industry: Optional[str] = None
     website: Optional[str] = None
-    instagram: Optional[str] = None
-    target_customer: Optional[str] = None
-    preferred_language: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    description: Optional[str] = None
-    whatsapp_phone_id: Optional[str] = None
-    whatsapp_token: Optional[str] = None
-    ig_access_token: Optional[str] = None
-    ig_account_id: Optional[str] = None
-    fb_access_token: Optional[str] = None
-    fb_page_id: Optional[str] = None
-    linkedin_author_id: Optional[str] = None
-    linkedin_access_token: Optional[str] = None
-    auto_publish_enabled: Optional[bool] = None
-    autopilot_schedule: Optional[dict] = None
+    logoUrl: Optional[str] = None
+    brandColors: Optional[List[str]] = None
+    preferredLanguage: Optional[str] = None
+    targetAudience: Optional[str] = None
+    primaryGoal: Optional[str] = None
+
+class BusinessResponse(BaseModel):
+    id: str
+    ownerId: str
+    businessName: str
+    businessType: str
+    industry: str
+    website: Optional[str] = None
+    logoUrl: Optional[str] = None
+    brandColors: Optional[List[str]] = None
+    preferredLanguage: Optional[str] = None
+    targetAudience: Optional[str] = None
+    primaryGoal: Optional[str] = None

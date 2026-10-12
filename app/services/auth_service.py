@@ -1,239 +1,450 @@
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Response
 from app.core.database import get_database
 from app.models.user import User
-from app.schemas.user import UserCreate, UserLogin
-from app.core.security import get_password_hash, verify_password
+from app.models.refresh_session import RefreshSession
+from app.schemas.auth import SignupRequest, LoginRequest
+from app.core.security import get_password_hash, verify_password, create_access_token
 from app.services.email_service import EmailService
+from datetime import datetime, timedelta, timezone
+from bson import ObjectId
+import jwt
+import os
 import random
 import string
-from datetime import datetime, timedelta, timezone
+import hashlib
+import logging
+from app.core.config import settings
 
-class EmailNotVerifiedException(Exception):
-    pass
+logger = logging.getLogger(__name__)
 
 class AuthService:
     @staticmethod
-    async def get_collection():
+    async def signup(req: SignupRequest) -> tuple[User, str, str]:
         db = get_database()
-        return db["users"]
+        email = req.email.lower().strip()
+        existing = await db["users"].find_one({"email": email})
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        
+        user = User(
+            fullName=req.fullName,
+            email=email,
+            hashed_password=get_password_hash(req.password),
+            accountType=req.accountType,
+            termsAcceptedAt=datetime.now(timezone.utc) if req.termsAccepted else None,
+            emailVerified=False
+        )
+        doc = user.model_dump(by_alias=True, exclude={"id"})
+        result = await db["users"].insert_one(doc)
+        user.id = str(result.inserted_id)
+        
+        # Generate tokens for auto-login
+        access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+        refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        
+        # Save refresh session
+        rs = RefreshSession(
+            userId=str(user.id),
+            hashedToken=get_password_hash(hashlib.sha256(refresh_token.encode()).hexdigest()),
+            expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
+
+        # Generate and save email verification token, and send real verification email
+        try:
+            verification_token = AuthService.create_email_verification_token(user.id, user.email)
+            await db["users"].update_one(
+                {"_id": result.inserted_id},
+                {"$set": {"verificationToken": verification_token}}
+            )
+            user.verificationToken = verification_token
+            verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={verification_token}"
+            await EmailService.send_verification_email(
+                to_email=user.email,
+                verification_link=verification_link,
+                full_name=user.fullName
+            )
+            logger.info(f"Verification email sent to {user.email}")
+        except Exception as e:
+            logger.error(f"Error sending verification email during signup to {user.email}: {e}")
+
+        return user, access_token, refresh_token
 
     @staticmethod
-    async def get_otp_collection():
+    async def login(req: LoginRequest):
         db = get_database()
-        # Ensure TTL index
-        await db["otps"].create_index("expires_at", expireAfterSeconds=0)
-        return db["otps"]
+        email = req.email.lower().strip()
+        doc = await db["users"].find_one({"email": email})
+        if not doc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+        
+        user = User(**doc)
+        if not verify_password(req.password, user.hashed_password):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+            
+        access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+        refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        
+        # Save refresh session
+        rs = RefreshSession(
+            userId=str(user.id),
+            hashedToken=get_password_hash(hashlib.sha256(refresh_token.encode()).hexdigest()),
+            expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
+        
+        return user, access_token, refresh_token
 
     @staticmethod
-    async def get_user_by_email(email: str) -> User | None:
-        collection = await AuthService.get_collection()
-        doc = await collection.find_one({"email": email.lower().strip()})
-        if doc:
-            return User(**doc)
-        return None
+    async def logout(refresh_token: str):
+        if not refresh_token:
+            return
+        db = get_database()
+        try:
+            payload = jwt.decode(refresh_token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if user_id:
+                await db["refresh_sessions"].update_many(
+                    {"userId": user_id, "isRevoked": False},
+                    {"$set": {"isRevoked": True}}
+                )
+        except jwt.InvalidTokenError:
+            pass
 
     @staticmethod
-    async def resend_otp(email: str):
-        collection = await AuthService.get_otp_collection()
-        email = email.lower().strip()
-        
-        now = datetime.now(timezone.utc)
-        existing = await collection.find_one({"email": email})
-        
-        if not existing:
+    async def refresh(refresh_token: str):
+        db = get_database()
+        try:
+            payload = jwt.decode(refresh_token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            user_id = payload.get("sub")
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Invalid token")
+            
+            # Check if token is in db and not revoked
+            sessions = await db["refresh_sessions"].find({"userId": user_id, "isRevoked": False, "expiresAt": {"$gt": datetime.now(timezone.utc)}}).to_list(length=None)
+            valid_session = None
+            for s in sessions:
+                if verify_password(hashlib.sha256(refresh_token.encode()).hexdigest(), s["hashedToken"]):
+                    valid_session = s
+                    break
+                    
+            if not valid_session:
+                raise HTTPException(status_code=401, detail="Session revoked or invalid")
+                
+            # Rotate refresh token
+            await db["refresh_sessions"].update_one({"_id": valid_session["_id"]}, {"$set": {"isRevoked": True}})
+            
+            access_token = AuthService.create_token(user_id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
+            new_refresh_token = AuthService.create_token(user_id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+            
+            new_rs = RefreshSession(
+                userId=str(user_id),
+                hashedToken=get_password_hash(hashlib.sha256(new_refresh_token.encode()).hexdigest()),
+                expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+            )
+            await db["refresh_sessions"].insert_one(new_rs.model_dump(by_alias=True, exclude={"id"}))
+            
+            return access_token, new_refresh_token
+            
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(status_code=401, detail="Token expired")
+        except jwt.InvalidTokenError:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    @staticmethod
+    def create_token(subject: str, secret: str, expires_delta: timedelta) -> str:
+        expire = datetime.now(timezone.utc) + expires_delta
+        to_encode = {"exp": expire, "sub": str(subject)}
+        return jwt.encode(to_encode, secret, algorithm=settings.JWT_ALGORITHM)
+
+    @staticmethod
+    def create_email_verification_token(user_id: str, email: str) -> str:
+        expire = datetime.now(timezone.utc) + timedelta(hours=24)
+        payload = {
+            "sub": str(user_id),
+            "email": str(email).lower().strip(),
+            "type": "email_verification",
+            "exp": expire
+        }
+        return jwt.encode(payload, settings.JWT_ACCESS_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+    @staticmethod
+    def extract_token(token_or_link: str) -> str:
+        """Extract pure token string whether user passed raw token, Bearer token, or full URL link."""
+        if not token_or_link:
+            return ""
+        val = str(token_or_link).strip()
+        if val.startswith("Bearer "):
+            val = val[7:].strip()
+        if "token=" in val:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(val)
+            query_params = urllib.parse.parse_qs(parsed.query)
+            if "token" in query_params and query_params["token"]:
+                return query_params["token"][0].strip()
+        return val
+
+    @staticmethod
+    async def verify_email(token_or_link: str) -> dict:
+        db = get_database()
+        clean_token = AuthService.extract_token(token_or_link)
+        if not clean_token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No pending signup found for this email."
+                detail="Please provide a valid verification link or token."
             )
-            
-        if existing.get("last_sent_at"):
-            last_sent = existing["last_sent_at"]
-            if last_sent.tzinfo is None:
-                last_sent = last_sent.replace(tzinfo=timezone.utc)
-            if (now - last_sent).total_seconds() < 60:
-                raise HTTPException(
-                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                    detail="Please wait before requesting another OTP."
-                )
 
-        from app.core.config import settings
-        if settings.ENVIRONMENT == "development":
-            otp = "123456"
-        else:
-            otp = ''.join(random.choices(string.digits, k=6))
-        otp_hash = get_password_hash(otp)
-        expires_at = now + timedelta(minutes=10)
-        
-        # Send email before updating DB to ensure we don't lock out resend if SMTP fails
-        await EmailService.send_otp_email(email, otp)
-        
-        await collection.update_one(
-            {"email": email},
+        payload = None
+        try:
+            payload = jwt.decode(clean_token, settings.JWT_ACCESS_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Verification link or token has expired. Please request a new one."
+            )
+        except jwt.InvalidTokenError:
+            # Fallback to REFRESH_SECRET in case a refresh token was supplied
+            try:
+                payload = jwt.decode(clean_token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
+            except Exception:
+                pass
+
+        user = None
+        if payload:
+            user_id = payload.get("sub")
+            email = payload.get("email")
+
+            if user_id:
+                try:
+                    user = await db["users"].find_one({"_id": ObjectId(user_id)})
+                except Exception:
+                    pass
+            if not user and email:
+                user = await db["users"].find_one({"email": email.lower().strip()})
+
+        # Check if clean_token matches stored verificationToken directly in database
+        if not user:
+            user = await db["users"].find_one({"verificationToken": clean_token})
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid verification link or token."
+            )
+
+        if user.get("emailVerified"):
+            return {
+                "email": user["email"],
+                "fullName": user.get("fullName", ""),
+                "alreadyVerified": True
+            }
+
+        await db["users"].update_one(
+            {"_id": user["_id"]},
             {"$set": {
-                "otp_hash": otp_hash,
-                "expires_at": expires_at,
-                "attempts": 0,
-                "last_sent_at": now
+                "emailVerified": True,
+                "emailVerifiedAt": datetime.now(timezone.utc),
+                "verificationToken": None
             }}
         )
 
-    @staticmethod
-    async def verify_otp(email: str, otp: str):
-        email = email.lower().strip()
-        collection = await AuthService.get_otp_collection()
-        doc = await collection.find_one({"email": email})
-        
-        if not doc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OTP expired or invalid."
-            )
-            
-        if doc.get("attempts", 0) >= 5:
-            await collection.delete_one({"email": email})
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Too many failed attempts. Please request a new OTP."
-            )
-            
-        if not verify_password(otp, doc["otp_hash"]):
-            await collection.update_one({"email": email}, {"$inc": {"attempts": 1}})
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid OTP."
-            )
-            
-        now = datetime.now(timezone.utc)
-        expires_at = doc["expires_at"]
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-            
-        if now > expires_at:
-            await collection.delete_one({"email": email})
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OTP expired."
-            )
-            
-        # OTP is valid, perform final duplicate check
-        existing_user = await AuthService.get_user_by_email(email)
-        if existing_user:
-            await collection.delete_one({"email": email})
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email already exists."
-            )
-            
-        users = await AuthService.get_collection()
-        
-        user = User(
-            name=doc.get("name", "User"),
-            email=email,
-            hashed_password=doc["hashed_password"],
-            email_verified=True,
-            role=doc.get("role", "business")
-        )
-        
-        user_doc = user.model_dump(by_alias=True, exclude={"id"})
-        result = await users.insert_one(user_doc)
-        user.id = str(result.inserted_id)
-        
-        # Provision default Free plan immediately
-        from app.services.credit_service import CreditService
-        from app.core.database import get_database
-        await CreditService.get_or_create_subscription(get_database(), user.id)
-        
-        # Delete OTP to prevent reuse
-        await collection.delete_one({"email": email})
-        
-        return user
+        return {
+            "email": user["email"],
+            "fullName": user.get("fullName", ""),
+            "alreadyVerified": False
+        }
 
     @staticmethod
-    async def handle_signup(user_in: UserCreate) -> User:
-        email = user_in.email.lower().strip()
-        existing_user = await AuthService.get_user_by_email(email)
-        if existing_user:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email already exists."
-            )
-
-        hashed_password = get_password_hash(user_in.password)
-        
-        user_name = user_in.name or getattr(user_in, "fullName", None) or getattr(user_in, "full_name", None) or "User"
-        
-        users = await AuthService.get_collection()
-        user = User(
-            name=user_name,
-            email=email,
-            hashed_password=hashed_password,
-            email_verified=True,
-            role=user_in.role or "business",
-            business_logo=user_in.business_logo,
-            brand_color=user_in.brand_color,
-            business_name=user_in.business_name,
-            business_type=user_in.business_type,
-            business_category=user_in.business_category,
-            sub_category=user_in.sub_category,
-            business_description=user_in.business_description,
-            tagline=user_in.tagline,
-            registration_number=user_in.registration_number,
-            year_established=user_in.year_established,
-            number_of_employees=user_in.number_of_employees,
-            country=user_in.country,
-            state=user_in.state,
-            city=user_in.city,
-            area=user_in.area,
-            pincode=user_in.pincode,
-            full_address=user_in.full_address,
-            google_maps_url=user_in.google_maps_url,
-            business_model=user_in.business_model,
-            selling_model=user_in.selling_model,
-            target_age_group=user_in.target_age_group,
-            target_gender=user_in.target_gender,
-            target_location=user_in.target_location,
-            customer_type=user_in.customer_type
-        )
-        
-        user_doc = user.model_dump(by_alias=True, exclude={"id"})
-        result = await users.insert_one(user_doc)
-        user.id = str(result.inserted_id)
-        
-        # Provision default Free plan immediately
-        from app.services.credit_service import CreditService
-        from app.core.database import get_database
-        await CreditService.get_or_create_subscription(get_database(), user.id)
-        
-        return user
-
-    @staticmethod
-    async def authenticate_user(user_login: UserLogin) -> User:
-        login_email = (user_login.email or user_login.Email or "").lower().strip()
-        login_password = user_login.password or user_login.Password
-        
-        if not login_email or not login_password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email and password are required."
-            )
-            
-        user = await AuthService.get_user_by_email(login_email)
+    async def resend_verification(email: str, force: bool = False) -> dict:
+        db = get_database()
+        clean_email = email.lower().strip()
+        user = await db["users"].find_one({"email": clean_email})
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account registered with this email address."
             )
-        
-        if not verify_password(login_password, user.hashed_password):
+
+        if user.get("emailVerified") and not force:
+            return {
+                "alreadyVerified": True,
+                "message": "Email is already verified."
+            }
+
+        if force and user.get("emailVerified"):
+            await db["users"].update_one(
+                {"_id": user["_id"]},
+                {"$set": {"emailVerified": False, "emailVerifiedAt": None}}
+            )
+
+        user_id = str(user["_id"])
+        verification_token = AuthService.create_email_verification_token(user_id, clean_email)
+
+        await db["users"].update_one(
+            {"_id": user["_id"]},
+            {"$set": {"verificationToken": verification_token}}
+        )
+
+        verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={verification_token}"
+        await EmailService.send_verification_email(
+            to_email=clean_email,
+            verification_link=verification_link,
+            full_name=user.get("fullName")
+        )
+
+        return {
+            "alreadyVerified": False,
+            "message": "Verification email sent successfully.",
+            "data": {
+                "email": clean_email,
+                "verificationLink": verification_link,
+                "token": verification_token
+            }
+        }
+
+
+    @staticmethod
+    def create_password_reset_token(user_id: str, email: str) -> str:
+        expire = datetime.now(timezone.utc) + timedelta(hours=1)
+        payload = {
+            "sub": str(user_id),
+            "email": str(email).lower().strip(),
+            "type": "password_reset",
+            "exp": expire
+        }
+        return jwt.encode(payload, settings.JWT_ACCESS_SECRET, algorithm=settings.JWT_ALGORITHM)
+
+    @staticmethod
+    async def forgot_password(email: str) -> dict:
+        db = get_database()
+        clean_email = email.lower().strip()
+        user = await db["users"].find_one({"email": clean_email})
+        if not user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid email or password."
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account registered with this email address."
             )
-            
-        # Check email verification for regular users
-        # Default True for existing users who do not have email_verified field
-        email_verified = getattr(user, "email_verified", True)
-        if user.role != "admin" and not email_verified:
-            raise EmailNotVerifiedException("Email verification required")
-            
-        return user
+
+        user_id = str(user["_id"])
+        reset_token = AuthService.create_password_reset_token(user_id, clean_email)
+        expire_time = datetime.now(timezone.utc) + timedelta(hours=1)
+
+        await db["users"].update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "resetPasswordToken": reset_token,
+                "resetPasswordExpiresAt": expire_time
+            }}
+        )
+
+        reset_link = f"{settings.BACKEND_URL}/api/v1/auth/reset-password?token={reset_token}"
+        await EmailService.send_password_reset_email(
+            to_email=clean_email,
+            reset_link=reset_link,
+            full_name=user.get("fullName")
+        )
+
+        return {
+            "success": True,
+            "message": "Password reset link sent to your email successfully.",
+            "data": {
+                "email": clean_email,
+                "resetLink": reset_link,
+                "token": reset_token
+            }
+        }
+
+    @staticmethod
+    async def reset_password(token_or_link: str, new_password: str, confirm_password: Optional[str] = None) -> dict:
+        db = get_database()
+
+        if confirm_password is not None and new_password != confirm_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Passwords do not match."
+            )
+
+        if len(new_password) < 6:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 6 characters long."
+            )
+
+        clean_token = AuthService.extract_token(token_or_link)
+        if not clean_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Please provide a valid password reset link or token."
+            )
+
+        payload = None
+        try:
+            payload = jwt.decode(clean_token, settings.JWT_ACCESS_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password reset link has expired. Please request a new one."
+            )
+        except jwt.InvalidTokenError:
+            pass
+
+        user = None
+        if payload:
+            user_id = payload.get("sub")
+            email = payload.get("email")
+            if user_id:
+                try:
+                    user = await db["users"].find_one({"_id": ObjectId(user_id)})
+                except Exception:
+                    pass
+            if not user and email:
+                user = await db["users"].find_one({"email": email.lower().strip()})
+
+        # Also check stored resetPasswordToken if not found
+        if not user:
+            user = await db["users"].find_one({"resetPasswordToken": clean_token})
+
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired password reset link."
+            )
+
+        # Check expiration in DB if stored
+        if user.get("resetPasswordExpiresAt"):
+            expires_at = user["resetPasswordExpiresAt"]
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at < datetime.now(timezone.utc):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Password reset link has expired. Please request a new one."
+                )
+
+        # Hash new password
+        hashed = get_password_hash(new_password)
+
+        await db["users"].update_one(
+            {"_id": user["_id"]},
+            {"$set": {
+                "hashed_password": hashed,
+                "resetPasswordToken": None,
+                "resetPasswordExpiresAt": None,
+                "updated_at": datetime.now(timezone.utc)
+            }}
+        )
+
+        # Invalidate existing refresh sessions
+        await db["refresh_sessions"].update_many(
+            {"userId": str(user["_id"])},
+            {"$set": {"isRevoked": True}}
+        )
+
+        return {
+            "success": True,
+            "message": "Password reset successfully. You can now log in with your new password.",
+            "data": {
+                "email": user["email"]
+            }
+        }
+
