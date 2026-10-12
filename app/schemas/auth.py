@@ -179,5 +179,10 @@ class ResetPasswordRequest(BaseModel):
     newPassword: str = Field(description="New password", json_schema_extra={"example": "NewSecurePassword@123"})
     confirmPassword: Optional[str] = None
 
+class FacebookAuthLoginRequest(BaseModel):
+    access_token: Optional[str] = Field(default=None, description="Facebook Access Token from Facebook SDK login")
+    code: Optional[str] = Field(default=None, description="OAuth authorization code")
+    accountType: Optional[str] = Field(default="business", description="Account type: business or personal")
+
 
 

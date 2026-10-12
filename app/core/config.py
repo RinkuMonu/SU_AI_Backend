@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     FACEBOOK_APP_ID: str | None = None
     FACEBOOK_APP_SECRET: str | None = None
+    FACEBOOK_API_VERSION: str = "v19.0"
     FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
     BACKEND_URL: str = "http://localhost:8000"
 

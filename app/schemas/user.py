@@ -20,6 +20,8 @@ class UserResponse(BaseModel):
     profileImageUrl: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
+    name: Optional[str] = None
+    role: Optional[str] = "user"
 
 class UserPreferencesUpdate(BaseModel):
     preferredLanguage: Optional[str] = None

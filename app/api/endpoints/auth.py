@@ -9,11 +9,15 @@ from app.schemas.auth import (
     ResendVerificationRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    FacebookAuthLoginRequest,
 )
+from app.services.facebook_service import FacebookService
 from app.schemas.user import UserResponse
 from app.services.auth_service import AuthService
 from app.core.config import settings
 from app.core.database import get_database
+from app.core.security import get_current_user, CurrentUser
+from bson import ObjectId
 from pydantic import EmailStr
 import jwt
 
@@ -49,25 +53,33 @@ async def signup(req: SignupRequest, response: Response):
     user, access_token, refresh_token = await AuthService.signup(req)
     set_refresh_cookie(response, refresh_token)
     msg = "User registered successfully." if user.emailVerified else "User registered successfully. A verification link has also been sent to your email inbox."
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+    }
     return {
         "success": True,
         "message": msg,
+        "access_token": access_token,
+        "accessToken": access_token,
+        "token": access_token,
+        "user": user_payload,
         "data": {
+            "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
-            "user": {
-                "id": str(user.id),
-                "fullName": user.fullName,
-                "firstName": user.firstName,
-                "lastName": user.lastName,
-                "email": user.email,
-                "phone": user.phone,
-                "contactNumber": user.contactNumber,
-                "accountType": user.accountType,
-                "emailVerified": bool(user.emailVerified),
-                "email_verified": bool(user.emailVerified),
-                "isVerified": bool(user.emailVerified)
-            }
+            "user": user_payload,
         }
     }
 
@@ -76,25 +88,92 @@ async def signup(req: SignupRequest, response: Response):
 async def login(req: LoginRequest, response: Response):
     user, access_token, refresh_token = await AuthService.login(req)
     set_refresh_cookie(response, refresh_token)
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+    }
     return {
         "success": True,
         "message": "Logged in successfully",
+        "access_token": access_token,
+        "accessToken": access_token,
+        "token": access_token,
+        "user": user_payload,
         "data": {
+            "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
-            "user": {
-                "id": str(user.id),
-                "fullName": user.fullName,
-                "firstName": user.firstName,
-                "lastName": user.lastName,
-                "email": user.email,
-                "phone": user.phone,
-                "contactNumber": user.contactNumber,
-                "accountType": user.accountType,
-                "emailVerified": bool(user.emailVerified),
-                "email_verified": bool(user.emailVerified),
-                "isVerified": bool(user.emailVerified)
-            }
+            "user": user_payload,
+        }
+    }
+
+@router.post("/facebook/login")
+async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
+    """
+    Authenticate or sign up user using Facebook Login.
+    Accepts either an access_token from the Facebook SDK / OAuth flow or an authorization code.
+    Returns standard access token, refresh token cookie, and user profile data.
+    """
+    db = get_database()
+    access_token = req.access_token
+
+    if not access_token and req.code:
+        token_data = await FacebookService.exchange_code_for_token(req.code)
+        access_token = token_data.get("access_token")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide either 'access_token' or 'code'."
+        )
+
+    user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
+        db=db,
+        access_token=access_token,
+        account_type=req.accountType or "business",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+    }
+
+    return {
+        "success": True,
+        "message": "Facebook login successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload,
         }
     }
 
@@ -119,6 +198,50 @@ async def refresh(request: Request, response: Response):
         "message": "Token refreshed",
         "data": {"accessToken": access_token}
     }
+
+@router.get("/me")
+async def get_current_user_profile(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    Fetch current authenticated user profile.
+    Compatible with both User direct format and standard APIResponse envelope.
+    """
+    db = get_database()
+    doc = await db["users"].find_one({"_id": ObjectId(current_user["id"])})
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_id = str(doc["_id"])
+    full_name = doc.get("fullName") or doc.get("name") or "User"
+    email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
+
+    user_dict = {
+        "id": user_id,
+        "_id": user_id,
+        "fullName": full_name,
+        "name": full_name,
+        "firstName": doc.get("firstName") or full_name.split()[0],
+        "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
+        "email": doc.get("email"),
+        "phone": doc.get("phone") or doc.get("contactNumber"),
+        "contactNumber": doc.get("contactNumber") or doc.get("phone"),
+        "accountType": doc.get("accountType", "business"),
+        "role": doc.get("role", "user") or "user",
+        "emailVerified": email_ver,
+        "email_verified": email_ver,
+        "isVerified": email_ver,
+        "profileImageUrl": doc.get("profileImageUrl"),
+        "preferredLanguage": doc.get("preferredLanguage"),
+        "onboardingCompleted": doc.get("onboardingCompleted", False),
+        "onboarding_step": doc.get("onboarding_step", 1),
+    }
+
+    # Return top-level fields AND data envelope for dual compatibility
+    response_payload = {
+        **user_dict,
+        "success": True,
+        "data": user_dict,
+    }
+    return response_payload
 
 @router.get("/verify-email", response_class=HTMLResponse)
 async def verify_email_get(request: Request, token: str = Query(None), link: str = Query(None)):
