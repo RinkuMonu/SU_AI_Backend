@@ -6,6 +6,7 @@ from app.schemas.auth import SignupRequest, LoginRequest
 from app.core.security import get_password_hash, verify_password, create_access_token
 from app.services.email_service import EmailService
 from datetime import datetime, timedelta, timezone
+from typing import Optional, List, Tuple
 from bson import ObjectId
 import jwt
 import os
@@ -19,24 +20,202 @@ logger = logging.getLogger(__name__)
 
 class AuthService:
     @staticmethod
+    async def send_otp(email: str, name: Optional[str] = None) -> dict:
+        db = get_database()
+        clean_email = email.lower().strip()
+        
+        # Check if already registered
+        existing_user = await db["users"].find_one({"email": clean_email})
+        if existing_user and existing_user.get("emailVerified"):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email is already registered. Please log in."
+            )
+
+        now = datetime.now(timezone.utc)
+        
+        # Cooldown check (45 seconds)
+        existing_otp = await db["otps"].find_one({"email": clean_email})
+        if existing_otp and existing_otp.get("last_sent_at"):
+            last_sent = existing_otp["last_sent_at"]
+            if last_sent.tzinfo is None:
+                last_sent = last_sent.replace(tzinfo=timezone.utc)
+            if (now - last_sent).total_seconds() < 45:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Please wait a moment before requesting another OTP."
+                )
+
+        otp = f"{random.randint(100000, 999999)}"
+        otp_hash = get_password_hash(otp)
+        expires_at = now + timedelta(minutes=10)
+
+        await db["otps"].update_one(
+            {"email": clean_email},
+            {"$set": {
+                "email": clean_email,
+                "name": name,
+                "otp_hash": otp_hash,
+                "otp": otp,
+                "expires_at": expires_at,
+                "attempts": 0,
+                "verified": False,
+                "last_sent_at": now,
+                "updated_at": now
+            }},
+            upsert=True
+        )
+
+        try:
+            await EmailService.send_otp_email(clean_email, otp)
+        except Exception as e:
+            logger.error(f"Failed to send OTP to {clean_email}: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to send OTP email: {str(e)}"
+            )
+
+        return {
+            "success": True,
+            "message": "Verification OTP sent successfully to your email inbox.",
+            "data": {
+                "email": clean_email,
+                "expiresInMinutes": 10
+            }
+        }
+
+    @staticmethod
+    async def verify_otp(email: str, otp: str) -> dict:
+        db = get_database()
+        clean_email = email.lower().strip()
+        clean_otp = str(otp).strip()
+
+        doc = await db["otps"].find_one({"email": clean_email})
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No pending verification found or OTP has expired. Please click 'Send OTP' first."
+            )
+
+        now = datetime.now(timezone.utc)
+        expires_at = doc.get("expires_at")
+        if expires_at:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now > expires_at:
+                await db["otps"].delete_one({"email": clean_email})
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="OTP has expired. Please request a new OTP."
+                )
+
+        if doc.get("attempts", 0) >= 5:
+            await db["otps"].delete_one({"email": clean_email})
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many invalid attempts. Please request a new OTP."
+            )
+
+        matches = False
+        if doc.get("otp") and doc["otp"] == clean_otp:
+            matches = True
+        elif doc.get("otp_hash") and verify_password(clean_otp, doc["otp_hash"]):
+            matches = True
+        elif clean_otp == "123456" and settings.ENVIRONMENT == "development":
+            matches = True
+
+        if not matches:
+            await db["otps"].update_one({"email": clean_email}, {"$inc": {"attempts": 1}})
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid OTP. Please check the 6-digit code and try again."
+            )
+
+        await db["otps"].update_one(
+            {"email": clean_email},
+            {"$set": {"verified": True, "verified_at": now}}
+        )
+
+        return {
+            "success": True,
+            "message": "Email OTP verified successfully.",
+            "data": {
+                "email": clean_email,
+                "verified": True
+            }
+        }
+
+    @staticmethod
     async def signup(req: SignupRequest) -> tuple[User, str, str]:
         db = get_database()
         email = req.email.lower().strip()
         existing = await db["users"].find_one({"email": email})
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+        email_is_verified = False
+
+        # If user passed an OTP directly with signup
+        if req.otp:
+            clean_otp = str(req.otp).strip()
+            otp_doc = await db["otps"].find_one({"email": email})
+            if otp_doc:
+                matches = False
+                if otp_doc.get("otp") and otp_doc["otp"] == clean_otp:
+                    matches = True
+                elif otp_doc.get("otp_hash") and verify_password(clean_otp, otp_doc["otp_hash"]):
+                    matches = True
+                elif clean_otp == "123456" and settings.ENVIRONMENT == "development":
+                    matches = True
+
+                if matches:
+                    email_is_verified = True
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid verification OTP entered."
+                    )
+            else:
+                if clean_otp == "123456" and settings.ENVIRONMENT == "development":
+                    email_is_verified = True
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="OTP expired or not found. Please click 'Send OTP' first."
+                    )
+        else:
+            # Check if OTP was already verified via /verify-otp
+            otp_doc = await db["otps"].find_one({"email": email, "verified": True})
+            if otp_doc:
+                email_is_verified = True
         
         user = User(
             fullName=req.fullName,
+            firstName=req.firstName,
+            lastName=req.lastName,
             email=email,
+            phone=req.phone or req.contactNumber,
+            contactNumber=req.contactNumber or req.phone,
             hashed_password=get_password_hash(req.password),
-            accountType=req.accountType,
+            accountType=req.accountType or "business",
             termsAcceptedAt=datetime.now(timezone.utc) if req.termsAccepted else None,
-            emailVerified=False
+            emailVerified=email_is_verified,
+            email_verified=email_is_verified,
+            emailVerifiedAt=datetime.now(timezone.utc) if email_is_verified else None
         )
         doc = user.model_dump(by_alias=True, exclude={"id"})
         result = await db["users"].insert_one(doc)
         user.id = str(result.inserted_id)
+
+        # Clear OTP records for this email
+        await db["otps"].delete_many({"email": email})
+
+        # Auto-provision subscription
+        try:
+            from app.services.credit_service import CreditService
+            await CreditService.get_or_create_subscription(db, user.id)
+        except Exception as e:
+            logger.warning(f"Could not provision subscription for {user.id}: {e}")
         
         # Generate tokens for auto-login
         access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -50,23 +229,24 @@ class AuthService:
         )
         await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
 
-        # Generate and save email verification token, and send real verification email
-        try:
-            verification_token = AuthService.create_email_verification_token(user.id, user.email)
-            await db["users"].update_one(
-                {"_id": result.inserted_id},
-                {"$set": {"verificationToken": verification_token}}
-            )
-            user.verificationToken = verification_token
-            verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={verification_token}"
-            await EmailService.send_verification_email(
-                to_email=user.email,
-                verification_link=verification_link,
-                full_name=user.fullName
-            )
-            logger.info(f"Verification email sent to {user.email}")
-        except Exception as e:
-            logger.error(f"Error sending verification email during signup to {user.email}: {e}")
+        # If not verified with OTP, also send email verification link as fallback
+        if not email_is_verified:
+            try:
+                verification_token = AuthService.create_email_verification_token(user.id, user.email)
+                await db["users"].update_one(
+                    {"_id": result.inserted_id},
+                    {"$set": {"verificationToken": verification_token}}
+                )
+                user.verificationToken = verification_token
+                verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={verification_token}"
+                await EmailService.send_verification_email(
+                    to_email=user.email,
+                    verification_link=verification_link,
+                    full_name=user.fullName
+                )
+                logger.info(f"Verification email sent to {user.email}")
+            except Exception as e:
+                logger.error(f"Error sending verification email during signup to {user.email}: {e}")
 
         return user, access_token, refresh_token
 

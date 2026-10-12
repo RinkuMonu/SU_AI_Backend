@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, status, Request, Response, Query, HTTPEx
 from fastapi.responses import HTMLResponse, JSONResponse
 from app.schemas.auth import (
     SignupRequest,
+    SendOTPRequest,
+    VerifyOTPRequest,
     LoginRequest,
     VerifyEmailRequest,
     ResendVerificationRequest,
@@ -27,21 +29,43 @@ def set_refresh_cookie(response: Response, refresh_token: str):
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 
-@router.post("/signup")
+@router.post("/send-otp")
+@router.post("/resend-otp")
+async def send_otp(req: SendOTPRequest):
+    """Send 6-digit verification code to user's email via SMTP."""
+    return await AuthService.send_otp(req.email, req.name)
+
+@router.post("/verify-otp")
+async def verify_otp(req: VerifyOTPRequest):
+    """Verify 6-digit email OTP code."""
+    return await AuthService.verify_otp(req.email, req.otp)
+
+@router.post(
+    "/signup",
+    summary="Register New User Account",
+    description="Registers a new user account with first name, last name, contact number, email, password, and optional email verification OTP."
+)
 async def signup(req: SignupRequest, response: Response):
     user, access_token, refresh_token = await AuthService.signup(req)
     set_refresh_cookie(response, refresh_token)
+    msg = "User registered successfully." if user.emailVerified else "User registered successfully. A verification link has also been sent to your email inbox."
     return {
         "success": True,
-        "message": "User registered successfully. A verification link has been sent to your Gmail inbox. Please check your email to activate your account.",
+        "message": msg,
         "data": {
             "accessToken": access_token,
+            "token": access_token,
             "user": {
                 "id": str(user.id),
                 "fullName": user.fullName,
+                "firstName": user.firstName,
+                "lastName": user.lastName,
                 "email": user.email,
+                "phone": user.phone,
+                "contactNumber": user.contactNumber,
                 "accountType": user.accountType,
                 "emailVerified": bool(user.emailVerified),
+                "email_verified": bool(user.emailVerified),
                 "isVerified": bool(user.emailVerified)
             }
         }
@@ -57,12 +81,19 @@ async def login(req: LoginRequest, response: Response):
         "message": "Logged in successfully",
         "data": {
             "accessToken": access_token,
+            "token": access_token,
             "user": {
                 "id": str(user.id),
                 "fullName": user.fullName,
+                "firstName": user.firstName,
+                "lastName": user.lastName,
                 "email": user.email,
+                "phone": user.phone,
+                "contactNumber": user.contactNumber,
                 "accountType": user.accountType,
-                "emailVerified": user.emailVerified
+                "emailVerified": bool(user.emailVerified),
+                "email_verified": bool(user.emailVerified),
+                "isVerified": bool(user.emailVerified)
             }
         }
     }
