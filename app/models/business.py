@@ -1,15 +1,15 @@
-from typing import Optional
+from pydantic import Field
+from typing import Optional, List
 from app.models.base import MongoBaseModel
 
 class Business(MongoBaseModel):
-    owner_id: str
-    name: str
-    category: str
-    location: str
+    ownerId: str
+    businessName: str
+    businessType: str
+    industry: str
     website: Optional[str] = None
-    instagram: Optional[str] = None
-    target_customer: Optional[str] = None
-    preferred_language: Optional[str] = None
-    contact_email: Optional[str] = None
-    contact_phone: Optional[str] = None
-    description: Optional[str] = None
+    logoUrl: Optional[str] = None
+    brandColors: Optional[List[str]] = None
+    preferredLanguage: Optional[str] = None
+    targetAudience: Optional[str] = None
+    primaryGoal: Optional[str] = None

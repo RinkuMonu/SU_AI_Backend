@@ -1,5 +1,17 @@
 from fastapi import APIRouter
-from app.api.endpoints import ai, auth, campaigns, admin, analytics, website_builder, subscription, payments, onboarding
+from app.api.endpoints import (
+    ai,
+    auth,
+    campaigns,
+    admin,
+    analytics,
+    website_builder,
+    subscription,
+    payments,
+    onboarding,
+    users,
+    businesses,
+)
 
 api_router = APIRouter()
 api_router.include_router(ai.router, prefix="/ai", tags=["ai"])
@@ -11,3 +23,5 @@ api_router.include_router(website_builder.router, prefix="/website-builder", tag
 api_router.include_router(subscription.router)
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(users.router, prefix="/users", tags=["Users"])
+api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
