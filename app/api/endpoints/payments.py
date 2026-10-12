@@ -50,5 +50,8 @@ async def payment_status(
     return {
         "order_id": order_id,
         "status": transaction["status"],
-        "amount": transaction["amount"]
+        "amount": transaction["amount"],
+        "base_amount": transaction.get("base_amount"),
+        "gst_amount": transaction.get("gst_amount")
     }
+

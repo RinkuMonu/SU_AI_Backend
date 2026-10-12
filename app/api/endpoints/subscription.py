@@ -17,7 +17,10 @@ class UpgradeRequest(BaseModel):
 
 @router.get("/plans")
 async def get_plans():
-    return {"success": True, "data": PLANS}
+    # Return active public plans in order: FREE, STARTER, GROWTH, BUSINESS, INFLUENCER
+    public_keys = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER"]
+    filtered_plans = {k: PLANS[k] for k in public_keys if k in PLANS}
+    return {"success": True, "data": filtered_plans}
 
 @router.get("/me")
 async def get_my_subscription(
@@ -35,7 +38,8 @@ async def get_my_subscription(
         usage = {"posts_created": 0, "reels_created": 0}
         
     sub["usage"] = usage
-    sub["plan_details"] = PLANS.get(sub.get("plan_id", "FREE"))
+    plan_id = sub.get("plan_id", "FREE")
+    sub["plan_details"] = PLANS.get(plan_id) or (PLANS.get("GROWTH") if plan_id == "PRO" else PLANS.get("FREE"))
     
     # Exclude _id to avoid serialization issues
     if "_id" in sub:

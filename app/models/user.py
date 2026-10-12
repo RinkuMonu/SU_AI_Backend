@@ -1,10 +1,11 @@
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, model_validator
 from app.models.base import MongoBaseModel
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 
 class User(MongoBaseModel):
-    fullName: str
+    fullName: Optional[str] = None
+    name: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
     email: EmailStr
@@ -24,7 +25,44 @@ class User(MongoBaseModel):
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
     role: str = "user"
-    name: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_compatibility(cls, data: Any):
+        if isinstance(data, dict):
+            # Resolve fullName & name
+            full_name = data.get("fullName") or data.get("name")
+            if not full_name:
+                first = data.get("firstName") or ""
+                last = data.get("lastName") or ""
+                full_name = f"{first} {last}".strip()
+            if not full_name and data.get("email"):
+                full_name = str(data["email"]).split("@")[0]
+            if not full_name:
+                full_name = "User"
+
+            data["fullName"] = full_name
+            if not data.get("name"):
+                data["name"] = full_name
+
+            # Compatibility for phone / contactNumber
+            if "phone" in data and not data.get("contactNumber"):
+                data["contactNumber"] = data["phone"]
+            if "contactNumber" in data and not data.get("phone"):
+                data["phone"] = data["contactNumber"]
+
+            # Compatibility for email_verified / emailVerified
+            if "email_verified" in data and not data.get("emailVerified"):
+                data["emailVerified"] = data["email_verified"]
+            if "emailVerified" in data and not data.get("email_verified"):
+                data["email_verified"] = data["emailVerified"]
+
+            # Compatibility for role
+            if not data.get("role"):
+                data["role"] = "user"
+
+        return data
+
 
     # Business Registration Fields
     business_logo: Optional[str] = None

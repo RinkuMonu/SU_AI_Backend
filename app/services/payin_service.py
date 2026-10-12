@@ -22,14 +22,20 @@ class PayinService:
             raise HTTPException(status_code=500, detail="Finunique Payin configuration missing")
 
         order_id = f"ORDER_{uuid.uuid4().hex[:12].upper()}"
-        amount_inr = float(plan["price"])
+        base_amount = float(plan.get("base_price", plan["price"]))
+        gst_rate = float(plan.get("gst_rate", 0.18 if base_amount > 0 else 0.0))
+        gst_amount = float(plan.get("gst_amount", round(base_amount * gst_rate, 2)))
+        total_amount = float(plan.get("total_price", round(base_amount + gst_amount, 2)))
         
         now = datetime.now(timezone.utc)
         transaction = {
             "user_id": user_id,
             "plan_id": plan_id,
             "plan_name": plan["name"],
-            "amount": amount_inr,
+            "base_amount": base_amount,
+            "gst_rate": gst_rate,
+            "gst_amount": gst_amount,
+            "amount": total_amount,
             "currency": plan["currency"],
             "order_id": order_id,
             "status": "pending",
@@ -39,7 +45,7 @@ class PayinService:
         await db["payment_transactions"].insert_one(transaction)
 
         payload = {
-            "amount": amount_inr,
+            "amount": total_amount,
             "email": user_email,
             "reference": order_id,
             "userId": user_id
