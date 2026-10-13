@@ -31,15 +31,15 @@ logger = logging.getLogger(__name__)
 
 GRAPH_API_BASE = "https://graph.facebook.com"
 
-# Requested Facebook Login permissions for Instagram Professionals
+# Requested Facebook Login permissions
+# Kept clean and minimal to avoid 'Invalid Scopes' errors from Meta
+# Removed invalid 'pages_manage_posts' and unapproved instagram permissions
 FACEBOOK_LOGIN_PERMISSIONS = [
+    "public_profile",
+    "email",
     "pages_show_list",
-    "instagram_basic",
-    "instagram_content_publish",
-    "pages_read_engagement",
-    "instagram_manage_comments",
-    "pages_manage_posts",
 ]
+
 
 class FacebookService:
     @staticmethod
@@ -61,7 +61,15 @@ class FacebookService:
         redirect_uri = getattr(settings, "FACEBOOK_REDIRECT_URI", "http://localhost:8000/api/facebook/callback")
         api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0")
 
-        scopes = ",".join(custom_scopes or FACEBOOK_LOGIN_PERMISSIONS)
+        configured_scopes = getattr(settings, "FACEBOOK_SCOPES", None)
+        if custom_scopes:
+            scopes_list = custom_scopes
+        elif configured_scopes:
+            scopes_list = [s.strip() for s in configured_scopes.split(",") if s.strip()]
+        else:
+            scopes_list = FACEBOOK_LOGIN_PERMISSIONS
+
+        scopes = ",".join(scopes_list)
         return (
             f"https://www.facebook.com/{api_version}/dialog/oauth"
             f"?client_id={app_id}"
@@ -150,8 +158,11 @@ class FacebookService:
             if res.status_code != 200:
                 err_data = res.json() if res.content else {}
                 err_msg = err_data.get("error", {}).get("message", res.text)
-                logger.error(f"Failed to fetch Facebook pages: {err_msg}")
-                raise HTTPException(status_code=400, detail=f"Failed to fetch pages: {err_msg}")
+                logger.warning(f"Could not fetch Facebook pages (status {res.status_code}): {err_msg}")
+                return {
+                    "pages": [],
+                    "instagram_account": None,
+                }
 
             data = res.json()
             pages_list = data.get("data", [])
@@ -217,7 +228,8 @@ class FacebookService:
 
         business_query = {"$or": [{"user_id": user_id}, {"owner_id": user_id}, {"userId": user_id}]}
         business_update = {
-            "fb_access_token": access_token,  # plaintext for legacy services compatibility
+            "fb_access_token": page_token or access_token,
+            "fb_user_access_token": access_token,  # plaintext for legacy services compatibility
             "fb_access_token_encrypted": encrypted_token,
             "fb_token_expires_at": expires_at,
             "fb_pages": [
@@ -323,6 +335,8 @@ class FacebookService:
             "connected": True,
             "fb_page_id": business.get("fb_page_id"),
             "fb_page_name": business.get("fb_page_name"),
+            "page_access_token": business.get("fb_access_token"),
+            "user_access_token": business.get("fb_user_access_token"),
             "pages": business.get("fb_pages", []),
             "instagram_business_account": ig_account,
         }

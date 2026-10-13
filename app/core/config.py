@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     NODE_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"
     PORT: int = 8000
 
     MONGO_URI: str = "mongodb+srv://rinkuyadav9460_db_user:PJrNGHmujot6YovI@cluster0.wrmtwnk.mongodb.net/"
@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     FACEBOOK_APP_SECRET: str | None = None
     FACEBOOK_API_VERSION: str = "v19.0"
     FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
+    FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list"
     BACKEND_URL: str = "http://localhost:8000"
 
     SMTP_HOST: str | None = "smtp.gmail.com"

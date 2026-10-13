@@ -43,6 +43,30 @@ async def get_businesses(current_user: CurrentUser = Depends(get_current_user)):
         "data": docs
     }
 
+@router.get("/me")
+async def get_my_business(current_user: CurrentUser = Depends(get_current_user)):
+    db = get_database()
+    user_id = current_user["id"]
+    query = {"$or": [{"ownerId": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+    doc = await db["businesses"].find_one(query)
+    if not doc:
+        return {}
+    doc["id"] = str(doc.pop("_id"))
+    return doc
+
+@router.put("/me")
+async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_current_user)):
+    db = get_database()
+    user_id = current_user["id"]
+    query = {"$or": [{"ownerId": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+    clean_req = {k: v for k, v in req.items() if v is not None}
+    if clean_req:
+        await db["businesses"].update_one(query, {"$set": clean_req}, upsert=True)
+    doc = await db["businesses"].find_one(query)
+    if doc:
+        doc["id"] = str(doc.pop("_id"))
+    return {"success": True, "data": doc}
+
 @router.get("/{id}")
 async def get_business(id: str, current_user: CurrentUser = Depends(get_current_user)):
     db = get_database()
