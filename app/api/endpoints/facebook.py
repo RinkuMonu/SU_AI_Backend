@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 import urllib.parse
 from bson import ObjectId
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_optional
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.facebook_service import FacebookService, FACEBOOK_LOGIN_PERMISSIONS
@@ -18,11 +18,14 @@ from app.schemas.facebook import (
     FacebookDisconnectResponse,
     FacebookExchangeCodeRequest,
     FacebookTokenResponse,
+    FacebookPublishRequest,
+    FacebookPublishResponse,
+    FacebookVerifyTokenResponse,
 )
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/facebook", tags=["Facebook"])
+router = APIRouter(tags=["Facebook"])
 
 def resolve_frontend_url(state_doc: Optional[Dict[str, Any]] = None) -> str:
     """
@@ -53,19 +56,19 @@ def resolve_frontend_url(state_doc: Optional[Dict[str, Any]] = None) -> str:
 async def facebook_connect(
     frontend_url: str | None = Query(default=None),
     scopes: str | None = Query(default=None),
-    rerequest: bool = Query(default=False),
-    current_user=Depends(get_current_user),
+    rerequest: bool = Query(default=True),
+    current_user=Depends(get_current_user_optional),
     db=Depends(get_database),
 ):
     """
-    Generate Facebook Login OAuth URL.
-    Defaults to clean minimal permissions ('public_profile', 'email', 'pages_show_list')
-    to prevent invalid scope errors from Meta.
+    Generate Facebook Login OAuth URL with full publishing permissions:
+    'public_profile', 'email', 'pages_show_list', 'pages_read_engagement',
+    'pages_manage_posts', 'instagram_basic', 'instagram_content_publish'.
     """
-    user_id = str(current_user.get("id") or current_user.get("_id"))
+    user_id = str(current_user.get("id") or current_user.get("_id")) if current_user else "pending_login"
     state = secrets.token_urlsafe(32)
 
-    effective_frontend = frontend_url or settings.CORS_ORIGINS.split(",")[0].strip()
+    effective_frontend = resolve_frontend_url({"frontend_url": frontend_url})
     await db["facebook_oauth_states"].insert_one({
         "state": state,
         "user_id": user_id,
@@ -88,8 +91,8 @@ async def facebook_connect(
             scopes=effective_scopes,
         )
 
-    auth_url = FacebookService.get_authorization_url(state=state, custom_scopes=custom_scopes)
-    if rerequest:
+    auth_url = FacebookService.get_authorization_url(state=state, custom_scopes=effective_scopes)
+    if rerequest and "auth_type=rerequest" not in auth_url:
         auth_url += "&auth_type=rerequest"
     return FacebookConnectResponse(
         authorization_url=auth_url,
@@ -178,12 +181,23 @@ async def facebook_callback(
         logger.warning(f"Invalid or expired Facebook OAuth state: {state}")
         return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=invalid_state")
 
-    user_id = oauth_state["user_id"]
+    user_id = oauth_state.get("user_id", "pending_login")
+    token_param = ""
 
     try:
         # 1. Exchange code for long-lived access token
         token_data = await FacebookService.exchange_code_for_token(code)
         access_token = token_data["access_token"]
+
+        # If this was initiated from Login flow without prior session
+        if user_id == "pending_login":
+            user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
+                db=db,
+                access_token=access_token,
+                account_type="business"
+            )
+            user_id = str(user.id)
+            token_param = f"&token={access_token_jwt}"
 
         # 2. Fetch user's pages and linked Instagram Professional Account (graceful fallback)
         try:
@@ -205,7 +219,7 @@ async def facebook_callback(
         ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
 
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}"
+            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}"
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")
@@ -340,7 +354,9 @@ async def facebook_disconnect(
     oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
 
     # 1. Clear businesses collection
-    business_query = {"$or": [{"user_id": user_id}, {"owner_id": user_id}, {"userId": user_id}]}
+    business_query = {"$or": [{"ownerId": user_id}, {"owner_id": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+    if ObjectId.is_valid(user_id):
+        business_query["$or"].append({"_id": ObjectId(user_id)})
     await db["businesses"].update_one(
         business_query,
         {
@@ -478,3 +494,44 @@ async def facebook_quick_connect(
         instagram_business_account=demo_pages["instagram_account"],
         pages=demo_pages["pages"],
     )
+
+@router.post("/publish-image", response_model=FacebookPublishResponse)
+@router.post("/publish", response_model=FacebookPublishResponse)
+@router.post("/post", response_model=FacebookPublishResponse)
+async def facebook_publish_post(
+    request: FacebookPublishRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Publish a post (text or image) directly to the user's connected Facebook Page.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    result = await FacebookService.publish_post(
+        db=db,
+        user_id=user_id,
+        caption=request.caption,
+        image_url=request.image_url,
+        content_id=request.content_id,
+    )
+    return FacebookPublishResponse(
+        success=True,
+        message="Successfully published to Facebook Page!",
+        post_id=result.get("post_id"),
+        url=result.get("url"),
+        data=result,
+    )
+
+@router.get("/verify-token", response_model=FacebookVerifyTokenResponse)
+async def facebook_verify_token(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Verify if the currently saved Facebook Page Access Token has active publishing permissions.
+    Checks whether 'pages_manage_posts' and 'pages_read_engagement' are granted.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    result = await FacebookService.verify_page_token_permissions(db, user_id)
+    return FacebookVerifyTokenResponse(**result)
+

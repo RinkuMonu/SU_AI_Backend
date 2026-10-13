@@ -66,13 +66,16 @@ export default function CreateAdPage() {
           'Content-Type': 'application/json'
         }
       });
-      if (!res.ok) throw new Error('Publish failed');
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || 'Publish failed');
+      }
       
       setPublishSuccessMessage(`Successfully Published to ${publishPlatform.charAt(0).toUpperCase() + publishPlatform.slice(1)}!`);
       setTimeout(() => setPublishSuccessMessage(null), 5000);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      alert('Failed to publish. Please ensure you have linked your account.');
+      alert('Failed to publish: ' + (err.message || 'Please ensure you have linked your account.'));
     } finally {
       if (publishPlatform === 'facebook') setIsPublishingFacebook(false);
       else setIsPublishingInstagram(false);

@@ -39,7 +39,6 @@ from app.schemas.instagram import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
-    prefix="/api/instagram",
     tags=["Instagram"],
 )
 
@@ -293,6 +292,8 @@ async def instagram_profile(
 # ──────────────────────────────────────────────
 
 @router.post("/post", response_model=InstagramPublishResponse)
+@router.post("/publish-image", response_model=InstagramPublishResponse)
+@router.post("/publish", response_model=InstagramPublishResponse)
 async def instagram_post(
     request: InstagramPostRequest,
     current_user=Depends(get_current_user),

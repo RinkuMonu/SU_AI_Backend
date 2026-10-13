@@ -40,3 +40,25 @@ class FacebookTokenResponse(BaseModel):
     expires_in: Optional[int] = None
     instagram_business_account: Optional[Dict[str, Any]] = None
     pages: List[Dict[str, Any]] = []
+
+class FacebookPublishRequest(BaseModel):
+    image_url: Optional[str] = None
+    caption: str = ""
+    content_id: Optional[str] = None
+
+class FacebookPublishResponse(BaseModel):
+    success: bool
+    message: str
+    post_id: Optional[str] = None
+    url: Optional[str] = None
+    data: Optional[Dict[str, Any]] = None
+
+class FacebookVerifyTokenResponse(BaseModel):
+    valid: bool
+    has_publish_permission: bool
+    page_id: Optional[str] = None
+    page_name: Optional[str] = None
+    scopes: List[str] = []
+    missing_permissions: List[str] = []
+    message: str
+

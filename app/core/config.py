@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     FACEBOOK_APP_SECRET: str | None = None
     FACEBOOK_API_VERSION: str = "v19.0"
     FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
-    FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list"
+    FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
     BACKEND_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_API_URL: str | None = None
 

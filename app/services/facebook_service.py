@@ -32,13 +32,17 @@ logger = logging.getLogger(__name__)
 GRAPH_API_BASE = "https://graph.facebook.com"
 
 # Requested Facebook Login permissions
-# Kept clean and minimal to avoid 'Invalid Scopes' errors from Meta
-# Removed invalid 'pages_manage_posts' and unapproved instagram permissions
+# Includes pages_manage_posts and pages_read_engagement to allow posting to connected Facebook Pages
 FACEBOOK_LOGIN_PERMISSIONS = [
     "public_profile",
     "email",
     "pages_show_list",
+    "pages_read_engagement",
+    "pages_manage_posts",
+    "instagram_basic",
+    "instagram_content_publish",
 ]
+
 
 
 class FacebookService:
@@ -76,6 +80,7 @@ class FacebookService:
             f"&redirect_uri={redirect_uri}"
             f"&response_type=code"
             f"&scope={scopes}"
+            f"&auth_type=rerequest"
             f"&state={state}"
         )
 
@@ -309,7 +314,9 @@ class FacebookService:
     @staticmethod
     async def get_connection(db, user_id: str) -> Optional[Dict[str, Any]]:
         """Get Facebook connection info without sensitive token data."""
-        business_query = {"$or": [{"user_id": user_id}, {"owner_id": user_id}, {"userId": user_id}]}
+        business_query = {"$or": [{"ownerId": user_id}, {"owner_id": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+        if ObjectId.is_valid(user_id):
+            business_query["$or"].append({"_id": ObjectId(user_id)})
         business = await db["businesses"].find_one(business_query)
         if not business or not business.get("fb_connected", False):
             # Check users collection fallback
@@ -318,7 +325,10 @@ class FacebookService:
             if user_doc and user_doc.get("facebook_connected"):
                 return {
                     "connected": True,
-                    "fb_page_id": None,
+                    "fb_page_id": user_doc.get("fb_page_id"),
+                    "fb_page_name": user_doc.get("fb_page_name"),
+                    "page_access_token": user_doc.get("facebook_access_token"),
+                    "user_access_token": user_doc.get("facebook_access_token"),
                     "pages": [],
                     "instagram_business_account": None,
                 }
@@ -344,7 +354,9 @@ class FacebookService:
     @staticmethod
     async def get_access_token(db, user_id: str) -> str:
         """Get Facebook User Access Token for API calls (server-side only)."""
-        business_query = {"$or": [{"user_id": user_id}, {"owner_id": user_id}, {"userId": user_id}]}
+        business_query = {"$or": [{"ownerId": user_id}, {"owner_id": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+        if ObjectId.is_valid(user_id):
+            business_query["$or"].append({"_id": ObjectId(user_id)})
         business = await db["businesses"].find_one(business_query)
         if business and business.get("fb_access_token"):
             return business["fb_access_token"]
@@ -512,3 +524,251 @@ class FacebookService:
         await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
 
         return user, jwt_access_token, jwt_refresh_token
+
+    @staticmethod
+    async def publish_post(
+        db,
+        user_id: str,
+        caption: str = "",
+        image_url: Optional[str] = None,
+        content_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Publish a post (text or photo) to the connected Facebook Page.
+        """
+        # 1. Fetch business / user Facebook credentials
+        business_query = {"$or": [{"ownerId": user_id}, {"owner_id": user_id}, {"user_id": user_id}, {"userId": user_id}]}
+        if ObjectId.is_valid(user_id):
+            business_query["$or"].append({"_id": ObjectId(user_id)})
+
+        business = await db["businesses"].find_one(business_query)
+
+        fb_page_id = None
+        fb_page_token = None
+
+        if business:
+            fb_page_id = business.get("fb_page_id")
+            fb_page_token = business.get("fb_access_token")
+            if not fb_page_token and business.get("fb_access_token_encrypted"):
+                fb_page_token = decrypt_token(business["fb_access_token_encrypted"])
+
+        if not fb_page_token:
+            oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+            user_doc = await db["users"].find_one({"_id": oid})
+            if user_doc:
+                fb_page_id = fb_page_id or user_doc.get("fb_page_id")
+                if user_doc.get("facebook_access_token"):
+                    fb_page_token = decrypt_token(user_doc["facebook_access_token"])
+
+        if not fb_page_token or not fb_page_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Facebook is not connected for this account. Please connect your Facebook Page in Settings > Social Platforms."
+            )
+
+        # Demo mode handling
+        if fb_page_token in ("DEMO_FB_ACCESS_TOKEN", "DEMO_MODE"):
+            demo_post_id = f"demo_fb_{secrets.token_hex(8)}"
+            if content_id and ObjectId.is_valid(content_id):
+                await db["contents"].update_one(
+                    {"_id": ObjectId(content_id)},
+                    {"$set": {
+                        "fb_post_id": demo_post_id,
+                        "status": "published",
+                        "published_at": datetime.now(timezone.utc),
+                        "platform": "facebook",
+                    }}
+                )
+            return {
+                "success": True,
+                "post_id": demo_post_id,
+                "url": f"https://www.facebook.com/{fb_page_id}/posts/{demo_post_id}",
+                "demo_mode": True,
+            }
+
+        api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0")
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                # Decide photo vs feed post
+                is_valid_image = bool(
+                    image_url and
+                    (image_url.startswith("http://") or image_url.startswith("https://")) and
+                    not ("localhost" in image_url or "127.0.0.1" in image_url)
+                )
+
+                if is_valid_image:
+                    photo_url = f"{GRAPH_API_BASE}/{api_version}/{fb_page_id}/photos"
+                    photo_payload = {
+                        "url": image_url,
+                        "caption": caption or "",
+                        "access_token": fb_page_token,
+                    }
+                    res = await client.post(photo_url, params=photo_payload)
+                    if res.status_code != 200:
+                        err_res = res.json() if res.content else {}
+                        err_code = err_res.get("error", {}).get("code")
+                        # If error code 100 (e.g. invalid/unreachable image URL), try feed fallback
+                        if err_code == 100:
+                            feed_url = f"{GRAPH_API_BASE}/{api_version}/{fb_page_id}/feed"
+                            res = await client.post(feed_url, params={
+                                "message": f"{caption}\n\n{image_url}" if caption else image_url,
+                                "access_token": fb_page_token,
+                            })
+                    res.raise_for_status()
+                    data = res.json()
+                    post_id = data.get("post_id") or data.get("id")
+                else:
+                    feed_url = f"{GRAPH_API_BASE}/{api_version}/{fb_page_id}/feed"
+                    feed_payload = {
+                        "message": caption or "",
+                        "access_token": fb_page_token,
+                    }
+                    res = await client.post(feed_url, params=feed_payload)
+                    res.raise_for_status()
+                    data = res.json()
+                    post_id = data.get("id")
+
+                # Update content doc if content_id provided
+                if content_id and ObjectId.is_valid(content_id):
+                    await db["contents"].update_one(
+                        {"_id": ObjectId(content_id)},
+                        {"$set": {
+                            "fb_post_id": post_id,
+                            "status": "published",
+                            "published_at": datetime.now(timezone.utc),
+                            "platform": "facebook",
+                        }}
+                    )
+
+                return {
+                    "success": True,
+                    "post_id": post_id,
+                    "url": f"https://www.facebook.com/{fb_page_id}/posts/{post_id}",
+                }
+
+            except httpx.HTTPStatusError as e:
+                err_data = e.response.json() if e.response.content else {}
+                error_obj = err_data.get("error", {})
+                err_msg = error_obj.get("message", str(e))
+                err_code = error_obj.get("code")
+                logger.error(f"Facebook Graph API Publish Error ({e.response.status_code}): {err_data}")
+
+                if "pages_manage_posts" in err_msg or (err_code == 200 and "pages_manage_posts" in str(err_data)):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            "Facebook Permission Error: Missing 'pages_manage_posts' permission on your Facebook Page. "
+                            "Please re-authorize Facebook with 'pages_manage_posts' or generate a Page Access Token with 'pages_manage_posts' in Meta Graph API Explorer."
+                        )
+                    )
+                elif err_code == 190:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Facebook Access Token has expired or is invalid. Please reconnect your Facebook account in Settings."
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Facebook API Error: {err_msg}"
+                    )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Facebook publish unexpected exception: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to publish to Facebook: {str(e)}")
+
+    @staticmethod
+    async def verify_page_token_permissions(db, user_id: str) -> Dict[str, Any]:
+        """
+        Check Facebook Page Token permissions and report if 'pages_manage_posts' is missing.
+        """
+        conn = await FacebookService.get_connection(db, user_id)
+        if not conn:
+            return {
+                "valid": False,
+                "has_publish_permission": False,
+                "scopes": [],
+                "missing_permissions": ["pages_manage_posts", "pages_read_engagement"],
+                "message": "Facebook is not connected."
+            }
+
+        page_token = conn.get("page_access_token")
+        page_id = conn.get("fb_page_id")
+        page_name = conn.get("fb_page_name")
+
+        if not page_token:
+            return {
+                "valid": False,
+                "has_publish_permission": False,
+                "page_id": page_id,
+                "page_name": page_name,
+                "scopes": [],
+                "missing_permissions": ["pages_manage_posts"],
+                "message": "Page Access Token is missing."
+            }
+
+        if page_token in ("DEMO_FB_ACCESS_TOKEN", "DEMO_MODE"):
+            return {
+                "valid": True,
+                "has_publish_permission": True,
+                "page_id": page_id,
+                "page_name": page_name,
+                "scopes": ["pages_show_list", "pages_read_engagement", "pages_manage_posts"],
+                "missing_permissions": [],
+                "message": "[Demo Mode] Active with full mock permissions."
+            }
+
+        app_id = getattr(settings, "FACEBOOK_APP_ID", None)
+        app_secret = getattr(settings, "FACEBOOK_APP_SECRET", None)
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            try:
+                debug_url = f"{GRAPH_API_BASE}/debug_token"
+                debug_params = {
+                    "input_token": page_token,
+                    "access_token": f"{app_id}|{app_secret}" if app_id and app_secret else page_token
+                }
+                res = await client.get(debug_url, params=debug_params)
+                if res.status_code == 200:
+                    token_info = res.json().get("data", {})
+                    scopes = token_info.get("scopes", [])
+                    is_valid = token_info.get("is_valid", False)
+                    has_posts = "pages_manage_posts" in scopes
+                    missing = []
+                    if not has_posts:
+                        missing.append("pages_manage_posts")
+                    if "pages_read_engagement" not in scopes:
+                        missing.append("pages_read_engagement")
+
+                    msg = "Token is valid and has publish permissions." if has_posts else "Missing 'pages_manage_posts' permission on Page token. Posts cannot be published."
+                    return {
+                        "valid": is_valid,
+                        "has_publish_permission": has_posts,
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "scopes": scopes,
+                        "missing_permissions": missing,
+                        "message": msg
+                    }
+                else:
+                    return {
+                        "valid": False,
+                        "has_publish_permission": False,
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "scopes": [],
+                        "missing_permissions": ["pages_manage_posts"],
+                        "message": "Failed to verify token with Facebook Graph API."
+                    }
+            except Exception as e:
+                return {
+                    "valid": True,
+                    "has_publish_permission": False,
+                    "page_id": page_id,
+                    "page_name": page_name,
+                    "scopes": [],
+                    "missing_permissions": [],
+                    "message": f"Error verifying permissions: {str(e)}"
+                }
+
