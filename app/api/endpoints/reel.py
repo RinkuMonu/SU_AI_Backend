@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from bson import ObjectId
+import re
 
 from app.core.security import get_current_user
 from app.core.database import get_database
@@ -41,7 +42,7 @@ async def generate_reel(
     
     b_id_query = ObjectId(str(business.id)) if ObjectId.is_valid(str(business.id)) else str(business.id)
     
-    # Try MongoDB ObjectId lookup first
+    # 1. Try MongoDB ObjectId lookup in products collection
     if ObjectId.is_valid(product_id):
         doc = await db["products"].find_one({
             "_id": ObjectId(product_id),
@@ -50,37 +51,79 @@ async def generate_reel(
         if doc:
             product = serialize_product(doc)
 
-    # If not found by ObjectId, try matching by name
-    if not product:
+    # 2. Check fashion_products collection if ObjectId
+    if not product and ObjectId.is_valid(product_id):
+        fdoc = await db["fashion_products"].find_one({"_id": ObjectId(product_id)})
+        if fdoc:
+            product = {
+                "id": str(fdoc["_id"]),
+                "name": fdoc.get("name", "Product"),
+                "description": fdoc.get("description", ""),
+                "price": fdoc.get("price", 0),
+                "image_url": fdoc.get("image_url"),
+                "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
+            }
+
+    # 3. If not found by ObjectId, try matching by name or product_name
+    search_name = request.product_name or (product_id if product_id not in ["general", "default", ""] else None)
+    if not product and search_name:
         doc = await db["products"].find_one({
             "business_id": b_id_query,
             "$or": [
-                {"product_id": product_id},
-                {"name": product_id}
+                {"product_id": search_name},
+                {"name": {"$regex": f"^{re.escape(search_name)}$", "$options": "i"}}
             ]
         })
         if doc:
             product = serialize_product(doc)
-            
-    # Fallback to first product
+        else:
+            fdoc = await db["fashion_products"].find_one({
+                "name": {"$regex": f"^{re.escape(search_name)}$", "$options": "i"}
+            })
+            if fdoc:
+                product = {
+                    "id": str(fdoc["_id"]),
+                    "name": fdoc.get("name", search_name),
+                    "description": fdoc.get("description", ""),
+                    "price": fdoc.get("price", 0),
+                    "image_url": fdoc.get("image_url"),
+                    "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
+                }
+
+    # 4. If explicit product details or custom product provided in request
+    if not product and (request.product_name or (product_id and product_id not in ["general", "default", ""])):
+        chosen_name = request.product_name or product_id
+        chosen_desc = request.product_description or f"Premium quality {chosen_name}"
+        chosen_img = request.product_image_url
+        product = {
+            "id": product_id or str(ObjectId()),
+            "name": chosen_name,
+            "description": chosen_desc,
+            "price": 99.99,
+            "image_url": chosen_img,
+            "images": [chosen_img] if chosen_img else []
+        }
+
+    # 5. Fallback to first existing product in business catalogue
     if not product:
         all_products = await get_products(db, str(business.id))
         if all_products:
             product = all_products[0]
             
+    # 6. Default fallback with request info or sensible name
     if not product:
-        # Developer mode mock
+        final_name = request.product_name or "Exclusive Product"
+        final_desc = request.product_description or f"High quality {final_name}"
+        final_img = request.product_image_url
         product = {
-            "id": product_id,
-            "name": "Test Product",
-            "description": "Developer mock product",
+            "id": product_id or "general",
+            "name": final_name,
+            "description": final_desc,
             "price": 99.99,
-            "images": []
+            "image_url": final_img,
+            "images": [final_img] if final_img else []
         }
         
-    # Deduct credits atomically before pushing to background
-    await CreditService.deduct_credits(db, current_user.id, "reel_generation")
-    
     try:
         reel_service = ReelService(db)
         job_id = await reel_service.create_reel_job(

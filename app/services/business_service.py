@@ -13,6 +13,7 @@ class BusinessService:
     async def create_business(owner_id: str, business_in: BusinessCreate) -> Business:
         collection = await BusinessService.get_collection()
         business_dict = business_in.model_dump()
+        business_dict["ownerId"] = owner_id
         business_dict["owner_id"] = owner_id
         business = Business(**business_dict)
         
@@ -34,7 +35,13 @@ class BusinessService:
     @staticmethod
     async def get_business_by_owner(owner_id: str) -> Business | None:
         collection = await BusinessService.get_collection()
-        doc = await collection.find_one({"owner_id": owner_id})
+        doc = await collection.find_one({
+            "$or": [
+                {"owner_id": owner_id},
+                {"ownerId": owner_id},
+                {"userId": owner_id}
+            ]
+        })
         if doc:
             return Business(**doc)
         return None
@@ -46,11 +53,16 @@ class BusinessService:
         if not update_data:
             return await BusinessService.get_business_by_owner(owner_id)
             
-        await collection.update_one({"owner_id": owner_id}, {"$set": update_data})
+        await collection.update_one(
+            {"$or": [{"owner_id": owner_id}, {"ownerId": owner_id}, {"userId": owner_id}]},
+            {"$set": update_data}
+        )
         return await BusinessService.get_business_by_owner(owner_id)
 
     @staticmethod
     async def delete_business(owner_id: str) -> bool:
         collection = await BusinessService.get_collection()
-        result = await collection.delete_one({"owner_id": owner_id})
+        result = await collection.delete_one(
+            {"$or": [{"owner_id": owner_id}, {"ownerId": owner_id}, {"userId": owner_id}]}
+        )
         return result.deleted_count > 0

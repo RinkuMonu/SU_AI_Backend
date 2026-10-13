@@ -20,7 +20,9 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
-    AI_PROVIDER: str = "mock"
+    AI_PROVIDER: str = "gemini"
+    GEMINI_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
 
@@ -40,6 +42,7 @@ class Settings(BaseSettings):
     FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
     FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list"
     BACKEND_URL: str = "http://localhost:8000"
+    NEXT_PUBLIC_API_URL: str | None = None
 
     SMTP_HOST: str | None = "smtp.gmail.com"
     SMTP_PORT: int = 587
@@ -54,6 +57,18 @@ class Settings(BaseSettings):
     PAYIN_TOKEN: str = ""
     
     GEOAPIFY_API_KEY: str = ""
+
+    def get_public_url(self, path: Optional[str]) -> str:
+        """Converts a local media path into a fully qualified public URL using BACKEND_URL."""
+        if not path:
+            return ""
+        if path.startswith("http://") or path.startswith("https://"):
+            return path
+        clean_path = path if path.startswith("/") else f"/{path}"
+        base = (self.BACKEND_URL or "").rstrip("/")
+        if base:
+            return f"{base}{clean_path}"
+        return clean_path
 
     @property
     def CORS_ORIGINS_LIST(self) -> List[str]:
@@ -71,6 +86,8 @@ class Settings(BaseSettings):
             self.SMTP_FROM_EMAIL = self.SMTP_FROM
         elif self.SMTP_USERNAME and self.SMTP_FROM_EMAIL == "noreply@dhandagrow.com":
             self.SMTP_FROM_EMAIL = self.SMTP_USERNAME
+        if self.NEXT_PUBLIC_API_URL and self.BACKEND_URL == "http://localhost:8000":
+            self.BACKEND_URL = self.NEXT_PUBLIC_API_URL
         return self
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")

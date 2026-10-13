@@ -12,6 +12,8 @@ from app.ai.video.composer import VideoComposer
 
 logger = logging.getLogger(__name__)
 
+_background_tasks = set()
+
 class ReelService:
     def __init__(self, db):
         self.db = db
@@ -26,6 +28,8 @@ class ReelService:
             "user_id": ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id,
             "business_id": ObjectId(business_id) if ObjectId.is_valid(business_id) else business_id,
             "product_id": request.product_id,
+            "product_name": product.get("name", "Product"),
+            "product_description": product.get("description", ""),
             "objective": request.objective,
             "platform": request.platform,
             "language": request.language,
@@ -40,9 +44,10 @@ class ReelService:
         result = await self.db["reel_jobs"].insert_one(job_doc)
         job_id = str(result.inserted_id)
         
-        # In a production environment, this should be sent to a Celery/Redis queue.
-        # Here we use asyncio.create_task for the background job.
-        asyncio.create_task(self._process_reel_generation(job_id, str(user_id), product, brand, request))
+        # Keep strong reference to prevent premature garbage collection in Python 3.12+
+        task = asyncio.create_task(self._process_reel_generation(job_id, str(user_id), product, brand, request))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
         
         return job_id
 
@@ -107,31 +112,56 @@ class ReelService:
             # 3. Generate Video Scenes
             await self._update_job(job_id, {"progress": 50, "stage": "Generating video scenes"})
             
-            # Resolve product image — use stored image_url if available
-            image_url = product.get("image_url") or (
-                product.get("images")[0] if product.get("images") else None
-            )
+            # Resolve product images
+            product_images = []
+            if product.get("images") and isinstance(product["images"], list):
+                product_images.extend([img for img in product["images"] if img and isinstance(img, str)])
+            if product.get("image_url") and product["image_url"] not in product_images:
+                product_images.insert(0, product["image_url"])
 
-            # If no product image, generate a realistic one dynamically
-            if not image_url:
-                await self._update_job(job_id, {"progress": 40, "stage": "Generating product image"})
-                from app.ai.image.generator import ImageGenerator
-                from app.core.config import settings
-                image_gen = ImageGenerator(
-                    api_url=getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations"),
-                    api_key=getattr(settings, "IMAGE_API_KEY", "your_api_key_here")
-                )
-                product_name = product.get("name", "product")
+            primary_image = product_images[0] if product_images else None
+
+            from app.ai.image.generator import ImageGenerator
+            from app.core.config import settings
+            image_gen = ImageGenerator(
+                api_url=getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations"),
+                api_key=getattr(settings, "IMAGE_API_KEY", "your_api_key_here")
+            )
+            product_name = product.get("name", "Product")
+
+            # If no product image, generate a realistic hero one dynamically
+            if not primary_image:
+                await self._update_job(job_id, {"progress": 40, "stage": "Generating product hero image"})
                 img_prompt = f"Professional product photography of a {product_name}, highly detailed, photorealistic, 8k resolution, commercial studio lighting"
                 img_res = await image_gen.generate(prompt=img_prompt)
-                image_url = img_res.get("image_url")
+                primary_image = img_res.get("image_url")
+                if primary_image:
+                    product_images.append(primary_image)
 
-            if not image_url:
+            if not primary_image:
                 raise Exception("Failed to acquire or generate visual assets for composition")
 
-            # We will use imageio_ffmpeg and the product image directly in VideoComposer.
-            # Passing the static image for all scenes.
-            video_segments = [image_url] * len(script.scenes)
+            # Prepare distinct visual images for each scene in parallel
+            await self._update_job(job_id, {"progress": 60, "stage": "Generating animated scene visuals"})
+
+            async def resolve_scene_image(idx, scene):
+                if idx < len(product_images) and product_images[idx]:
+                    return product_images[idx]
+                visual_desc = getattr(scene, "visual", "") or f"showcase of {product_name}"
+                prompt = f"Professional commercial photography of {product_name}, {visual_desc}, modern cinematic aesthetic, vibrant studio lighting, 8k"
+                try:
+                    res = await image_gen.generate(prompt=prompt)
+                    return res.get("image_url") or primary_image
+                except Exception:
+                    return primary_image
+
+            video_segments = await asyncio.gather(*[
+                resolve_scene_image(i, sc) for i, sc in enumerate(script.scenes)
+            ])
+            if not video_segments:
+                video_segments = [primary_image] * len(script.scenes)
+            
+            image_url = primary_image
             
             # 4. Compose Final Video
             await self._update_job(job_id, {"progress": 80, "stage": "Composing final reel"})
@@ -174,6 +204,6 @@ class ReelService:
             # Refund credits safely on failure exactly once
             try:
                 from app.services.credit_service import CreditService
-                await CreditService.refund_credits(self.db, user_id=user_id, action="reel_generation", job_id=job_id)
+                await CreditService.refund_credits(self.db, user_id=user_id, action="ai_reel", job_id=job_id)
             except Exception as refund_err:
                 logger.error(f"Failed to refund credits for job {job_id}: {refund_err}")

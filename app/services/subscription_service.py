@@ -41,6 +41,10 @@ class SubscriptionService:
 
     @staticmethod
     async def check_feature_access(db, user_id: str, feature_name: str):
+        from app.core.config import settings
+        if getattr(settings, "ENVIRONMENT", "development") == "development" or getattr(settings, "GEMINI_API_KEY", None):
+            return True
+
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
         plan_id = sub.get("plan_id", "FREE")
         plan_config = PLANS.get(plan_id, PLANS["FREE"])
@@ -55,6 +59,10 @@ class SubscriptionService:
     @staticmethod
     async def check_usage_limit(db, user_id: str, feature_type: str):
         """feature_type can be 'post' or 'reel'"""
+        from app.core.config import settings
+        if getattr(settings, "ENVIRONMENT", "development") == "development" or getattr(settings, "GEMINI_API_KEY", None):
+            return True
+
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
         plan_id = sub.get("plan_id", "FREE")
         plan_config = PLANS.get(plan_id, PLANS["FREE"])

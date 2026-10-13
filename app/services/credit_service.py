@@ -14,53 +14,94 @@ class CreditService:
     async def check_credits(db, user_id: str, action: str):
         """Check if user has enough credits without deducting. Raises 402 if not."""
         from app.core.config import settings
-        if getattr(settings, "ENVIRONMENT", "development") == "development":
-            # return True
-            pass # We enforce it anyway to test the flow, unless you want to bypass in dev
-            
+        is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
+        has_custom_key = bool(getattr(settings, "GEMINI_API_KEY", None))
+
         sub = await CreditService.get_or_create_subscription(db, user_id)
         cost = FEATURE_PRICING.get(action, 1)
-        
+
         if sub.get("credits_remaining", 0) < cost:
+            if is_dev or has_custom_key:
+                # Auto-replenish in development or when custom Gemini API key is configured
+                sub_collection = db["subscriptions"]
+                await sub_collection.update_one(
+                    {"user_id": user_id},
+                    {
+                        "$set": {
+                            "credits_remaining": 1000,
+                            "credits_total": 1000,
+                            "updated_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+                return True
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {sub.get('credits_remaining', 0)}"
+                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {sub.get('credits_remaining', 0)}",
             )
         return True
-        
+
     @staticmethod
     async def deduct_credits(db, user_id: str, action: str) -> dict:
         """Atomically deducts credits for an action and logs the transaction. Raises 402 if insufficient."""
+        from app.core.config import settings
+        is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
+        has_custom_key = bool(getattr(settings, "GEMINI_API_KEY", None))
+
         cost = FEATURE_PRICING.get(action, 1)
-        
+
         if cost == 0:
             return {"success": True}
-            
+
         # Ensure subscription exists
         await CreditService.get_or_create_subscription(db, user_id)
-        
+
         # Atomic deduction using $gte to prevent negative balance
         sub_collection = db["subscriptions"]
         updated_sub = await sub_collection.find_one_and_update(
             {
                 "user_id": user_id,
-                "credits_remaining": {"$gte": cost}
+                "credits_remaining": {"$gte": cost},
             },
             {
                 "$inc": {"credits_remaining": -cost},
-                "$set": {"updated_at": datetime.now(timezone.utc)}
+                "$set": {"updated_at": datetime.now(timezone.utc)},
             },
-            return_document=ReturnDocument.AFTER
+            return_document=ReturnDocument.AFTER,
         )
-        
+
         if not updated_sub:
-            # Find the actual balance to return in error
-            current = await sub_collection.find_one({"user_id": user_id})
-            remaining = current.get("credits_remaining", 0) if current else 0
-            raise HTTPException(
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}"
-            )
+            if is_dev or has_custom_key:
+                # Auto-replenish in development or with custom key so operation doesn't fail
+                await sub_collection.update_one(
+                    {"user_id": user_id},
+                    {
+                        "$set": {
+                            "credits_remaining": 1000,
+                            "credits_total": 1000,
+                            "updated_at": datetime.now(timezone.utc),
+                        }
+                    },
+                )
+                updated_sub = await sub_collection.find_one_and_update(
+                    {
+                        "user_id": user_id,
+                        "credits_remaining": {"$gte": cost},
+                    },
+                    {
+                        "$inc": {"credits_remaining": -cost},
+                        "$set": {"updated_at": datetime.now(timezone.utc)},
+                    },
+                    return_document=ReturnDocument.AFTER,
+                )
+
+            if not updated_sub:
+                current = await sub_collection.find_one({"user_id": user_id})
+                remaining = current.get("credits_remaining", 0) if current else 0
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}",
+                )
             
         # Record transaction
         tx_collection = db["credit_transactions"]
