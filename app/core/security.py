@@ -84,10 +84,25 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     if user_doc is None:
         raise credentials_exception
         
+    business = await db["businesses"].find_one({"$or": [{"owner_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
+
     return CurrentUser({
         "id": str(user_doc["_id"]),
-        "fullName": user_doc.get("fullName", "Unknown"),
+        "name": user_doc.get("name") or user_doc.get("fullName", "Unknown"),
+        "fullName": user_doc.get("fullName") or user_doc.get("name", "Unknown"),
         "email": user_doc.get("email", ""),
+        "role": user_doc.get("role", "user"),
         "accountType": user_doc.get("accountType", "personal"),
-        "emailVerified": user_doc.get("emailVerified", False),
+        "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", False)),
+        "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", False)),
+        "business_id": str(business["_id"]) if business else None
     })
+
+async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    if current_user.get("role") != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions"
+        )
+    return current_user
+

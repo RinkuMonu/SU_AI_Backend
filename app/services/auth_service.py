@@ -251,6 +251,60 @@ class AuthService:
         return user, access_token, refresh_token
 
     @staticmethod
+    async def register(user_in) -> User:
+        db = get_database()
+        email = user_in.email.lower().strip()
+        existing = await db["users"].find_one({"email": email})
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+
+        hashed_password = get_password_hash(user_in.password)
+        user_name = getattr(user_in, "name", None) or getattr(user_in, "fullName", None) or getattr(user_in, "full_name", None) or "User"
+        
+        user = User(
+            fullName=user_name,
+            name=user_name,
+            email=email,
+            hashed_password=hashed_password,
+            emailVerified=True,
+            email_verified=True,
+            role=getattr(user_in, "role", "business") or "business",
+            business_logo=getattr(user_in, "business_logo", None),
+            brand_color=getattr(user_in, "brand_color", None),
+            business_name=getattr(user_in, "business_name", None),
+            business_type=getattr(user_in, "business_type", None),
+            business_category=getattr(user_in, "business_category", None),
+            business_description=getattr(user_in, "business_description", None),
+            registration_number=getattr(user_in, "registration_number", None),
+            year_established=getattr(user_in, "year_established", None),
+            country=getattr(user_in, "country", None),
+            state=getattr(user_in, "state", None),
+            city=getattr(user_in, "city", None),
+            area=getattr(user_in, "area", None),
+            pincode=getattr(user_in, "pincode", None),
+            full_address=getattr(user_in, "full_address", None),
+            google_maps_url=getattr(user_in, "google_maps_url", None),
+            business_model=getattr(user_in, "business_model", None),
+            selling_model=getattr(user_in, "selling_model", None),
+            target_age_group=getattr(user_in, "target_age_group", None),
+            target_gender=getattr(user_in, "target_gender", None),
+            target_location=getattr(user_in, "target_location", None),
+            customer_type=getattr(user_in, "customer_type", None)
+        )
+        
+        user_doc = user.model_dump(by_alias=True, exclude={"id"})
+        result = await db["users"].insert_one(user_doc)
+        user.id = str(result.inserted_id)
+        
+        try:
+            from app.services.credit_service import CreditService
+            await CreditService.get_or_create_subscription(db, user.id)
+        except Exception:
+            pass
+            
+        return user
+
+    @staticmethod
     async def login(req: LoginRequest):
         db = get_database()
         email = req.email.lower().strip()

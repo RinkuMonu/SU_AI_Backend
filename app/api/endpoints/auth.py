@@ -53,20 +53,20 @@ async def signup(req: SignupRequest, response: Response):
     user, access_token, refresh_token = await AuthService.signup(req)
     set_refresh_cookie(response, refresh_token)
     msg = "User registered successfully." if user.emailVerified else "User registered successfully. A verification link has also been sent to your email inbox."
-    user_payload = {
+    user_dict = {
         "id": str(user.id),
-        "fullName": user.fullName,
+        "fullName": user.fullName or getattr(user, "name", None) or "User",
+        "name": user.fullName or getattr(user, "name", None) or "User",
         "firstName": user.firstName,
         "lastName": user.lastName,
         "email": user.email,
-        "phone": user.phone,
-        "contactNumber": user.contactNumber,
+        "phone": user.phone or user.contactNumber,
+        "contactNumber": user.contactNumber or user.phone,
         "accountType": user.accountType,
         "role": getattr(user, "role", "user") or "user",
-        "name": getattr(user, "name", user.fullName) or user.fullName,
         "emailVerified": bool(user.emailVerified),
         "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified)
     }
     return {
         "success": True,
@@ -74,12 +74,12 @@ async def signup(req: SignupRequest, response: Response):
         "access_token": access_token,
         "accessToken": access_token,
         "token": access_token,
-        "user": user_payload,
+        "user": user_dict,
         "data": {
             "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
-            "user": user_payload,
+            "user": user_dict
         }
     }
 
@@ -88,20 +88,20 @@ async def signup(req: SignupRequest, response: Response):
 async def login(req: LoginRequest, response: Response):
     user, access_token, refresh_token = await AuthService.login(req)
     set_refresh_cookie(response, refresh_token)
-    user_payload = {
+    user_dict = {
         "id": str(user.id),
-        "fullName": user.fullName,
+        "fullName": user.fullName or getattr(user, "name", None) or "User",
+        "name": user.fullName or getattr(user, "name", None) or "User",
         "firstName": user.firstName,
         "lastName": user.lastName,
         "email": user.email,
-        "phone": user.phone,
-        "contactNumber": user.contactNumber,
+        "phone": user.phone or user.contactNumber,
+        "contactNumber": user.contactNumber or user.phone,
         "accountType": user.accountType,
         "role": getattr(user, "role", "user") or "user",
-        "name": getattr(user, "name", user.fullName) or user.fullName,
         "emailVerified": bool(user.emailVerified),
         "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified)
     }
     return {
         "success": True,
@@ -109,12 +109,12 @@ async def login(req: LoginRequest, response: Response):
         "access_token": access_token,
         "accessToken": access_token,
         "token": access_token,
-        "user": user_payload,
+        "user": user_dict,
         "data": {
             "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
-            "user": user_payload,
+            "user": user_dict
         }
     }
 
@@ -173,9 +173,36 @@ async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
             "access_token": access_token_jwt,
             "accessToken": access_token_jwt,
             "token": access_token_jwt,
-            "user": user_payload,
+            "user": user_payload
         }
     }
+
+@router.get("/me")
+async def get_auth_me(current_user=Depends(get_current_user)):
+    db = get_database()
+    user_id = current_user.get("id") or current_user.get("_id")
+    doc = None
+    try:
+        doc = await db["users"].find_one({"_id": ObjectId(str(user_id))})
+    except Exception:
+        pass
+    if not doc and current_user.get("email"):
+        doc = await db["users"].find_one({"email": current_user.get("email")})
+        
+    res = dict(doc or current_user)
+    res["id"] = str(res.get("_id", user_id))
+    if "_id" in res:
+        del res["_id"]
+    if "hashed_password" in res:
+        del res["hashed_password"]
+    if not res.get("role"):
+        res["role"] = "user"
+    if not res.get("fullName") and res.get("name"):
+        res["fullName"] = res["name"]
+    if not res.get("name") and res.get("fullName"):
+        res["name"] = res["fullName"]
+    res["email_verified"] = res.get("email_verified", res.get("emailVerified", True))
+    return res
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):

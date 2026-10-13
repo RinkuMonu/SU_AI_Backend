@@ -18,4 +18,7 @@ class PaymentCallbackResponse(BaseModel):
 class PaymentStatusResponse(BaseModel):
     order_id: str
     status: str
-    amount: int
+    amount: float
+    base_amount: Optional[float] = None
+    gst_amount: Optional[float] = None
+
