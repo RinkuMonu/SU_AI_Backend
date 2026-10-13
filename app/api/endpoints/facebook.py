@@ -322,6 +322,8 @@ async def facebook_status(
             connected=True,
             fb_page_id=conn.get("fb_page_id"),
             fb_page_name=conn.get("fb_page_name"),
+            page_access_token=conn.get("page_access_token"),
+            user_access_token=conn.get("user_access_token"),
             pages=conn.get("pages", []),
             instagram_business_account=conn.get("instagram_business_account"),
         )
