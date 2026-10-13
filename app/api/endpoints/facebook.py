@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
+import urllib.parse
 from bson import ObjectId
 
 from app.core.security import get_current_user
@@ -22,6 +23,31 @@ from app.schemas.facebook import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/facebook", tags=["Facebook"])
+
+def resolve_frontend_url(state_doc: Optional[Dict[str, Any]] = None) -> str:
+    """
+    Safely determine the frontend URL to redirect to after Facebook OAuth.
+    Guarantees a valid absolute URL (starts with http:// or https://)
+    and prevents broken redirects if CORS_ORIGINS is configured as ['*'].
+    """
+    if state_doc and state_doc.get("frontend_url"):
+        candidate = str(state_doc["frontend_url"]).strip().strip("[]\"'")
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return candidate.rstrip("/")
+
+    if getattr(settings, "FRONTEND_URL", None):
+        candidate = str(settings.FRONTEND_URL).strip().strip("[]\"'")
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return candidate.rstrip("/")
+
+    cors_str = getattr(settings, "CORS_ORIGINS", "")
+    for origin in cors_str.split(","):
+        candidate = origin.strip().strip("[]\"'")
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return candidate.rstrip("/")
+
+    return "http://localhost:3000"
+
 
 @router.get("/connect", response_model=FacebookConnectResponse)
 async def facebook_connect(
@@ -85,23 +111,23 @@ async def facebook_callback(
     discovers Facebook Pages and linked Instagram Professional Account,
     and updates business/user connection state.
     """
-    frontend_url = settings.CORS_ORIGINS.split(",")[0].strip()
+    oauth_state = None
+    if state:
+        oauth_state = await db["facebook_oauth_states"].find_one_and_delete({"state": state})
+
+    frontend_url = resolve_frontend_url(oauth_state)
 
     if error:
         err_msg = error_description or error
         logger.warning(f"Facebook OAuth callback error: {err_msg}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={err_msg}")
+        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(err_msg))}")
 
     if not code:
         return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=missing_code")
 
     # Demo mode handling
     if FacebookService.is_demo_mode():
-        demo_user_id = "60a7b45c342d3c148c2e6d5a"
-        if state:
-            state_doc = await db["facebook_oauth_states"].find_one_and_delete({"state": state})
-            if state_doc and "user_id" in state_doc:
-                demo_user_id = state_doc["user_id"]
+        demo_user_id = (oauth_state and oauth_state.get("user_id")) or "60a7b45c342d3c148c2e6d5a"
 
         demo_token = "DEMO_FB_ACCESS_TOKEN"
         demo_pages = {
@@ -143,14 +169,13 @@ async def facebook_callback(
             pages_data=demo_pages,
         )
 
-        target_frontend = (state_doc and state_doc.get("frontend_url")) or frontend_url
         return RedirectResponse(
-            url=f"{target_frontend}/social-platforms/facebook?facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001"
+            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001"
         )
 
     # Validate state parameter
-    oauth_state = await db["facebook_oauth_states"].find_one_and_delete({"state": state})
     if not oauth_state:
+        logger.warning(f"Invalid or expired Facebook OAuth state: {state}")
         return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=invalid_state")
 
     user_id = oauth_state["user_id"]
@@ -179,16 +204,15 @@ async def facebook_callback(
         ig_account = pages_data.get("instagram_account")
         ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
 
-        target_frontend = oauth_state.get("frontend_url") or frontend_url
         return RedirectResponse(
-            url=f"{target_frontend}/social-platforms/facebook?facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}"
+            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}"
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={e.detail}")
+        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(e.detail))}")
     except Exception as e:
-        logger.error(f"Unexpected error in Facebook callback: {e}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=token_exchange_failed")
+        logger.error(f"Unexpected error in Facebook callback: {e}", exc_info=True)
+        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(e))}")
 
 @router.post("/exchange-token", response_model=FacebookTokenResponse)
 async def exchange_facebook_code(
