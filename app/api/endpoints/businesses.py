@@ -43,8 +43,31 @@ async def get_businesses(current_user: CurrentUser = Depends(get_current_user)):
         "data": docs
     }
 
+@router.get("/me")
+async def get_my_business(current_user: CurrentUser = Depends(get_current_user)):
+    db = get_database()
+    owner_str = str(current_user["id"])
+    owner_oid = ObjectId(owner_str) if ObjectId.is_valid(owner_str) else owner_str
+    doc = await db["businesses"].find_one({
+        "$or": [
+            {"ownerId": owner_str},
+            {"ownerId": owner_oid},
+            {"owner_id": owner_str},
+            {"owner_id": owner_oid}
+        ]
+    })
+    if not doc:
+        return {"success": True, "data": None}
+    doc["id"] = str(doc.pop("_id"))
+    return {
+        "success": True,
+        "data": doc
+    }
+
 @router.get("/{id}")
 async def get_business(id: str, current_user: CurrentUser = Depends(get_current_user)):
+    if not ObjectId.is_valid(id):
+        raise HTTPException(status_code=404, detail="Invalid business ID format")
     db = get_database()
     doc = await db["businesses"].find_one({"_id": ObjectId(id), "ownerId": current_user["id"]})
     if not doc:

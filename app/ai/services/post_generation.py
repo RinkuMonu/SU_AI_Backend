@@ -40,16 +40,30 @@ class PostGenerationService:
         elif "```" in raw_text:
             raw_text = raw_text.split("```")[1].strip()
 
+        import re
         try:
             parsed = json.loads(raw_text)
         except json.JSONDecodeError:
-            parsed = {
-                "headline": "",
-                "caption": raw_text,
-                "call_to_action": "",
-                "hashtags": [],
-                "creative_direction": "",
-            }
+            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if json_match:
+                try:
+                    parsed = json.loads(json_match.group(0))
+                except Exception:
+                    parsed = {
+                        "headline": "",
+                        "caption": raw_text,
+                        "call_to_action": "",
+                        "hashtags": [],
+                        "creative_direction": "",
+                    }
+            else:
+                parsed = {
+                    "headline": "",
+                    "caption": raw_text,
+                    "call_to_action": "",
+                    "hashtags": [],
+                    "creative_direction": "",
+                }
 
         import logging
         _log = logging.getLogger(__name__)
