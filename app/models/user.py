@@ -22,12 +22,12 @@ class User(MongoBaseModel):
     resetPasswordExpiresAt: Optional[datetime] = None
     termsAcceptedAt: Optional[datetime] = None
     profileImageUrl: Optional[str] = None
+    image: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
     role: str = "user"
 
     @model_validator(mode="before")
-    @classmethod
     def resolve_compatibility(cls, data: Any):
         if isinstance(data, dict):
             # Resolve fullName & name
@@ -50,6 +50,12 @@ class User(MongoBaseModel):
                 data["contactNumber"] = data["phone"]
             if "contactNumber" in data and not data.get("phone"):
                 data["phone"] = data["contactNumber"]
+
+            # Compatibility for image / profileImageUrl
+            if "profileImageUrl" in data and not data.get("image"):
+                data["image"] = data["profileImageUrl"]
+            if "image" in data and not data.get("profileImageUrl"):
+                data["profileImageUrl"] = data["image"]
 
             # Compatibility for email_verified / emailVerified
             if "email_verified" in data and not data.get("emailVerified"):

@@ -1,10 +1,80 @@
 import json
 import logging
+import re
+from typing import Optional, Dict, Any, List
+
 from app.ai.factory import AIProviderFactory
-from app.ai.prompts.reel import get_reel_script_prompt
-from app.schemas.reel import ReelScript
+from app.ai.prompts.reel import get_reel_script_prompt, detect_product_domain
+from app.schemas.reel import ReelScript, ReelScene
 
 logger = logging.getLogger(__name__)
+
+FORBIDDEN_KEYWORDS_MAP = {
+    "laptop_computer": ["saree", "sari", "lehenga", "choli", "dupatta", "zari", "lipstick", "mascara", "skincare", "serum", "necklace", "biryani"],
+    "electronics_tech": ["saree", "sari", "lehenga", "choli", "dupatta", "zari", "lipstick", "mascara", "skincare", "serum", "necklace", "biryani"],
+    "saree_ethnic": ["laptop", "macbook", "computer", "notebook", "desktop", "motherboard", "processor", "smartwatch", "lipstick", "serum", "biryani"],
+    "lehenga_ethnic": ["laptop", "macbook", "computer", "notebook", "desktop", "motherboard", "processor", "smartwatch", "lipstick", "serum", "biryani"],
+    "skincare_beauty": ["laptop", "macbook", "computer", "saree", "lehenga", "biryani", "burger", "pizza", "shoes", "sneakers"],
+    "cosmetics_fragrance": ["laptop", "macbook", "computer", "saree", "lehenga", "biryani", "burger", "pizza"],
+    "food_dining": ["laptop", "macbook", "computer", "saree", "lehenga", "lipstick", "serum", "diamond ring", "necklace"],
+    "jewellery_luxury": ["laptop", "macbook", "computer", "saree", "lehenga", "food", "burger", "biryani"]
+}
+
+FESTIVAL_KEYWORDS = ["diwali", "diya", "diyas", "rangoli", "firecrackers", "patakhe", "holi", "eid", "christmas", "santa"]
+
+
+def validate_and_sanitize_storyboard(script: ReelScript, product: dict, festival_theme: str = "none") -> ReelScript:
+    """
+    Validates every scene against the locked product context and requested festival theme.
+    Corrects any scene contamination before it can reach the video generator.
+    """
+    prod_name = product.get("name", "Product")
+    prod_cat = product.get("category", "")
+    prod_desc = product.get("description", "")
+    domain = detect_product_domain(prod_name, prod_cat, prod_desc)
+    forbidden_words = FORBIDDEN_KEYWORDS_MAP.get(domain, [])
+
+    is_festival_allowed = bool(festival_theme and festival_theme.lower() not in ["none", "null", "false", ""])
+
+    script.primary_product = prod_name
+    script.product_category = prod_cat
+
+    sanitized_scenes = []
+    for sc in script.scenes:
+        visual_text = (sc.visual or "").lower()
+        voice_text = (sc.voiceover or "").lower()
+        veo_text = (sc.veo_prompt or "").lower()
+
+        # Check for cross-category contamination
+        has_forbidden_category = any(fw in visual_text or fw in voice_text or fw in veo_text for fw in forbidden_words)
+        
+        # Check for unrequested festival contamination
+        has_unrequested_festival = False
+        if not is_festival_allowed:
+            has_unrequested_festival = any(fk in visual_text or fk in voice_text or fk in veo_text for fk in FESTIVAL_KEYWORDS)
+
+        if has_forbidden_category or has_unrequested_festival:
+            logger.warning(
+                f"Scene {sc.scene_number} violated product context rules (forbidden_cat={has_forbidden_category}, "
+                f"unrequested_fest={has_unrequested_festival}). Sanitizing scene to lock on '{prod_name}'."
+            )
+            # Recondition visual and prompts strictly to the target product
+            sc.visual = f"Cinematic detailed showcase of {prod_name}, highlighting authentic features and premium design in a professional studio setting."
+            sc.veo_prompt = (
+                f"Photorealistic 9:16 vertical commercial advertisement of {prod_name}, "
+                f"cinematic studio lighting, smooth camera movement, highly detailed surface texture."
+            )
+            sc.negative_prompt = (
+                f"unrelated products, {', '.join(forbidden_words[:4])}, blurry, distorted, low quality, morphing objects"
+            )
+
+        sc.main_subject = prod_name
+        sc.product_identity = prod_name
+        sanitized_scenes.append(sc)
+
+    script.scenes = sanitized_scenes
+    return script
+
 
 class ReelScriptService:
     def __init__(self):
@@ -20,7 +90,9 @@ class ReelScriptService:
         language: str,
         tone: str,
         offer: str = None,
-        additional_instruction: str = None
+        additional_instruction: str = None,
+        generation_mode: str = "product",
+        festival_theme: str = "none"
     ) -> ReelScript:
         prompt = get_reel_script_prompt(
             product=product,
@@ -31,10 +103,15 @@ class ReelScriptService:
             language=language,
             tone=tone,
             offer=offer,
-            additional_instruction=additional_instruction
+            additional_instruction=additional_instruction,
+            generation_mode=generation_mode,
+            festival_theme=festival_theme
         )
         
-        system_prompt = "You are a professional AI video script writer. Output only valid JSON."
+        system_prompt = (
+            "You are a professional commercial film director and storyboard producer. "
+            "Lock all creative output exclusively to the specified product. Output only valid JSON."
+        )
         
         try:
             response = await self.provider.generate_text(
@@ -45,24 +122,43 @@ class ReelScriptService:
                 max_tokens=3000
             )
             
-            content = response.get("text", "")
+            content = response.get("text", "").strip()
             
-            # Safe JSON parsing
+            # Safe JSON parsing with json_repair for maximum resilience
+            parsed_json = None
             try:
-                parsed_json = json.loads(content)
-            except json.JSONDecodeError:
-                # Attempt to extract JSON from markdown if the model hallucinated formatting
-                import re
-                json_match = re.search(r'```(?:json)?(.*?)```', content, re.DOTALL)
-                if json_match:
-                    parsed_json = json.loads(json_match.group(1).strip())
-                else:
-                    raise ValueError("Failed to parse JSON from Groq response.")
-                    
+                import json_repair
+                parsed_json = json_repair.loads(content)
+            except Exception:
+                try:
+                    parsed_json = json.loads(content)
+                except Exception:
+                    pass
+
+            if not parsed_json or not isinstance(parsed_json, dict):
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+                candidate = json_match.group(1).strip() if json_match else content
+                try:
+                    import json_repair
+                    parsed_json = json_repair.loads(candidate)
+                except Exception:
+                    start_idx = candidate.find('{')
+                    end_idx = candidate.rfind('}')
+                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                        import json_repair
+                        parsed_json = json_repair.loads(candidate[start_idx:end_idx+1])
+
+            if not parsed_json or not isinstance(parsed_json, dict):
+                raise ValueError(f"Could not parse valid JSON from AI response: {content[:150]}")
+
             # Validate with Pydantic
             script = ReelScript(**parsed_json)
+
+            # Enforce Product Context Storyboard Validation
+            script = validate_and_sanitize_storyboard(script, product, festival_theme)
+
             return script
             
         except Exception as e:
-            logger.error(f"Error generating reel script: {e}")
+            logger.error(f"Error generating reel script/plan: {e}")
             raise e

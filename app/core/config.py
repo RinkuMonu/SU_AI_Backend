@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
+    VIDEO_PROVIDER: str = "veo"
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
 

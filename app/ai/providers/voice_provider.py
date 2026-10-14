@@ -79,8 +79,8 @@ class PiperVoiceProvider(VoiceProvider):
 
 class GTTSVoiceProvider(VoiceProvider):
     """
-    gTTS (Google Text-to-Speech) provider for MVP.
-    Generates a real mp3 file locally.
+    gTTS (Google Text-to-Speech) provider fallback.
+    Generates an mp3 file locally.
     """
     def __init__(self):
         self.output_dir = "uploads/audio"
@@ -89,29 +89,87 @@ class GTTSVoiceProvider(VoiceProvider):
     async def generate_audio(self, text: str, language: str, voice: str, speed: float = 1.0) -> str:
         logger.info(f"GTTSVoiceProvider: Generating audio for language={language}")
         
-        # map 'Hinglish' or 'Hindi' to 'hi', others to 'en'
+        # For Hinglish in Latin script, 'en' with Indian accent works better in gTTS than 'hi' which expects Devanagari
         lang_code = "en"
-        if language and language.lower() in ["hindi", "hinglish"]:
+        tld = "co.in"
+        if language and language.lower() == "hindi":
             lang_code = "hi"
+            tld = "com"
             
         filename = f"{uuid.uuid4()}.mp3"
         output_path = os.path.join(self.output_dir, filename)
         
-        # gTTS is synchronous, run in executor
         def _generate():
             from gtts import gTTS
-            tts = gTTS(text=text, lang=lang_code, slow=(speed < 1.0))
+            tts = gTTS(text=text, lang=lang_code, tld=tld, slow=(speed < 1.0))
             tts.save(output_path)
             
         await asyncio.to_thread(_generate)
-        
         return f"/uploads/audio/{filename}"
 
+
+class EdgeTTSVoiceProvider(VoiceProvider):
+    """
+    Microsoft Edge Neural TTS Provider.
+    Generates ultra-realistic, natural human voices for Instagram Reels in Hinglish, Hindi, and English.
+    """
+    def __init__(self):
+        self.output_dir = "uploads/audio"
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    async def generate_audio(self, text: str, language: str, voice: str = None, speed: float = 1.0) -> str:
+        lang_str = (language or "").lower()
+
+        # Natural neural voices: Swara is the gold standard for Hinglish & Hindi creator reels
+        if "hinglish" in lang_str:
+            selected_voice = "hi-IN-SwaraNeural"
+        elif "hindi" in lang_str:
+            selected_voice = "hi-IN-SwaraNeural"
+        elif "english" in lang_str:
+            selected_voice = "en-IN-NeerjaNeural"
+        else:
+            selected_voice = "en-IN-NeerjaNeural"
+
+        # Explicit override if given
+        if voice and ("Neural" in voice or "en-" in voice or "hi-" in voice):
+            selected_voice = voice
+
+        # Speed / rate tuning
+        rate_str = "+0%"
+        if speed > 1.0:
+            rate_pct = int((speed - 1.0) * 100)
+            rate_str = f"+{rate_pct}%"
+        elif speed < 1.0:
+            rate_pct = int((1.0 - speed) * 100)
+            rate_str = f"-{rate_pct}%"
+
+        filename = f"{uuid.uuid4()}.mp3"
+        output_path = os.path.join(self.output_dir, filename)
+
+        try:
+            import edge_tts
+            communicate = edge_tts.Communicate(text=text, voice=selected_voice, rate=rate_str)
+            await communicate.save(output_path)
+
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                logger.info(f"EdgeTTS generated audio successfully: {output_path} (voice={selected_voice})")
+                return f"/uploads/audio/{filename}"
+        except Exception as e:
+            logger.warning(f"EdgeTTS generation failed: {e}. Falling back to GTTS...")
+
+        # Fallback to gTTS if edge-tts encounters any issue
+        gtts = GTTSVoiceProvider()
+        return await gtts.generate_audio(text, language, voice, speed)
+
+
 def get_voice_provider() -> VoiceProvider:
-    provider_name = getattr(settings, "VOICE_PROVIDER", "gtts").lower()
+    provider_name = getattr(settings, "VOICE_PROVIDER", "edge-tts").lower()
     if provider_name == "piper":
         return PiperVoiceProvider()
     elif provider_name == "mock":
         return MockVoiceProvider()
-    else:
+    elif provider_name == "gtts":
         return GTTSVoiceProvider()
+    else:
+        # Default to high quality EdgeTTS
+        return EdgeTTSVoiceProvider()

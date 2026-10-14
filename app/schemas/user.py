@@ -79,6 +79,10 @@ class UserResponse(BaseModel):
     role: Optional[str] = "user"
     termsAcceptedAt: Optional[datetime] = None
     profileImageUrl: Optional[str] = None
+    image: Optional[str] = None
+    avatar: Optional[str] = None
+    businessName: Optional[str] = None
+    businessCategory: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
 
@@ -90,8 +94,21 @@ class UserPreferencesUpdate(BaseModel):
 
 class UserUpdate(BaseModel):
     fullName: Optional[str] = None
+    name: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
+    email: Optional[EmailStr] = None
     phone: Optional[str] = None
     contactNumber: Optional[str] = None
     profileImageUrl: Optional[str] = None
+    image: Optional[str] = None
+    avatar: Optional[str] = None
+    businessName: Optional[str] = None
+    businessCategory: Optional[str] = None
+    accountType: Optional[str] = None
+    role: Optional[str] = None
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str
+    newPassword: str
+    confirmPassword: Optional[str] = None

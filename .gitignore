@@ -18,3 +18,10 @@ ENV/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Uploaded generated media & temporary caches
+uploads/audio/
+uploads/reels/
+uploads/temp/
+scratch_*.py
+scratch_*.js

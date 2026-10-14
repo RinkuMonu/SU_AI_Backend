@@ -140,6 +140,18 @@ async def get_auth_me(current_user=Depends(get_current_user)):
         res["fullName"] = res["name"]
     if not res.get("name") and res.get("fullName"):
         res["name"] = res["fullName"]
+    if not res.get("firstName") and res.get("name"):
+        res["firstName"] = res["name"].split(" ")[0]
+    if not res.get("lastName") and res.get("name") and len(res["name"].split(" ")) > 1:
+        res["lastName"] = " ".join(res["name"].split(" ")[1:])
+    if not res.get("image") and res.get("profileImageUrl"):
+        res["image"] = res["profileImageUrl"]
+    if not res.get("profileImageUrl") and res.get("image"):
+        res["profileImageUrl"] = res["image"]
+    if not res.get("contactNumber") and res.get("phone"):
+        res["contactNumber"] = res["phone"]
+    if not res.get("phone") and res.get("contactNumber"):
+        res["phone"] = res["contactNumber"]
     res["email_verified"] = res.get("email_verified", res.get("emailVerified", True))
     return res
 

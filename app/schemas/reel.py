@@ -5,15 +5,18 @@ from datetime import datetime
 class GenerateReelRequest(BaseModel):
     product_id: str = "general"
     product_name: Optional[str] = None
+    product_category: Optional[str] = None
     product_description: Optional[str] = None
     product_image_url: Optional[str] = None
-    objective: str
+    objective: str = "sale"
     platform: str = "instagram"
     language: str = "Hinglish"
     duration: int = 15  # seconds
     tone: Optional[str] = "energetic"
     offer: Optional[str] = None
     additional_instruction: Optional[str] = None
+    generation_mode: Optional[str] = "product"  # "product" (default) or "creative"
+    festival_theme: Optional[str] = "none"  # "none", "diwali", "holi", "eid", "christmas", "new_year"
 
     @validator("duration")
     def validate_duration(cls, v):
@@ -36,11 +39,35 @@ class ReelScene(BaseModel):
     voiceover: str = ""
     on_screen_text: Optional[str] = ""
     transition: Optional[str] = "fade"
+    camera_movement: Optional[str] = "slow push-in"
+    lighting_environment: Optional[str] = "cinematic studio lighting"
+    product_interaction: Optional[str] = "product showcased in authentic setting"
+    main_subject: Optional[str] = None
+    product_identity: Optional[str] = None
+    veo_prompt: Optional[str] = None
+    negative_prompt: Optional[str] = None
 
 class ReelScript(BaseModel):
     title: str = "AI Generated Reel"
     objective: Optional[str] = "Engage audience"
+    advertising_objective: Optional[str] = None
+    visual_concept: Optional[str] = None
+    style_direction: Optional[str] = None
+    target_audience: Optional[str] = None
+    primary_product: Optional[str] = None
+    product_category: Optional[str] = None
+    generation_mode: Optional[str] = "product"
+    festival_theme: Optional[str] = None
+    veo_video_prompt: Optional[str] = None
+    negative_constraints: Optional[str] = None
     hook: Optional[str] = ""
+    hook_headline: Optional[str] = None
+    hook_highlight: Optional[str] = None
+    trending_audio: Optional[str] = "Trending Sound • Viral Hit"
+    creator_name: Optional[str] = None
+    follower_count: Optional[str] = "24.8K followers"
+    likes_count: Optional[str] = "26.3K"
+    comments_count: Optional[str] = "874"
     duration_seconds: int = 15
     language: Optional[str] = "English"
     tone: Optional[str] = "energetic"
@@ -68,3 +95,17 @@ class ReelJobStatus(BaseModel):
     hashtags: Optional[List[str]] = None
     product_name: Optional[str] = None
     product_description: Optional[str] = None
+    hook_headline: Optional[str] = None
+    hook_highlight: Optional[str] = None
+    trending_audio: Optional[str] = None
+    creator_name: Optional[str] = None
+    follower_count: Optional[str] = None
+    likes_count: Optional[str] = None
+    comments_count: Optional[str] = None
+    provider: Optional[str] = None
+    provider_operation_id: Optional[str] = None
+    provider_status: Optional[str] = None
+    provider_error: Optional[str] = None
+    product_category: Optional[str] = None
+    generation_mode: Optional[str] = None
+    festival_theme: Optional[str] = None
