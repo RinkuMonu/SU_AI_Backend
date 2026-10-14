@@ -16,6 +16,21 @@ from app.api.dependencies import require_feature, require_credits
 
 router = APIRouter()
 
+def format_site_payload(site):
+    if not site:
+        return None
+    website_data = getattr(site, "website_data", {}) or {}
+    if not isinstance(website_data, dict):
+        website_data = {}
+    logo_val = website_data.get("logo") or getattr(site, "logo", None)
+    theme_val = site.theme or website_data.get("theme") or {}
+    return {
+        "business_name": site.business_name or "My Business",
+        "logo": logo_val,
+        "theme": theme_val,
+        "pages": site.pages
+    }
+
 @router.post("/session", response_model=FrontendSessionResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_feature("website_builder"))])
 async def create_session(request: CreateSessionRequest, current_user: User = Depends(get_current_user)):
     from app.core.database import get_database
@@ -49,7 +64,7 @@ async def get_session(session_id: str, current_user: User = Depends(get_current_
         siteId=str(session.website_project_id) if session.website_project_id else None,
         language=session.language,
         messages=session.messages,
-        generatedSiteData=site.pages if site else None
+        generatedSiteData=format_site_payload(site)
     )
 
 @router.post("/session/{session_id}/message", response_model=FrontendMessageResponse)
@@ -84,7 +99,7 @@ async def session_message(session_id: str, request: SendMessageRequest, current_
             return FrontendMessageResponse(
                 messages=session.messages,
                 siteId=str(session.website_project_id) if session.website_project_id else None,
-                generatedSiteData=site.pages if site else None
+                generatedSiteData=format_site_payload(site)
             )
             
         else:
@@ -109,7 +124,7 @@ async def session_message(session_id: str, request: SendMessageRequest, current_
                 "type": msg_type,
                 "messages": session.messages,
                 "siteId": str(session.website_project_id) if session.website_project_id else None,
-                "generatedSiteData": site.pages if site else None
+                "generatedSiteData": format_site_payload(site)
             }
                 
             return FrontendMessageResponse(**msg_data)
@@ -125,7 +140,7 @@ async def session_message(session_id: str, request: SendMessageRequest, current_
 async def revise_website(site_id: str, request: ReviseSiteRequest, current_user: User = Depends(get_current_user)):
     try:
         site = await WebsiteBuilderService.revise_website(site_id, str(current_user.id), request.instructions)
-        return {"generatedSiteData": site.pages}
+        return {"generatedSiteData": format_site_payload(site)}
     except HTTPException:
         raise
     except Exception as e:
