@@ -1,6 +1,9 @@
 from app.core.config import settings
 from app.ai.base import AIProvider
 from app.ai.providers.mock import MockAIProvider
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AIProviderFactory:
     """
@@ -16,24 +19,26 @@ class AIProviderFactory:
             from app.ai.providers.groq_provider import GroqProvider
             return GroqProvider()
 
-        provider_name = settings.AI_PROVIDER.lower()
+        provider_name = (settings.AI_PROVIDER or "gemini").lower()
             
-        if provider_name == "gemini":
-            from app.ai.providers.gemini_provider import GeminiProvider
-            provider = GeminiProvider()
-        elif provider_name == "groq":
-            from app.ai.providers.groq_provider import GroqProvider
-            provider = GroqProvider()
-        elif provider_name == "mock":
-            provider = MockAIProvider()
-        elif settings.GEMINI_API_KEY:
-            from app.ai.providers.gemini_provider import GeminiProvider
-            provider = GeminiProvider()
-        elif settings.GROQ_API_KEY:
-            from app.ai.providers.groq_provider import GroqProvider
-            provider = GroqProvider()
-        else:
-            # Fallback to mock for development safety if configured incorrectly
-            provider = MockAIProvider()
-            
-        return provider
+        try:
+            if provider_name == "gemini" and getattr(settings, "GEMINI_API_KEY", None):
+                from app.ai.providers.gemini_provider import GeminiProvider
+                return GeminiProvider()
+            elif provider_name == "groq" and getattr(settings, "GROQ_API_KEY", None):
+                from app.ai.providers.groq_provider import GroqProvider
+                return GroqProvider()
+            elif provider_name == "mock":
+                return MockAIProvider()
+            elif getattr(settings, "GEMINI_API_KEY", None):
+                from app.ai.providers.gemini_provider import GeminiProvider
+                return GeminiProvider()
+            elif getattr(settings, "GROQ_API_KEY", None):
+                from app.ai.providers.groq_provider import GroqProvider
+                return GroqProvider()
+            else:
+                logger.info("No AI API keys configured. Falling back to MockAIProvider.")
+                return MockAIProvider()
+        except Exception as e:
+            logger.warning(f"AI Provider failed to initialize ({e}). Falling back to MockAIProvider.")
+            return MockAIProvider()

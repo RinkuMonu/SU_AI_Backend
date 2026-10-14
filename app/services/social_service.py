@@ -6,148 +6,62 @@ class SocialService:
     @staticmethod
     async def publish_to_instagram(db, business_id: str, content_id: str):
         """
-        Legacy Instagram publishing via business-level tokens.
-        For new integrations, prefer InstagramService (instagram_service.py)
-        which uses Instagram Login with encrypted tokens.
+        Unified Instagram publishing via InstagramService.
+        Checks businesses, users, and instagram_connections for credentials,
+        and updates contents collection with published post ID and status.
         """
-        business_id_query = ObjectId(business_id) if ObjectId.is_valid(business_id) else str(business_id)
-        business = await db["businesses"].find_one({"_id": business_id_query})
-        if not business:
-            return {"post_id": f"mock_post_{content_id}", "status": "Mock published for testing"}
-            
-        ig_account_id = business.get("ig_account_id")
-        ig_access_token = business.get("ig_access_token")
-        
-        if not ig_account_id or not ig_access_token:
-            raise HTTPException(status_code=400, detail="Instagram is not connected for this business.")
-            
-        content = await db["contents"].find_one({
-            "_id": ObjectId(content_id),
-            "business_id": business_id
-        })
-        
+        from app.services.instagram_service import InstagramService
+
+        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
-            
+
         image_url = content.get("image_url")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
-        full_caption = f"{caption}\n\n{hashtags}"
-        
+        if isinstance(hashtags, list):
+            hashtags = " ".join(hashtags)
+        full_caption = f"{caption}\n\n{hashtags}".strip()
+
         if not image_url:
             import urllib.parse
-            # Instagram strictly requires an image. If this content doesn't have one,
-            # we will dynamically generate a beautiful fallback image based on the caption/hashtags.
-            fallback_prompt = f"Beautiful background image representing: {hashtags} {caption[:50]}"
+            # Fallback image generation
+            fallback_prompt = f"Professional product showcase representing: {hashtags} {caption[:50]}"
             prompt_encoded = urllib.parse.quote(fallback_prompt)
             image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1080&height=1080&nologo=true"
-            
-        if ig_access_token == "DEMO_MODE":
-            print("Running in DEMO_MODE. Simulating successful Instagram publish.")
-            return {"success": True, "ig_post_id": "demo_ig_12345"}
-            
-        async with httpx.AsyncClient() as client:
-            try:
-                # 1. Create Media Container (using graph.instagram.com for Instagram Login flow)
-                create_url = f"https://graph.instagram.com/{ig_account_id}/media"
-                payload = {
-                    "image_url": image_url,
-                    "caption": full_caption,
-                    "access_token": ig_access_token
-                }
-                res = await client.post(create_url, params=payload)
-                res.raise_for_status()
-                creation_id = res.json().get("id")
-                
-                # 2. Publish Media Container
-                publish_url = f"https://graph.instagram.com/{ig_account_id}/media_publish"
-                pub_payload = {
-                    "creation_id": creation_id,
-                    "access_token": ig_access_token
-                }
-                pub_res = await client.post(publish_url, params=pub_payload)
-                pub_res.raise_for_status()
-                
-                return {"success": True, "ig_post_id": pub_res.json().get("id")}
-                
-            except httpx.HTTPStatusError as e:
-                err_detail = e.response.json()
-                # Never log the access token
-                raise HTTPException(status_code=400, detail=f"Instagram API Error: {err_detail.get('error', {}).get('message', str(e))}")
-            except Exception as e:
-                raise HTTPException(status_code=500, detail="Failed to communicate with Instagram API")
+
+        user_id = content.get("user_id") or business_id
+        return await InstagramService.publish_image(
+            db=db,
+            user_id=str(user_id),
+            image_url=image_url,
+            caption=full_caption,
+            content_id=content_id,
+        )
 
     @staticmethod
     async def publish_to_facebook(db, business_id: str, content_id: str):
-        business_id_query = ObjectId(business_id) if ObjectId.is_valid(business_id) else str(business_id)
-        business = await db["businesses"].find_one({"_id": business_id_query})
-        if not business:
-            return {"post_id": f"mock_post_{content_id}", "status": "Mock published for testing"}
-            
-        fb_page_id = business.get("fb_page_id")
-        fb_access_token = business.get("fb_access_token")
+        from app.services.facebook_service import FacebookService
         
-        if not fb_page_id or not fb_access_token:
-            raise HTTPException(status_code=400, detail="Facebook is not connected for this business.")
-            
-        content = await db["contents"].find_one({
-            "_id": ObjectId(content_id),
-            "business_id": business_id
-        })
-        
+        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
             
         image_url = content.get("image_url")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
-        full_caption = f"{caption}\n\n{hashtags}"
+        if isinstance(hashtags, list):
+            hashtags = " ".join(hashtags)
+        full_caption = f"{caption}\n\n{hashtags}".strip()
         
-        content_type = content.get("type", "")
-        
-        if fb_access_token == "DEMO_MODE":
-            print("Running in DEMO_MODE. Simulating successful Facebook publish.")
-            return {"success": True, "fb_post_id": "demo_fb_12345"}
-            
-        async with httpx.AsyncClient() as client:
-            try:
-                if image_url:
-                    if "Reel" in content_type or "Video" in content_type or image_url.endswith(".mp4"):
-                        # Publish video / reel
-                        url = f"https://graph.facebook.com/v19.0/{fb_page_id}/videos"
-                        payload = {
-                            "file_url": image_url,
-                            "description": full_caption,
-                            "access_token": fb_access_token
-                        }
-                    else:
-                        # Publish photo
-                        url = f"https://graph.facebook.com/v19.0/{fb_page_id}/photos"
-                        payload = {
-                            "url": image_url,
-                            "message": full_caption,
-                            "access_token": fb_access_token
-                        }
-                else:
-                    # Publish text only
-                    url = f"https://graph.facebook.com/v19.0/{fb_page_id}/feed"
-                    payload = {
-                        "message": full_caption,
-                        "access_token": fb_access_token
-                    }
-                    
-                res = await client.post(url, params=payload)
-                res.raise_for_status()
-                
-                return {"success": True, "fb_post_id": res.json().get("id")}
-                
-            except httpx.HTTPStatusError as e:
-                err_detail = e.response.json()
-                print(f"Facebook API Error: {err_detail}")
-                raise HTTPException(status_code=400, detail=f"Facebook API Error: {err_detail.get('error', {}).get('message', str(e))}")
-            except Exception as e:
-                print(f"Failed to publish to Facebook: {e}")
-                raise HTTPException(status_code=500, detail="Failed to communicate with Facebook API")
+        user_id = content.get("user_id") or business_id
+        return await FacebookService.publish_post(
+            db=db,
+            user_id=str(user_id),
+            caption=full_caption,
+            image_url=image_url,
+            content_id=content_id,
+        )
 
     @staticmethod
     async def publish_to_linkedin(db, business_id: str, content_id: str):

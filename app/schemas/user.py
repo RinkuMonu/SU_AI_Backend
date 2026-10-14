@@ -85,6 +85,8 @@ class UserResponse(BaseModel):
     businessCategory: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
+    name: Optional[str] = None
+    role: Optional[str] = "user"
 
 class UserPreferencesUpdate(BaseModel):
     preferredLanguage: Optional[str] = None
@@ -107,6 +109,14 @@ class UserUpdate(BaseModel):
     businessCategory: Optional[str] = None
     accountType: Optional[str] = None
     role: Optional[str] = None
+    preferredLanguage: Optional[str] = None
+    onboardingCompleted: Optional[bool] = None
+    onboardingData: Optional[dict] = None
+    onboarding_step: Optional[int] = None
+
+    model_config = {
+        "extra": "allow"
+    }
 
 class ChangePasswordRequest(BaseModel):
     currentPassword: str

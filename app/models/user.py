@@ -26,6 +26,30 @@ class User(MongoBaseModel):
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
     role: str = "user"
+    onboarding_step: Optional[int] = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_names_and_compatibility(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Resolve name and fullName
+            full_name = data.get("fullName") or data.get("name") or data.get("full_name")
+            if full_name:
+                data["fullName"] = full_name
+                if not data.get("name"):
+                    data["name"] = full_name
+            elif "email" in data:
+                derived = str(data["email"]).split("@")[0]
+                data["fullName"] = derived
+                data["name"] = derived
+
+            # Resolve email verification flags
+            verified = data.get("emailVerified", data.get("email_verified", False))
+            data["emailVerified"] = verified
+            data["email_verified"] = verified
+
+        return data
+
 
     @model_validator(mode="before")
     def resolve_compatibility(cls, data: Any):

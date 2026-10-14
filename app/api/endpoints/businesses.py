@@ -53,7 +53,11 @@ async def get_my_business(current_user: CurrentUser = Depends(get_current_user))
             {"ownerId": owner_str},
             {"ownerId": owner_oid},
             {"owner_id": owner_str},
-            {"owner_id": owner_oid}
+            {"owner_id": owner_oid},
+            {"user_id": owner_str},
+            {"user_id": owner_oid},
+            {"userId": owner_str},
+            {"userId": owner_oid},
         ]
     })
     if not doc:
@@ -61,7 +65,39 @@ async def get_my_business(current_user: CurrentUser = Depends(get_current_user))
     doc["id"] = str(doc.pop("_id"))
     return {
         "success": True,
-        "data": doc
+        "data": doc,
+        **doc
+    }
+
+@router.put("/me")
+async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_current_user)):
+    db = get_database()
+    owner_str = str(current_user["id"])
+    owner_oid = ObjectId(owner_str) if ObjectId.is_valid(owner_str) else owner_str
+    query = {
+        "$or": [
+            {"ownerId": owner_str},
+            {"ownerId": owner_oid},
+            {"owner_id": owner_str},
+            {"owner_id": owner_oid},
+            {"user_id": owner_str},
+            {"user_id": owner_oid},
+            {"userId": owner_str},
+            {"userId": owner_oid},
+        ]
+    }
+    clean_req = {k: v for k, v in req.items() if v is not None}
+    if clean_req:
+        has_name = bool(clean_req.get("businessName") or clean_req.get("name") or clean_req.get("business_name"))
+        await db["businesses"].update_one(query, {"$set": clean_req}, upsert=has_name)
+    doc = await db["businesses"].find_one(query)
+    if doc:
+        doc["id"] = str(doc.pop("_id"))
+    return {
+        "success": True,
+        "message": "Business updated successfully",
+        "data": doc,
+        **(doc or {})
     }
 
 @router.get("/{id}")

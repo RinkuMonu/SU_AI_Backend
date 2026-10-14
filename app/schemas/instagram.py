@@ -13,20 +13,47 @@ from datetime import datetime
 
 class InstagramConnectResponse(BaseModel):
     authorization_url: str
+    scopes: Optional[List[str]] = None
 
 
 class InstagramStatusResponse(BaseModel):
     connected: bool
     platform: str = "instagram"
     instagram_user_id: Optional[str] = None
+    ig_account_id: Optional[str] = None
     username: Optional[str] = None
+    ig_username: Optional[str] = None
     account_type: Optional[str] = None
     profile_picture_url: Optional[str] = None
+    ig_access_token: Optional[str] = None
 
 
 class InstagramDisconnectResponse(BaseModel):
     success: bool
     message: str
+
+
+class InstagramSaveTokenRequest(BaseModel):
+    access_token: str = Field(..., description="Instagram Access Token")
+    ig_account_id: Optional[str] = None
+    ig_username: Optional[str] = None
+    user_id: Optional[str] = None
+
+
+class InstagramExchangeCodeRequest(BaseModel):
+    code: str = Field(..., description="Authorization code from Instagram OAuth dialog")
+    redirect_uri: Optional[str] = None
+
+
+class InstagramTokenResponse(BaseModel):
+    success: bool
+    access_token: str
+    token_type: str = "bearer"
+    instagram_user_id: Optional[str] = None
+    username: Optional[str] = None
+    account_type: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    expires_in: Optional[int] = None
 
 
 # ──────────────────────────────────────────────

@@ -51,6 +51,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
@@ -76,8 +77,10 @@ app.include_router(subscription_router)
 app.include_router(festivals_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(fashion_router)
-app.include_router(instagram_router)
-app.include_router(facebook_router)
+app.include_router(instagram_router, prefix="/api/instagram")
+app.include_router(instagram_router, prefix="/api/v1/instagram")
+app.include_router(facebook_router, prefix="/api/facebook")
+app.include_router(facebook_router, prefix="/api/v1/facebook")
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
@@ -102,3 +105,5 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
     )
+
+# reload trigger

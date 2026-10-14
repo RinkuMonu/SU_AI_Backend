@@ -39,3 +39,11 @@ class MongoBaseModel(BaseModel):
         "populate_by_name": True,
         "arbitrary_types_allowed": True,
     }
+
+    @classmethod
+    def from_mongo(cls, data: Any):
+        """Helper to instantiate model from Mongo document."""
+        if not data:
+            return None
+        return cls(**data)
+

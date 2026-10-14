@@ -201,54 +201,111 @@ class AuthService:
             termsAcceptedAt=datetime.now(timezone.utc) if req.termsAccepted else None,
             emailVerified=email_is_verified,
             email_verified=email_is_verified,
-            emailVerifiedAt=datetime.now(timezone.utc) if email_is_verified else None
+            emailVerifiedAt=datetime.now(timezone.utc) if email_is_verified else None,
+            onboardingCompleted=False,
+            onboarding_step=1
         )
         doc = user.model_dump(by_alias=True, exclude={"id"})
-        result = await db["users"].insert_one(doc)
+        doc["onboardingCompleted"] = False
+        doc["onboarding_step"] = 1
+
+        # Clear any old abandoned pending registration for this email
+        await db["pending_users"].delete_many({"email": email})
+
+        # Save to pending_users ONLY (do NOT save into users collection until onboarding is completed)
+        result = await db["pending_users"].insert_one(doc)
         user.id = str(result.inserted_id)
 
         # Clear OTP records for this email
         await db["otps"].delete_many({"email": email})
 
-        # Auto-provision subscription
-        try:
-            from app.services.credit_service import CreditService
-            await CreditService.get_or_create_subscription(db, user.id)
-        except Exception as e:
-            logger.warning(f"Could not provision subscription for {user.id}: {e}")
-        
-        # Generate tokens for auto-login
+        # Generate tokens for onboarding session
         access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
         refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-        
-        # Save refresh session
-        rs = RefreshSession(
-            userId=str(user.id),
-            hashedToken=get_password_hash(hashlib.sha256(refresh_token.encode()).hexdigest()),
-            expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
-
-        # If not verified with OTP, also send email verification link as fallback
-        if not email_is_verified:
-            try:
-                verification_token = AuthService.create_email_verification_token(user.id, user.email)
-                await db["users"].update_one(
-                    {"_id": result.inserted_id},
-                    {"$set": {"verificationToken": verification_token}}
-                )
-                user.verificationToken = verification_token
-                verification_link = f"{settings.BACKEND_URL}/api/v1/auth/verify-email?token={verification_token}"
-                await EmailService.send_verification_email(
-                    to_email=user.email,
-                    verification_link=verification_link,
-                    full_name=user.fullName
-                )
-                logger.info(f"Verification email sent to {user.email}")
-            except Exception as e:
-                logger.error(f"Error sending verification email during signup to {user.email}: {e}")
 
         return user, access_token, refresh_token
+
+    @classmethod
+    async def commit_pending_user(cls, user_id: str, extra_data: dict = None) -> Optional[dict]:
+        """
+        Moves a pending user from 'pending_users' to 'users' collection once onboarding is completed.
+        Also creates initial business record (if business account) and provisions subscription/credits.
+        """
+        db = get_database()
+        if not ObjectId.is_valid(user_id):
+            return None
+
+        obj_id = ObjectId(user_id)
+        now = datetime.now(timezone.utc)
+        pending_doc = await db["pending_users"].find_one({"_id": obj_id})
+
+        if not pending_doc:
+            # Check if user already in users collection
+            existing_user = await db["users"].find_one({"_id": obj_id})
+            if existing_user:
+                if extra_data:
+                    clean_extra = {k: v for k, v in extra_data.items() if v is not None}
+                    clean_extra["onboardingCompleted"] = True
+                    clean_extra["updated_at"] = now
+                    await db["users"].update_one({"_id": obj_id}, {"$set": clean_extra})
+                    existing_user = await db["users"].find_one({"_id": obj_id})
+                return existing_user
+            return None
+
+        # Build final user document
+        final_doc = dict(pending_doc)
+        if extra_data:
+            for k, v in extra_data.items():
+                if v is not None:
+                    final_doc[k] = v
+
+        final_doc["onboardingCompleted"] = True
+        final_doc["onboarding_completed_at"] = now.isoformat()
+        final_doc["updated_at"] = now
+
+        # Save into db["users"] with identical _id
+        await db["users"].replace_one({"_id": obj_id}, final_doc, upsert=True)
+
+        # Delete from pending_users
+        await db["pending_users"].delete_one({"_id": obj_id})
+
+        # Handle business creation if business persona or business fields provided
+        account_type = final_doc.get("accountType", "user")
+        biz_name = final_doc.get("business_name")
+        if account_type == "business" or biz_name:
+            existing_biz = await db["businesses"].find_one({"$or": [{"ownerId": user_id}, {"user_id": user_id}]})
+            if not existing_biz:
+                company_name = biz_name or f"{final_doc.get('firstName', 'User')}'s Business"
+                biz_doc = {
+                    "ownerId": user_id,
+                    "user_id": user_id,
+                    "name": company_name,
+                    "category": final_doc.get("business_category") or "General",
+                    "location": f"{final_doc.get('city', '')}, {final_doc.get('state', '')}".strip(" ,") or "India",
+                    "contact_email": final_doc.get("email"),
+                    "contact_phone": final_doc.get("phone") or final_doc.get("contactNumber"),
+                    "created_at": now,
+                    "updated_at": now
+                }
+                if final_doc.get("business_type"):
+                    biz_doc["type"] = final_doc.get("business_type")
+                if final_doc.get("business_description"):
+                    biz_doc["description"] = final_doc.get("business_description")
+                if final_doc.get("business_logo"):
+                    biz_doc["logo"] = final_doc.get("business_logo")
+                if final_doc.get("brand_color"):
+                    biz_doc["brandColor"] = final_doc.get("brand_color")
+                await db["businesses"].insert_one(biz_doc)
+
+        # Provision subscription / credits
+        try:
+            from app.services.credit_service import CreditService
+            await CreditService.get_or_create_subscription(db, user_id)
+        except Exception as e:
+            logger.warning(f"Subscription provisioning error: {e}")
+
+        saved_user = await db["users"].find_one({"_id": obj_id})
+        return saved_user
 
     @staticmethod
     async def register(user_in) -> User:
@@ -309,12 +366,19 @@ class AuthService:
         db = get_database()
         email = req.email.lower().strip()
         doc = await db["users"].find_one({"email": email})
+        is_pending = False
+        if not doc:
+            doc = await db["pending_users"].find_one({"email": email})
+            is_pending = True
+
         if not doc:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
-        
+
         user = User(**doc)
         if not verify_password(req.password, user.hashed_password):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+        if is_pending:
+            user.onboardingCompleted = False
             
         access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
         refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))

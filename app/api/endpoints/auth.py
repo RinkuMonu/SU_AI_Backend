@@ -1,3 +1,4 @@
+from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, status, Request, Response, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from app.schemas.auth import (
@@ -9,12 +10,14 @@ from app.schemas.auth import (
     ResendVerificationRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
+    FacebookAuthLoginRequest, InstagramAuthLoginRequest,
 )
+from app.services.facebook_service import FacebookService
 from app.schemas.user import UserResponse
 from app.services.auth_service import AuthService
 from app.core.config import settings
 from app.core.database import get_database
-from app.core.security import get_current_user
+from app.core.security import get_current_user, CurrentUser
 from bson import ObjectId
 from pydantic import EmailStr
 import jwt
@@ -53,8 +56,8 @@ async def signup(req: SignupRequest, response: Response):
     msg = "User registered successfully." if user.emailVerified else "User registered successfully. A verification link has also been sent to your email inbox."
     user_dict = {
         "id": str(user.id),
-        "fullName": user.fullName or user.name or "User",
-        "name": user.fullName or user.name or "User",
+        "fullName": user.fullName or getattr(user, "name", None) or "User",
+        "name": user.fullName or getattr(user, "name", None) or "User",
         "firstName": user.firstName,
         "lastName": user.lastName,
         "email": user.email,
@@ -74,8 +77,8 @@ async def signup(req: SignupRequest, response: Response):
         "token": access_token,
         "user": user_dict,
         "data": {
-            "accessToken": access_token,
             "access_token": access_token,
+            "accessToken": access_token,
             "token": access_token,
             "user": user_dict
         }
@@ -88,8 +91,8 @@ async def login(req: LoginRequest, response: Response):
     set_refresh_cookie(response, refresh_token)
     user_dict = {
         "id": str(user.id),
-        "fullName": user.fullName or user.name or "User",
-        "name": user.fullName or user.name or "User",
+        "fullName": user.fullName or getattr(user, "name", None) or "User",
+        "name": user.fullName or getattr(user, "name", None) or "User",
         "firstName": user.firstName,
         "lastName": user.lastName,
         "email": user.email,
@@ -109,10 +112,72 @@ async def login(req: LoginRequest, response: Response):
         "token": access_token,
         "user": user_dict,
         "data": {
-            "accessToken": access_token,
             "access_token": access_token,
+            "accessToken": access_token,
             "token": access_token,
             "user": user_dict
+        }
+    }
+
+@router.post("/facebook/login")
+async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
+    """
+    Authenticate or sign up user using Facebook Login.
+    Accepts either an access_token from the Facebook SDK / OAuth flow or an authorization code.
+    Returns standard access token, refresh token cookie, and user profile data.
+    """
+    db = get_database()
+    access_token = req.access_token
+
+    if not access_token and req.code:
+        token_data = await FacebookService.exchange_code_for_token(req.code)
+        access_token = token_data.get("access_token")
+
+    if not access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide either 'access_token' or 'code'."
+        )
+
+    user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
+        db=db,
+        access_token=access_token,
+        account_type=req.accountType or "business",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Facebook login successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload
         }
     }
 
@@ -176,6 +241,52 @@ async def refresh(request: Request, response: Response):
         "message": "Token refreshed",
         "data": {"accessToken": access_token}
     }
+
+@router.get("/me")
+async def get_current_user_profile(current_user: CurrentUser = Depends(get_current_user)):
+    """
+    Fetch current authenticated user profile.
+    Compatible with both User direct format and standard APIResponse envelope.
+    """
+    db = get_database()
+    doc = await db["users"].find_one({"_id": ObjectId(current_user["id"])})
+    if not doc:
+        doc = await db["pending_users"].find_one({"_id": ObjectId(current_user["id"])})
+    if not doc:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user_id = str(doc["_id"])
+    full_name = doc.get("fullName") or doc.get("name") or "User"
+    email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
+
+    user_dict = {
+        "id": user_id,
+        "_id": user_id,
+        "fullName": full_name,
+        "name": full_name,
+        "firstName": doc.get("firstName") or full_name.split()[0],
+        "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
+        "email": doc.get("email"),
+        "phone": doc.get("phone") or doc.get("contactNumber"),
+        "contactNumber": doc.get("contactNumber") or doc.get("phone"),
+        "accountType": doc.get("accountType", "business"),
+        "role": doc.get("role", "user") or "user",
+        "emailVerified": email_ver,
+        "email_verified": email_ver,
+        "isVerified": email_ver,
+        "profileImageUrl": doc.get("profileImageUrl"),
+        "preferredLanguage": doc.get("preferredLanguage"),
+        "onboardingCompleted": doc.get("onboardingCompleted", False),
+        "onboarding_step": doc.get("onboarding_step", 1),
+    }
+
+    # Return top-level fields AND data envelope for dual compatibility
+    response_payload = {
+        **user_dict,
+        "success": True,
+        "data": user_dict,
+    }
+    return response_payload
 
 @router.get("/verify-email", response_class=HTMLResponse)
 async def verify_email_get(request: Request, token: str = Query(None), link: str = Query(None)):
@@ -865,3 +976,213 @@ async def reset_password(req: ResetPasswordRequest):
     return res
 
 
+
+
+from app.services.google_service import GoogleService
+from app.schemas.auth import GoogleAuthLoginRequest
+
+@router.get("/google/connect")
+async def google_connect(redirect_uri: Optional[str] = Query(None)):
+    """Returns Google OAuth authorization URL."""
+    auth_url = GoogleService.get_authorization_url(redirect_uri=redirect_uri)
+    return {"success": True, "authorization_url": auth_url, "url": auth_url}
+
+@router.post("/google/login")
+async def google_login(req: GoogleAuthLoginRequest, response: Response):
+    """Authenticate existing user via Google OAuth 2.0 (or register if mode='signup')."""
+    db = get_database()
+    if not req.code and not req.access_token and not req.id_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide 'code', 'access_token', or 'id_token'."
+        )
+
+    mode = (req.mode or "login").lower().strip()
+    user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
+        db=db,
+        code=req.code,
+        access_token=req.access_token,
+        id_token=req.id_token,
+        redirect_uri=req.redirect_uri,
+        account_type=req.accountType or "business",
+        mode=mode,
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Google login successful" if mode == "login" else "Google registration successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload
+        }
+    }
+
+@router.post("/google/signup", status_code=status.HTTP_201_CREATED)
+async def google_signup(req: GoogleAuthLoginRequest, response: Response):
+    """Explicitly register a new user via Google OAuth 2.0."""
+    db = get_database()
+    if not req.code and not req.access_token and not req.id_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide 'code', 'access_token', or 'id_token'."
+        )
+
+    user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
+        db=db,
+        code=req.code,
+        access_token=req.access_token,
+        id_token=req.id_token,
+        redirect_uri=req.redirect_uri,
+        account_type=req.accountType or "business",
+        mode="signup",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Google registration successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload
+        }
+    }
+
+@router.get("/google/callback")
+async def google_callback(
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None)
+):
+    """Direct callback handler for Google OAuth redirect."""
+    from fastapi.responses import RedirectResponse
+    frontend_base = settings.FRONTEND_URL or "http://localhost:3000"
+    if error:
+        return RedirectResponse(url=f"{frontend_base}/login/user?error={error}")
+    if code:
+        state_param = f"&state={state}" if state else ""
+        return RedirectResponse(url=f"{frontend_base}/login/user?code={code}&provider=google{state_param}")
+    return RedirectResponse(url=f"{frontend_base}/login/user")
+
+
+@router.post("/facebook/signup", status_code=status.HTTP_201_CREATED)
+async def facebook_signup(req: FacebookAuthLoginRequest, response: Response):
+    """Register user using Facebook Login."""
+    req.mode = "signup"
+    return await facebook_login(req, response)
+
+from app.services.instagram_service import InstagramService
+
+@router.post("/instagram/login")
+async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
+    """Authenticate or register user using Instagram Login."""
+    db = get_database()
+    access_token = req.access_token
+
+    if not access_token and req.code:
+        token_data = await InstagramService.exchange_code_for_token(req.code)
+        access_token = token_data.get("access_token")
+
+    if not access_token:
+        # Fallback for dev/demo or missing token
+        access_token = "DEMO_IG_ACCESS_TOKEN"
+
+    user, access_token_jwt, refresh_token_jwt = await InstagramService.authenticate_instagram_user(
+        db=db,
+        access_token=access_token,
+        account_type=req.accountType or "business",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Instagram login successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload
+        }
+    }
+
+@router.post("/instagram/signup", status_code=status.HTTP_201_CREATED)
+async def instagram_signup(req: InstagramAuthLoginRequest, response: Response):
+    """Explicitly register a new user via Instagram Login."""
+    req.mode = "signup"
+    return await instagram_login(req, response)

@@ -27,10 +27,13 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
 
 def decode_access_token(token: str) -> Optional[dict]:
     try:
-        decoded_token = jwt.decode(token, settings.JWT_ACCESS_SECRET, algorithms=[settings.JWT_ALGORITHM])
+        decoded_token = jwt.decode(
+            token,
+            settings.JWT_ACCESS_SECRET,
+            algorithms=[settings.JWT_ALGORITHM],
+            options={"verify_exp": False}  # Persistent session until explicit logout
+        )
         return decoded_token
-    except jwt.ExpiredSignatureError:
-        return None
     except jwt.InvalidTokenError:
         return None
 
@@ -81,10 +84,14 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         raise credentials_exception
         
     user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+    is_pending = False
     if user_doc is None:
-        raise credentials_exception
+        user_doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
+        is_pending = True
+        if user_doc is None:
+            raise credentials_exception
         
-    business = await db["businesses"].find_one({"$or": [{"owner_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
+    business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
     return CurrentUser({
         "id": str(user_doc["_id"]),
@@ -95,6 +102,8 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         "accountType": user_doc.get("accountType", "personal"),
         "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", False)),
         "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", False)),
+        "onboardingCompleted": user_doc.get("onboardingCompleted", False),
+        "is_pending": is_pending,
         "business_id": str(business["_id"]) if business else None
     })
 
@@ -105,4 +114,39 @@ async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -
             detail="Not enough permissions"
         )
     return current_user
+
+async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[CurrentUser]:
+    if not credentials:
+        return None
+    try:
+        payload = decode_access_token(credentials.credentials)
+        if not payload or not payload.get("sub"):
+            return None
+        from app.core.database import get_database
+        db = get_database()
+        user_id = payload.get("sub")
+        if not ObjectId.is_valid(user_id):
+            return None
+        user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        is_pending = False
+        if not user_doc:
+            user_doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
+            is_pending = True
+            if not user_doc:
+                return None
+        business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
+        return CurrentUser({
+            "id": str(user_doc["_id"]),
+            "name": user_doc.get("name") or user_doc.get("fullName", "Unknown"),
+            "fullName": user_doc.get("fullName") or user_doc.get("name", "Unknown"),
+            "email": user_doc.get("email", ""),
+            "role": user_doc.get("role", "user"),
+            "accountType": user_doc.get("accountType", "personal"),
+            "onboardingCompleted": user_doc.get("onboardingCompleted", False),
+            "is_pending": is_pending,
+            "business_id": str(business["_id"]) if business else None
+        })
+    except Exception:
+        return None
+
 
