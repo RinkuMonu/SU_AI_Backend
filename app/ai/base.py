@@ -31,14 +31,24 @@ class AIProvider(ABC):
         
         # Suggest JSON output format
         kwargs["response_format"] = {"type": "json_object"}
+        if "max_tokens" not in kwargs:
+            kwargs["max_tokens"] = 8192
         
         result = await self.generate_text(prompt, system_prompt, **kwargs)
         text = result.get("text", "")
+        
+        # Clean up thinking tags
+        text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
         
         # Clean up markdown code blocks if present
         match = re.search(r'```(?:json)?\s*(.*?)\s*```', text, re.DOTALL)
         if match:
             text = match.group(1).strip()
+        else:
+            first_brace = text.find("{")
+            last_brace = text.rfind("}")
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                text = text[first_brace:last_brace + 1].strip()
             
         try:
             return json.loads(text)

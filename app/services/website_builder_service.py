@@ -14,6 +14,120 @@ from app.ai.factory import AIProviderFactory
 
 class WebsiteBuilderService:
     @staticmethod
+    def resolve_curated_image(category: str = "", prompt: str = "", index: int = 0, is_hero: bool = False) -> str:
+        text = f"{category} {prompt}".lower()
+        
+        GALLERIES = [
+            (
+                ["coffee", "cafe", "latte", "cappuccino", "espresso", "barista", "bakery", "bistro", "tea", "roast", "brew"],
+                "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1447933601403-0c6688de566e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["fashion", "cloth", "wear", "apparel", "boutique", "dress", "lehenga", "saree", "suit", "shirt", "outfit", "style"],
+                "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["restaurant", "food", "dining", "pizza", "burger", "meal", "chef", "culinary", "kitchen", "snack"],
+                "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["tech", "software", "app", "digital", "developer", "it", "code", "ai", "platform", "agency"],
+                "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["salon", "beauty", "spa", "makeup", "hair", "skincare", "cosmetic", "massage"],
+                "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1512290900672-1f41334e2c99?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["gym", "fitness", "workout", "crossfit", "yoga", "trainer", "training", "exercise", "sport"],
+                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["real estate", "property", "home", "house", "interior", "architect", "villa", "apartment", "realty"],
+                "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["jewelry", "jewellery", "gold", "diamond", "ring", "necklace", "luxury", "watch"],
+                "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["health", "clinic", "doctor", "medical", "hospital", "dental", "dentist", "care", "wellness"],
+                "https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=800&q=80"
+                ]
+            )
+        ]
+        
+        default_hero = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80"
+        default_items = [
+            "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=800&q=80"
+        ]
+        
+        for keywords, hero_img, item_imgs in GALLERIES:
+            if any(k in text for k in keywords):
+                if is_hero:
+                    return hero_img
+                return item_imgs[index % len(item_imgs)]
+                
+        if is_hero:
+            return default_hero
+        return default_items[index % len(default_items)]
+
+    @staticmethod
     async def get_session_collection():
         db = get_database()
         return db["website_builder_sessions"]
@@ -125,7 +239,7 @@ class WebsiteBuilderService:
         if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
             return await WebsiteBuilderService.generate_website(session)
             
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         extract_prompt = f"Extract structured fields from user message: '{message}'. Current collected data: {json.dumps(session.collected_data, default=str)}. Do NOT invent fake data. Return JSON with extracted fields using exactly these keys: 'Business Name', 'Business Category', 'Location', 'Phone', 'Products'."
         extracted = await ai.generate_json(extract_prompt, system_prompt="Extract business details from user messages using strict keys.")
         if extracted and not extracted.get("error"):
@@ -134,13 +248,13 @@ class WebsiteBuilderService:
                     session.collected_data[k] = str(v).strip()
                     
         b_name = session.collected_data.get("Business Name")
-        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business"]:
+        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business", "A", "An", "The"]:
             b_cat = session.collected_data.get("Business Category")
-            if b_cat and str(b_cat).strip() not in ["None", "null"]:
+            if b_cat and str(b_cat).strip() not in ["None", "null", "A", "An", "The"]:
                 session.collected_data["Business Name"] = str(b_cat).strip().title()
             else:
                 clean_msg = message.replace("website", "").replace("build", "").replace("create", "").replace("my", "").replace("want", "").replace("for", "").strip().title()
-                if clean_msg:
+                if clean_msg and clean_msg not in ["A", "An", "The"]:
                     session.collected_data["Business Name"] = clean_msg
                     session.collected_data["Business Category"] = clean_msg
 
@@ -165,7 +279,7 @@ class WebsiteBuilderService:
 
     @staticmethod
     async def generate_recommendations(session: WebsiteBuilderSession):
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = f"Generate exactly THREE website design recommendations for a business with data: {session.collected_data}. Return JSON with 'recommendations' array containing: id, name, description, reason, palette, style."
         result = await ai.generate_json(prompt, system_prompt="You are an expert web designer AI.")
         
@@ -230,7 +344,15 @@ class WebsiteBuilderService:
         full_user_intent = " | ".join(user_prompts) if user_prompts else "Website"
         
         b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category") or full_user_intent.title()
+        if str(b_name).strip().upper() in ["A", "AN", "THE", ""]:
+            b_cat_temp = session.collected_data.get("Business Category")
+            if b_cat_temp and str(b_cat_temp).strip().upper() not in ["A", "AN", "THE", ""]:
+                b_name = str(b_cat_temp).strip().title()
+            else:
+                b_name = "My Business"
         b_cat = session.collected_data.get("Business Category", full_user_intent)
+        if str(b_cat).strip().upper() in ["A", "AN", "THE", ""]:
+            b_cat = b_name
 
         # Dynamic topic-aligned schema example & fallback
         schema_example = json.dumps({
@@ -324,7 +446,7 @@ class WebsiteBuilderService:
                 }
             ]
         })
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = (
             f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
 
@@ -342,7 +464,11 @@ CRITICAL REQUIREMENTS:
         )
         
         try:
-            result = await ai.generate_json(prompt, system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure.")
+            result = await ai.generate_json(
+                prompt,
+                system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure.",
+                max_tokens=8192
+            )
         except Exception as e:
             import logging
             logging.error(f"AI generation failed: {e}")
@@ -355,19 +481,26 @@ CRITICAL REQUIREMENTS:
         if not isinstance(raw_pages, list) or len(raw_pages) == 0:
              raw_pages = json.loads(schema_example)["pages"]
              
-        import urllib.parse
         for page in raw_pages:
-            for section in page.get("sections", []):
+            for s_idx, section in enumerate(page.get("sections", [])):
                 # For hero sections with an image prompt
-                if section.get("type") == "hero" and section.get("image_prompt"):
-                    if not section.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
-                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
+                if section.get("type") == "hero":
+                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
+                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=b_cat,
+                            prompt=section.get("image_prompt", "") or section.get("title", ""),
+                            index=s_idx,
+                            is_hero=True
+                        )
                 # For features sections with items
-                for item in section.get("items", []):
-                    if item.get("image_prompt") and not item.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
-                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+                for i_idx, item in enumerate(section.get("items", [])):
+                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
+                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=b_cat,
+                            prompt=item.get("image_prompt", "") or item.get("title", ""),
+                            index=i_idx + s_idx,
+                            is_hero=False
+                        )
 
         project = WebsiteProject(
             user_id=session.user_id,
@@ -404,7 +537,7 @@ CRITICAL REQUIREMENTS:
         if not site:
             raise HTTPException(status_code=404, detail="Website not found")
             
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."
         result = await ai.generate_text(prompt, system_prompt="You are an expert web designer. Return ONLY the JSON array representing the revised pages.")
         
@@ -434,17 +567,24 @@ CRITICAL REQUIREMENTS:
         except:
             raise Exception("Failed to parse AI revision")
             
-        import urllib.parse
         for page in revised_pages:
-            for section in page.get("sections", []):
-                if section.get("type") == "hero" and section.get("image_prompt"):
-                    if not section.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
-                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
-                for item in section.get("items", []):
-                    if item.get("image_prompt") and not item.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
-                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+            for s_idx, section in enumerate(page.get("sections", [])):
+                if section.get("type") == "hero":
+                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
+                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=site.business_name or "business",
+                            prompt=section.get("image_prompt", "") or section.get("title", ""),
+                            index=s_idx,
+                            is_hero=True
+                        )
+                for i_idx, item in enumerate(section.get("items", [])):
+                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
+                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=site.business_name or "business",
+                            prompt=item.get("image_prompt", "") or item.get("title", ""),
+                            index=i_idx + s_idx,
+                            is_hero=False
+                        )
                         
         site.pages = revised_pages
         collection = await WebsiteBuilderService.get_project_collection()
@@ -489,7 +629,7 @@ Current Website State:
 
 Return ONLY valid JSON with the modification."""
 
-        ai_provider = AIProviderFactory.get_provider()
+        ai_provider = AIProviderFactory.get_provider(preferred="gemini")
         try:
             res = await ai_provider.generate_text(
                 prompt=prompt,
