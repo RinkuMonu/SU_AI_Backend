@@ -23,5 +23,7 @@ Thumbs.db
 uploads/audio/
 uploads/reels/
 uploads/temp/
+uploads/fashion/
+uploads/post_*.jpg
 scratch_*.py
 scratch_*.js

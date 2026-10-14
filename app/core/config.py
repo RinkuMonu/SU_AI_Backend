@@ -28,9 +28,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
 
-    FASHION_IMAGE_PROVIDER: str = "pollinations"
+    FASHION_IMAGE_PROVIDER: str = "gemini"
     FASHION_IMAGE_API_KEY: str | None = None
-    VIRTUAL_TRYON_PROVIDER: str = ""
+    VIRTUAL_TRYON_PROVIDER: str = "gemini"
     VIRTUAL_TRYON_API_KEY: str | None = None
 
     INSTAGRAM_APP_ID: str | None = None

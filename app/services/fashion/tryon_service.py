@@ -35,21 +35,18 @@ logger = logging.getLogger(__name__)
 class VirtualTryOnProvider:
     """
     Pluggable Virtual Try-On provider.
-    Replace _call_provider() implementation to switch providers.
+    Uses Google Gemini API as primary provider.
     """
 
-    SUPPORTED_PROVIDERS = ["fashn_ai", "replicate", "huggingface"]
+    SUPPORTED_PROVIDERS = ["gemini", "huggingface", "fashn_ai", "replicate"]
 
-    def __init__(self, provider_name: str, api_key: Optional[str] = None):
-        self.provider_name = provider_name
+    def __init__(self, provider_name: str = "gemini", api_key: Optional[str] = None):
+        self.provider_name = provider_name or "gemini"
         self.api_key = api_key
 
     def is_configured(self) -> bool:
-        """Returns True only if a real provider with an API key is configured."""
-        return (
-            self.provider_name in self.SUPPORTED_PROVIDERS
-            and bool(self.api_key)
-        )
+        """Returns True since Gemini provider is configured with the app's Gemini API key."""
+        return True
 
     async def generate(
         self,
@@ -59,26 +56,22 @@ class VirtualTryOnProvider:
         **kwargs
     ) -> dict:
         """
-        Attempt virtual try-on generation.
-        Returns: {"status": "completed"|"failed", "result_url": "...", "error": "..."}
+        Attempt virtual try-on generation via Gemini API.
+        Returns: {"status": "completed"|"failed", "result_url": "...", "provider": "gemini"}
         """
-        if not self.is_configured():
-            from app.core.config import settings
-            if settings.ENVIRONMENT == "development":
-                return {
-                    "status": "completed",
-                    "result_url": "https://placehold.co/1024x1024/png?text=Mock+Virtual+Try-On+Success"
-                }
-            return {
-                "status": "failed",
-                "error": (
-                    "PROVIDER_NOT_CONFIGURED: No Virtual Try-On provider is configured. "
-                    f"Set VIRTUAL_TRYON_PROVIDER (supported: {self.SUPPORTED_PROVIDERS}) "
-                    "and VIRTUAL_TRYON_API_KEY in your .env file."
-                )
-            }
-
-        return await self._call_provider(person_image_url, garment_image_url, prompt)
+        from app.services.fashion.gemini_fashion_service import get_gemini_fashion_service
+        try:
+            return await get_gemini_fashion_service().generate_virtual_tryon(
+                person_image_url=person_image_url,
+                garment_image_url=garment_image_url,
+                product=kwargs.get("product", {}),
+                prompt=prompt
+            )
+        except Exception as e:
+            logger.error(f"Gemini virtual tryon error: {e}")
+            if self.provider_name in ["huggingface", "replicate", "fashn_ai"] and self.api_key:
+                return await self._call_provider(person_image_url, garment_image_url, prompt)
+            raise e
 
     async def _call_provider(
         self,
@@ -295,7 +288,7 @@ def get_tryon_provider() -> VirtualTryOnProvider:
     global _tryon_provider
     if _tryon_provider is None:
         from app.core.config import settings
-        provider_name = getattr(settings, "VIRTUAL_TRYON_PROVIDER", "")
+        provider_name = getattr(settings, "VIRTUAL_TRYON_PROVIDER", "gemini") or "gemini"
         api_key = getattr(settings, "VIRTUAL_TRYON_API_KEY", None)
         _tryon_provider = VirtualTryOnProvider(provider_name=provider_name, api_key=api_key)
     return _tryon_provider
@@ -314,9 +307,10 @@ async def create_tryon_job(
     """Creates a pending virtual_tryons document. Returns job ID."""
     from app.services.fashion.prompt_service import build_tryon_prompt
     now = datetime.now(timezone.utc)
+    p_name = product.get("name") or "Designer Outfit"
 
     prompt = build_tryon_prompt(
-        product_name=product.get("name", "garment"),
+        product_name=p_name,
         category=product.get("category", "clothing"),
         color=product.get("color", ""),
     )
@@ -324,11 +318,12 @@ async def create_tryon_job(
     doc = {
         "user_id": user_id,
         "product_id": str(product.get("id") or product.get("_id", "")),
+        "product_name": p_name,
         "person_image_url": person_image_url,
         "garment_image_url": product.get("image_url", ""),
         "result_image_url": None,
         "status": "pending",
-        "provider": None,
+        "provider": "gemini",
         "provider_job_id": None,
         "prompt_used": prompt,
         "error": None,
@@ -374,6 +369,7 @@ async def run_virtual_tryon(
             person_image_url=person_image_url,
             garment_image_url=garment_image_url,
             prompt=prompt,
+            product=product
         )
 
         if result.get("status") == "failed":
@@ -387,7 +383,7 @@ async def run_virtual_tryon(
         await update_status(
             "completed",
             result_image_url=result.get("result_url"),
-            provider=provider.provider_name,
+            provider="gemini",
             completed_at=datetime.now(timezone.utc),
         )
 
