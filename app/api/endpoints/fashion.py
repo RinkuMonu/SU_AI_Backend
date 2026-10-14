@@ -401,8 +401,8 @@ async def start_virtual_tryon(
         
         # Virtual Try-On requires a garment image. Generate a temporary one using Pollinations flat-lay
         import urllib.parse
-        safe_prompt = urllib.parse.quote(f"{request.color} {request.category} flat lay clothing photography, white background, single item")
-        garment_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=512&height=512&nologo=true"
+        safe_prompt = urllib.parse.quote(f"{request.color} {request.category} clothing flat lay white background")
+        garment_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=512&height=512&nologo=true&model=flux"
         
         product_data = {
             "name": request.garment_name or f"{request.color} {request.category}",

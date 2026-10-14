@@ -1,13 +1,8 @@
-"""
-Gemini Fashion AI Service
-Powers AI Photoshoot and Virtual Try-On using Google Gemini API.
-Includes intelligent prompt engineering, image generation via Gemini models,
-and high-res local artifact persistence.
-"""
 import os
 import uuid
 import logging
 import asyncio
+import urllib.parse
 from typing import Optional, Dict, Any
 from pathlib import Path
 import httpx
@@ -16,61 +11,6 @@ from PIL import Image
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
-
-# Curated High-Definition Commercial Fashion Models (by category & gender)
-FASHION_GALLERY = {
-    "lehenga": [
-        "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=1080&q=85",
-        "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1080&q=85",
-        "https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=1080&q=85",
-    ],
-    "saree": [
-        "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1080&q=85",
-        "https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=1080&q=85",
-    ],
-    "kurti": [
-        "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=1080&q=85",
-        "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=1080&q=85",
-    ],
-    "dress": [
-        "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=1080&q=85",
-        "https://images.unsplash.com/photo-1572804013309-59a88b7e92f1?w=1080&q=85",
-        "https://images.unsplash.com/photo-1515372039744-b8f02a3ae446?w=1080&q=85",
-    ],
-    "tshirt_male": [
-        "https://images.unsplash.com/photo-1521572267360-ee0c2909d518?w=1080&q=85",
-        "https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?w=1080&q=85",
-        "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=1080&q=85",
-    ],
-    "tshirt_female": [
-        "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=1080&q=85",
-        "https://images.unsplash.com/photo-1554568218-0f1715e72254?w=1080&q=85",
-    ],
-    "shirt_male": [
-        "https://images.unsplash.com/photo-1602810318383-e386cc2a3ccf?w=1080&q=85",
-        "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?w=1080&q=85",
-    ],
-    "shirt_female": [
-        "https://images.unsplash.com/photo-1598554747436-c9293d6a588f?w=1080&q=85",
-        "https://images.unsplash.com/photo-1551803091-e20673f15770?w=1080&q=85",
-    ],
-    "hoodie_male": [
-        "https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=1080&q=85",
-        "https://images.unsplash.com/photo-1509967419530-da38b4704bc6?w=1080&q=85",
-    ],
-    "hoodie_female": [
-        "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=1080&q=85",
-        "https://images.unsplash.com/photo-1529139574466-a303027c1d8b?w=1080&q=85",
-    ],
-    "general_male": [
-        "https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=1080&q=85",
-        "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=1080&q=85",
-    ],
-    "general_female": [
-        "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1080&q=85",
-        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=1080&q=85",
-    ]
-}
 
 
 class GeminiFashionService:
@@ -95,12 +35,14 @@ class GeminiFashionService:
         """Download remote image with retry and verification."""
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-                res = await client.get(url, follow_redirects=True)
-                if res.status_code == 200 and len(res.content) > 5000:
+            async with httpx.AsyncClient(timeout=60.0, headers=headers, follow_redirects=True) as client:
+                res = await client.get(url)
+                if res.status_code == 200 and len(res.content) > 3000:
                     with open(target_path, "wb") as f:
                         f.write(res.content)
                     return True
+                else:
+                    logger.warning(f"Download returned status {res.status_code}, len={len(res.content)}")
         except Exception as e:
             logger.warning(f"Download failed for {url}: {e}")
         return False
@@ -112,29 +54,31 @@ class GeminiFashionService:
         request,
     ) -> Dict[str, Any]:
         """
-        Generates an AI Fashion Photoshoot image via Gemini API.
-        Saves image locally and returns status and local URL.
+        Generates an AI Fashion Photoshoot image preserving the exact clothing, color,
+        and product type. Uses Gemini for director-level prompt enhancement and
+        Pollinations Flux for photorealistic image generation.
         """
-        category = (product.get("category") or "general").lower()
+        category = (product.get("category") or getattr(request, "category", "garment") or "garment").strip()
         model_type = getattr(request, "model_type", "female").lower()
-        product_name = product.get("name") or getattr(request, "garment_name", "Fashion Outfit")
-        color = product.get("color") or getattr(request, "color", "")
+        product_name = product.get("name") or getattr(request, "garment_name", f"{getattr(request, 'color', '')} {category}").strip()
+        color = (product.get("color") or getattr(request, "color", "")).strip()
+        pose = getattr(request, "pose", "standing")
+        background = getattr(request, "background", "studio")
+        shot_type = getattr(request, "shot_type", "full_body")
 
         filename = f"{uuid.uuid4().hex}.jpg"
         local_file = self.photoshoot_dir / filename
 
-        # 1. Ask Gemini to enhance the high-fashion director prompt
+        # 1. Ask Gemini LLM to enhance the photoshoot prompt while strictly preserving color and garment
         client = self._get_client()
         enhanced_prompt = prompt
         if client:
             try:
                 gemini_prompt = (
-                    f"You are a Vogue Fashion Director. Enhance this photoshoot prompt for an ultra-realistic commercial fashion magazine cover.\n"
-                    f"Garment: {product_name} ({color} {category})\n"
-                    f"Model: {model_type}, style: {getattr(request, 'model_style', 'fashion')}, pose: {getattr(request, 'pose', 'standing')}\n"
-                    f"Environment: {getattr(request, 'background', 'studio')}, lighting: commercial beauty\n"
-                    f"Base prompt: {prompt}\n"
-                    f"Return ONLY the single enhanced prompt text with crisp lighting, fabric texture, and model description."
+                    f"You are a Vogue Fashion Director. Write a concise image generation prompt (under 40 words) for a fashion photoshoot.\n"
+                    f"CRITICAL: Garment MUST be: {color} {category} ({product_name}). Do not change the garment or color.\n"
+                    f"Model: {model_type} model, {pose} pose, {background} lighting, 8k resolution, photorealistic fabric texture.\n"
+                    f"Return ONLY the prompt text."
                 )
                 resp = await asyncio.to_thread(
                     client.models.generate_content,
@@ -142,57 +86,30 @@ class GeminiFashionService:
                     contents=gemini_prompt
                 )
                 if resp and resp.text:
-                    enhanced_prompt = resp.text.strip()
+                    enhanced_prompt = resp.text.strip().replace("\n", " ")
             except Exception as e:
                 logger.warning(f"Gemini prompt enhancement note: {e}")
 
-        # 2. Try Gemini Image Generation models (e.g. gemini-2.5-flash-image / imagen-3.0)
-        image_generated = False
-        if client:
-            for model_cand in ["gemini-2.5-flash-image", "imagen-3.0-generate-002"]:
-                try:
-                    logger.info(f"Attempting Gemini image generation with model '{model_cand}'...")
-                    resp = await asyncio.to_thread(
-                        client.models.generate_content,
-                        model=model_cand,
-                        contents=enhanced_prompt
-                    )
-                    if resp and resp.candidates:
-                        for part in resp.candidates[0].content.parts:
-                            if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                                with open(local_file, "wb") as f:
-                                    f.write(part.inline_data.data)
-                                image_generated = True
-                                logger.info(f"Successfully generated photoshoot image via Gemini model {model_cand}!")
-                                break
-                    if image_generated:
-                        break
-                except Exception as e:
-                    logger.info(f"Gemini model {model_cand} note: {e}")
+        # 2. Generate high-resolution photoshoot image via Pollinations Flux
+        safe_prompt = urllib.parse.quote(enhanced_prompt[:300].strip())
+        seed = int(uuid.uuid4().hex[:6], 16)
+        flux_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&model=flux&seed={seed}"
+        
+        logger.info(f"Generating photoshoot visual for '{product_name}' via Flux AI...")
+        download_ok = await self._download_file(flux_url, local_file)
 
-        # 3. If direct Gemini pixel quota is 0 / exhausted, fulfill using Gemini-curated category-locked photoshoot asset
-        if not image_generated or not local_file.exists() or local_file.stat().st_size < 1000:
-            key = f"{category}_{model_type}" if f"{category}_{model_type}" in FASHION_GALLERY else category
-            if key not in FASHION_GALLERY:
-                key = f"general_{model_type}" if f"general_{model_type}" in FASHION_GALLERY else "general_female"
-
-            candidates = FASHION_GALLERY.get(key, FASHION_GALLERY["general_female"])
-            source_url = candidates[int(uuid.uuid4().hex[:4], 16) % len(candidates)]
-            
-            logger.info(f"Downloading high-resolution Gemini fashion visual for '{key}': {source_url}")
-            download_ok = await self._download_file(source_url, local_file)
-            if not download_ok or not local_file.exists():
-                # Copy from any existing fashion asset
-                existing = [f for f in (Path("uploads") / "fashion" / "tryon").glob("*.*") if f.suffix.lower() in [".jpg", ".png"]]
-                if existing:
-                    import shutil
-                    shutil.copyfile(existing[0], local_file)
+        # Retry with concise prompt if first attempt failed
+        if not download_ok or not local_file.exists() or local_file.stat().st_size < 3000:
+            logger.info("Retrying photoshoot image generation with direct concise prompt...")
+            fallback_prompt = urllib.parse.quote(f"Commercial high-fashion photography of an Indian {model_type} model wearing a gorgeous {color} {category}, {pose} pose, {background} studio lighting, 8k resolution, photorealistic, sharp focus")
+            retry_url = f"https://image.pollinations.ai/prompt/{fallback_prompt}?width=1024&height=1024&nologo=true&model=flux&seed={seed+1}"
+            download_ok = await self._download_file(retry_url, local_file)
 
         final_url = f"/uploads/fashion/photoshoot/{filename}"
         return {
             "status": "completed",
             "image_url": final_url,
-            "provider": "gemini",
+            "provider": "gemini_flux",
             "prompt_used": enhanced_prompt[:1000]
         }
 
@@ -204,56 +121,18 @@ class GeminiFashionService:
         prompt: str
     ) -> Dict[str, Any]:
         """
-        Executes an AI Virtual Try-On using Gemini API.
-        Saves output locally and returns status and local URL.
+        Executes an AI Virtual Try-On by delegating to VirtualTryOnProvider
+        (HuggingFace IDM-VTON + Smart Personal Compositing).
+        Strictly preserves the user's uploaded photo and garment color/style.
         """
-        filename = f"{uuid.uuid4().hex}.png"
-        local_file = self.tryon_dir / filename
-
-        client = self._get_client()
-        image_generated = False
-
-        # 1. Try Gemini image-to-image tryon if quota permits
-        if client:
-            try:
-                logger.info("Attempting Gemini Virtual Try-On generation...")
-                resp = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model="gemini-2.5-flash-image",
-                    contents=f"Virtual Try-On: Seamlessly dress the person in the provided garment image. {prompt}"
-                )
-                if resp and resp.candidates:
-                    for part in resp.candidates[0].content.parts:
-                        if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                            with open(local_file, "wb") as f:
-                                f.write(part.inline_data.data)
-                            image_generated = True
-                            logger.info("Successfully generated try-on via Gemini API!")
-                            break
-            except Exception as e:
-                logger.info(f"Gemini try-on generation note: {e}")
-
-        # 2. If Gemini direct generation quota is exhausted, create high-fidelity tryon synthesis locally
-        if not image_generated or not local_file.exists() or local_file.stat().st_size < 1000:
-            category = (product.get("category") or "top").lower()
-            key = category if category in FASHION_GALLERY else "general_female"
-            candidates = FASHION_GALLERY.get(key, FASHION_GALLERY["general_female"])
-            source_url = candidates[int(uuid.uuid4().hex[:4], 16) % len(candidates)]
-            
-            await self._download_file(source_url, local_file)
-            if not local_file.exists() or local_file.stat().st_size < 1000:
-                # Fallback to local existing tryon image
-                existing = [f for f in self.tryon_dir.glob("*.png") if f.name != filename]
-                if existing:
-                    import shutil
-                    shutil.copyfile(existing[0], local_file)
-
-        final_url = f"/uploads/fashion/tryon/{filename}"
-        return {
-            "status": "completed",
-            "result_url": final_url,
-            "provider": "gemini"
-        }
+        from app.services.fashion.tryon_service import get_tryon_provider
+        provider = get_tryon_provider()
+        return await provider.generate(
+            person_image_url=person_image_url,
+            garment_image_url=garment_image_url,
+            prompt=prompt,
+            product=product
+        )
 
 
 # Singleton instance

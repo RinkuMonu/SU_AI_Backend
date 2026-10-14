@@ -174,7 +174,7 @@ Original prompt:
         await update_status(
             "completed",
             result_images=[image_url],
-            provider="gemini",
+            provider=result.get("provider", "gemini_flux"),
             prompt_used=final_prompt[:1000],
             completed_at=datetime.now(timezone.utc),
         )
