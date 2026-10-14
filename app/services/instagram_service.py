@@ -13,6 +13,8 @@ import hmac
 import json
 import logging
 import asyncio
+import secrets
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
@@ -89,6 +91,178 @@ FB_API_BASE = "https://graph.facebook.com"
 
 
 class InstagramService:
+
+    @staticmethod
+    async def authenticate_instagram_user(
+        db,
+        access_token: str,
+        profile: Optional[Dict[str, Any]] = None,
+        account_type: str = "business",
+    ):
+        """
+        Authenticate or register a user using Instagram Login.
+        Issues JWT access & refresh tokens and returns user doc + tokens.
+        """
+        from app.models.user import User
+        from app.models.refresh_session import RefreshSession
+        from app.core.security import get_password_hash
+        from app.services.auth_service import AuthService
+        from datetime import timedelta
+        import uuid
+        import secrets
+
+        if not profile:
+            try:
+                profile = await InstagramService.get_instagram_profile(access_token)
+            except Exception as e:
+                logger.warning(f"Could not fetch IG profile: {e}")
+                profile = {"user_id": f"ig_{secrets.token_hex(6)}", "username": "instagram_user"}
+
+        ig_id = str(profile.get("user_id") or profile.get("id") or uuid.uuid4())
+        username = profile.get("username") or "Instagram User"
+        name = profile.get("name") or username
+        picture_url = profile.get("profile_picture_url")
+        email = profile.get("email") or f"ig_{username.lower().replace(' ', '_')}@instagram.user"
+        email = email.lower().strip()
+        now = datetime.now(timezone.utc)
+        encrypted_token = encrypt_token(access_token)
+
+        # Check existing user by email or instagramId or instagram_username
+        existing_user = await db["users"].find_one({
+            "$or": [
+                {"email": email},
+                {"instagramId": ig_id},
+                {"instagram_user_id": ig_id},
+                {"instagram_username": username},
+            ]
+        })
+
+        if existing_user:
+            user_id = str(existing_user["_id"])
+            update_data = {
+                "instagramId": ig_id,
+                "instagram_user_id": ig_id,
+                "instagram_username": username,
+                "instagram_access_token": encrypted_token,
+                "instagram_connected": True,
+                "instagram_connected_at": now,
+                "updated_at": now,
+            }
+            if picture_url and not existing_user.get("profileImageUrl"):
+                update_data["profileImageUrl"] = picture_url
+            if not existing_user.get("emailVerified"):
+                update_data["emailVerified"] = True
+                update_data["email_verified"] = True
+                update_data["emailVerifiedAt"] = now
+
+            providers = existing_user.get("authProviders", [])
+            if "instagram" not in providers:
+                providers.append("instagram")
+                update_data["authProviders"] = providers
+
+            await db["users"].update_one({"_id": existing_user["_id"]}, {"$set": update_data})
+            user_doc = await db["users"].find_one({"_id": existing_user["_id"]})
+            user = User(**user_doc)
+            user.id = user_id
+            user.onboardingCompleted = bool(existing_user.get("onboardingCompleted", False))
+            user.onboarding_step = existing_user.get("onboarding_step", 1)
+        else:
+            # Check pending_users collection
+            pending_existing = await db["pending_users"].find_one({
+                "$or": [
+                    {"email": email},
+                    {"instagramId": ig_id},
+                    {"instagram_user_id": ig_id},
+                    {"instagram_username": username},
+                ]
+            })
+            if pending_existing:
+                user_id = str(pending_existing["_id"])
+                user = User.from_mongo(pending_existing)
+                user.id = user_id
+                user.onboardingCompleted = False
+                user.onboarding_step = pending_existing.get("onboarding_step", 1)
+            else:
+                # Create NEW USER -> ALWAYS onboardingCompleted = False, onboarding_step = 1
+                random_pwd = get_password_hash(f"ig_{uuid.uuid4()}_{secrets.token_hex(8)}")
+                first_name = name.split()[0] if name else username
+                last_name = " ".join(name.split()[1:]) if len(name.split()) > 1 else ""
+                user = User(
+                    fullName=name,
+                    name=name,
+                    firstName=first_name,
+                    lastName=last_name,
+                    email=email,
+                    hashed_password=random_pwd,
+                    accountType=account_type or "business",
+                    authProviders=["instagram"],
+                    emailVerified=True,
+                    email_verified=True,
+                    emailVerifiedAt=now,
+                    termsAcceptedAt=now,
+                    profileImageUrl=picture_url,
+                    role="user",
+                    onboardingCompleted=False,
+                    onboarding_step=1,
+                )
+                doc = user.model_dump(by_alias=True, exclude={"id"})
+                doc["instagramId"] = ig_id
+                doc["instagram_user_id"] = ig_id
+                doc["instagram_username"] = username
+                doc["instagram_access_token"] = encrypted_token
+                doc["instagram_connected"] = True
+                doc["instagram_connected_at"] = now
+                doc["onboardingCompleted"] = False
+                doc["onboarding_completed"] = False
+                doc["onboarding_step"] = 1
+                result = await db["users"].insert_one(doc)
+                user.id = str(result.inserted_id)
+
+                try:
+                    from app.services.credit_service import CreditService
+                    await CreditService.get_or_create_subscription(db, user.id)
+                except Exception as e:
+                    logger.warning(f"Could not provision subscription: {e}")
+
+        # Save connection into instagram_connections
+        try:
+            ig_conn = {
+                "user_id": str(user.id),
+                "platform": "instagram",
+                "login_method": "instagram_login",
+                "instagram_user_id": ig_id,
+                "instagram_username": username,
+                "account_type": profile.get("account_type", "BUSINESS"),
+                "profile_picture_url": picture_url or "",
+                "encrypted_access_token": encrypted_token,
+                "connected": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+            await db["instagram_connections"].update_one(
+                {"user_id": str(user.id), "platform": "instagram"},
+                {"$set": ig_conn},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f"Could not save instagram connection document: {e}")
+
+        # Issue JWT tokens
+        jwt_access_token = AuthService.create_token(
+            user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        jwt_refresh_token = AuthService.create_token(
+            user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        )
+        rs = RefreshSession(
+            userId=str(user.id),
+            hashedToken=get_password_hash(hashlib.sha256(jwt_refresh_token.encode()).hexdigest()),
+            expiresAt=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        )
+        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
+
+        return user, jwt_access_token, jwt_refresh_token
+
     """
     Centralized Instagram API service using Instagram Login flow.
     All methods require the caller to provide a database reference.
@@ -101,7 +275,9 @@ class InstagramService:
     @staticmethod
     def is_demo_mode() -> bool:
         """Check if Instagram credentials are not configured (demo/dev mode)."""
-        return not settings.INSTAGRAM_APP_ID or not settings.INSTAGRAM_APP_SECRET
+        app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "FACEBOOK_APP_ID", None)
+        app_secret = settings.INSTAGRAM_APP_SECRET or getattr(settings, "FACEBOOK_APP_SECRET", None)
+        return not app_id or not app_secret
 
     # ─── OAuth Flow ───────────────────────────
 
@@ -111,8 +287,8 @@ class InstagramService:
         Generate Instagram Business Login authorization URL.
         Uses the Instagram OAuth endpoint (not Facebook Login).
         """
-        app_id = settings.INSTAGRAM_APP_ID
-        redirect_uri = settings.INSTAGRAM_REDIRECT_URI
+        app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "FACEBOOK_APP_ID", None)
+        redirect_uri = settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
         api_version = settings.INSTAGRAM_API_VERSION
 
         if not app_id:
@@ -140,9 +316,9 @@ class InstagramService:
         Exchange authorization code for a short-lived Instagram User Access Token,
         then exchange for a long-lived token.
         """
-        app_id = settings.INSTAGRAM_APP_ID
-        app_secret = settings.INSTAGRAM_APP_SECRET
-        redirect_uri = settings.INSTAGRAM_REDIRECT_URI
+        app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "FACEBOOK_APP_ID", None)
+        app_secret = settings.INSTAGRAM_APP_SECRET or getattr(settings, "FACEBOOK_APP_SECRET", None)
+        redirect_uri = settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
 
         if not app_id or not app_secret:
             raise HTTPException(

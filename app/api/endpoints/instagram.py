@@ -19,7 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import RedirectResponse, PlainTextResponse
 from bson import ObjectId
 
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_optional
+import urllib.parse
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.instagram_service import InstagramService
@@ -41,6 +42,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     tags=["Instagram"],
 )
+def build_instagram_redirect(frontend_url: str, query_params: str) -> str:
+    url = frontend_url.rstrip("/")
+    qs = query_params.lstrip("?&")
+    sep = "&" if "?" in url else "?"
+    if any(r in url for r in ["/login", "/signup", "/onboarding"]):
+        return f"{url}{sep}{qs}"
+    if url.endswith("/social-platforms/instagram"):
+        return f"{url}{sep}{qs}"
+    return f"{url}/social-platforms/instagram?{qs}"
+
 
 # ──────────────────────────────────────────────
 # Demo mode constants
@@ -69,20 +80,23 @@ def _should_use_demo(db_conn) -> bool:
 
 @router.get("/connect")
 async def instagram_connect(
-    current_user=Depends(get_current_user),
+    frontend_url: str | None = Query(default=None),
+    current_user=Depends(get_current_user_optional),
     db=Depends(get_database),
 ):
     """
     Initiate Instagram Business Login OAuth flow.
     Returns the authorization URL to redirect the user to.
     """
-    user_id = str(current_user.get("id") or current_user.get("_id"))
+    user_id = str(current_user.get("id") or current_user.get("_id")) if current_user else "pending_login"
+    effective_frontend = frontend_url or settings.FRONTEND_URL or "http://localhost:3000"
 
     # Generate a state token for CSRF protection, store in DB
     state = secrets.token_urlsafe(32)
     await db["instagram_oauth_states"].insert_one({
         "state": state,
         "user_id": user_id,
+        "frontend_url": effective_frontend,
         "created_at": datetime.now(timezone.utc),
     })
 
@@ -90,7 +104,7 @@ async def instagram_connect(
         logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
         # Bypass Facebook and redirect directly to the callback to simulate success
         return InstagramConnectResponse(
-            authorization_url=f"http://localhost:8000/api/instagram/callback?code=demo_code&state={state}"
+            authorization_url=f"{settings.BACKEND_URL}/api/instagram/callback?code=demo_ig_code&state={state}"
         )
 
     auth_url = InstagramService.get_authorization_url(state=state)
@@ -111,17 +125,31 @@ async def instagram_callback(
     Instagram OAuth callback endpoint.
     Called by Instagram after user authorizes the app.
     """
-    frontend_url = settings.CORS_ORIGINS.split(",")[0].strip()
+    state_doc = None
+    if state:
+        state_doc = await db["instagram_oauth_states"].find_one_and_delete({"state": state})
+
+    frontend_url = (state_doc and state_doc.get("frontend_url")) or settings.FRONTEND_URL or settings.CORS_ORIGINS.split(",")[0].strip()
 
     if InstagramService.is_demo_mode():
-        logger.info("[DEMO MODE] Instagram callback — simulating successful connection")
-        # Try to extract user ID from state
-        demo_user_id = "60a7b45c342d3c148c2e6d5a"  # Fallback
-        if state:
-            state_doc = await db["instagram_oauth_states"].find_one_and_delete({"state": state})
-            if state_doc and "user_id" in state_doc:
-                demo_user_id = state_doc["user_id"]
-        
+        logger.info("[DEMO MODE] Instagram callback simulating successful connection")
+        demo_user_id = (state_doc and state_doc.get("user_id")) or "60a7b45c342d3c148c2e6d5a"
+        token_param = ""
+        onboarding_param = ""
+
+        if demo_user_id == "pending_login":
+            demo_profile = {"id": DEMO_IG_USER_ID, "username": DEMO_IG_USERNAME, "name": "Demo Instagram Professional"}
+            user, access_token_jwt, _ = await InstagramService.authenticate_instagram_user(
+                db=db,
+                access_token="DEMO_MODE_TOKEN",
+                profile=demo_profile,
+                account_type="business",
+            )
+            demo_user_id = str(user.id)
+            token_param = f"&token={access_token_jwt}"
+            onboarding_val = "true" if user.onboardingCompleted else "false"
+            onboarding_param = f"&onboarding_completed={onboarding_val}"
+
         from app.services.instagram_service import encrypt_token
         demo_connection = {
             "user_id": demo_user_id,
@@ -137,55 +165,78 @@ async def instagram_callback(
         }
         await db["instagram_connections"].update_one(
             {"user_id": demo_user_id, "platform": "instagram"},
-            {"$set": demo_connection},
+            {"": demo_connection},
             upsert=True,
         )
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_connected=true"
+            url=build_instagram_redirect(
+                frontend_url,
+                f"instagram_connected=true{token_param}{onboarding_param}&ig_username={DEMO_IG_USERNAME}&ig_user_id={DEMO_IG_USER_ID}"
+            )
         )
 
     # Handle OAuth errors
     if error:
-        logger.warning(f"Instagram OAuth error: {error} - {error_description}")
+        err_msg = error_description or error
+        logger.warning(f"Instagram OAuth error: {error} - {err_msg}")
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_error={error_description or error}"
+            url=build_instagram_redirect(frontend_url, f"instagram_error={urllib.parse.quote(str(err_msg))}")
         )
 
-    if not code or not state:
+    if not code:
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_error=Missing+authorization+code"
+            url=build_instagram_redirect(frontend_url, "instagram_error=Missing+authorization+code")
         )
 
     # Verify state token
-    state_doc = await db["instagram_oauth_states"].find_one_and_delete({"state": state})
     if not state_doc:
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_error=Invalid+state+token"
+            url=build_instagram_redirect(frontend_url, "instagram_error=Invalid+or+expired+state+token")
         )
 
-    user_id = state_doc["user_id"]
+    user_id = state_doc.get("user_id", "pending_login")
+    token_param = ""
+    onboarding_param = ""
 
     try:
         token_data = await InstagramService.exchange_code_for_token(code)
-        profile = await InstagramService.get_instagram_profile(token_data["access_token"])
+        access_token = token_data["access_token"]
+        profile = await InstagramService.get_instagram_profile(access_token)
+
+        if user_id == "pending_login":
+            user, access_token_jwt, refresh_token_jwt = await InstagramService.authenticate_instagram_user(
+                db=db,
+                access_token=access_token,
+                profile=profile,
+                account_type="business",
+            )
+            user_id = str(user.id)
+            token_param = f"&token={access_token_jwt}"
+            onboarding_val = "true" if user.onboardingCompleted else "false"
+            onboarding_param = f"&onboarding_completed={onboarding_val}"
+
         await InstagramService.save_connection(db, user_id, token_data, profile)
 
         logger.info(f"Instagram connected for user {user_id}: @{profile.get('username', 'unknown')}")
 
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_connected=true"
+            url=build_instagram_redirect(
+                frontend_url,
+                f"instagram_connected=true{token_param}{onboarding_param}&ig_username={profile.get('username', '')}&ig_user_id={profile.get('id', profile.get('user_id', ''))}"
+            )
         )
 
     except HTTPException as e:
         logger.error(f"Instagram callback error for user {user_id}: {e.detail}")
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_error={e.detail}"
+            url=build_instagram_redirect(frontend_url, f"instagram_error={urllib.parse.quote(str(e.detail))}")
         )
     except Exception as e:
         logger.error(f"Instagram callback unexpected error: {e}")
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/instagram?instagram_error=Connection+failed"
+            url=build_instagram_redirect(frontend_url, "instagram_error=Connection+failed")
         )
+
 
 
 @router.get("/status", response_model=InstagramStatusResponse)

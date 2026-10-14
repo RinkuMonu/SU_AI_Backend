@@ -105,3 +105,5 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
     )
+
+# reload trigger

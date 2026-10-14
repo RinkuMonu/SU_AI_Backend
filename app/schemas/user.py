@@ -92,8 +92,23 @@ class UserPreferencesUpdate(BaseModel):
 
 class UserUpdate(BaseModel):
     fullName: Optional[str] = None
+    name: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
     phone: Optional[str] = None
     contactNumber: Optional[str] = None
     profileImageUrl: Optional[str] = None
+    accountType: Optional[str] = None
+    preferredLanguage: Optional[str] = None
+    onboardingCompleted: Optional[bool] = None
+    onboardingData: Optional[dict] = None
+    onboarding_step: Optional[int] = None
+
+    model_config = {
+        "extra": "allow"
+    }
+
+
+class ChangePasswordRequest(BaseModel):
+    currentPassword: str
+    newPassword: str

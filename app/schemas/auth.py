@@ -183,6 +183,24 @@ class FacebookAuthLoginRequest(BaseModel):
     access_token: Optional[str] = Field(default=None, description="Facebook Access Token from Facebook SDK login")
     code: Optional[str] = Field(default=None, description="OAuth authorization code")
     accountType: Optional[str] = Field(default="business", description="Account type: business or personal")
+    mode: Optional[str] = Field(default="login", description="Auth mode: login or signup")
+    redirect_uri: Optional[str] = None
+
+
+class InstagramAuthLoginRequest(BaseModel):
+    access_token: Optional[str] = Field(default=None, description="Instagram User Access Token")
+    code: Optional[str] = Field(default=None, description="OAuth authorization code")
+    accountType: Optional[str] = Field(default="business", description="Account type: business or personal")
+    mode: Optional[str] = Field(default="login", description="Auth mode: login or signup")
+    redirect_uri: Optional[str] = None
 
 
 
+
+class GoogleAuthLoginRequest(BaseModel):
+    code: Optional[str] = None
+    access_token: Optional[str] = None
+    id_token: Optional[str] = None
+    redirect_uri: Optional[str] = None
+    accountType: Optional[str] = 'business'
+    mode: Optional[str] = 'login'

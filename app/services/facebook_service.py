@@ -312,9 +312,8 @@ class FacebookService:
             business_query,
             {"$set": business_update},
         )
-        if res.matched_count == 0:
-            business_update["created_at"] = now
-            await db["businesses"].insert_one(business_update)
+        # Note: If no business exists yet for this user, do NOT insert a dummy business.
+        # The Facebook tokens are already securely saved on the user document below.
 
         # 2. Update users collection
         user_doc_update = {
@@ -563,11 +562,16 @@ class FacebookService:
                 profileImageUrl=picture_url,
                 role="user",
             )
+            user.onboardingCompleted = False
+            user.onboarding_step = 1
             doc = user.model_dump(by_alias=True, exclude={"id"})
             doc["facebookId"] = fb_id
             doc["facebook_access_token"] = encrypted_token
             doc["facebook_connected"] = True
             doc["facebook_connected_at"] = now
+            doc["onboardingCompleted"] = False
+            doc["onboarding_completed"] = False
+            doc["onboarding_step"] = 1
             result = await db["users"].insert_one(doc)
             user.id = str(result.inserted_id)
 

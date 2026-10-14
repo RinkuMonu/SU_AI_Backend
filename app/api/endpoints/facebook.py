@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Facebook"])
 
+def build_facebook_redirect(frontend_url: str, query_params: str) -> str:
+    url = frontend_url.rstrip("/")
+    qs = query_params.lstrip("?&")
+    sep = "&" if "?" in url else "?"
+    if any(r in url for r in ["/login", "/signup", "/onboarding"]):
+        return f"{url}{sep}{qs}"
+    if url.endswith("/social-platforms/facebook"):
+        return f"{url}{sep}{qs}"
+    return f"{url}/social-platforms/facebook?{qs}"
+
 def resolve_frontend_url(state_doc: Optional[Dict[str, Any]] = None) -> str:
     """
     Safely determine the frontend URL to redirect to after Facebook OAuth.
@@ -123,10 +133,10 @@ async def facebook_callback(
     if error:
         err_msg = error_description or error
         logger.warning(f"Facebook OAuth callback error: {err_msg}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(err_msg))}")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(err_msg))}"))
 
     if not code:
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=missing_code")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error=missing_code"))
 
     # Demo mode handling
     if FacebookService.is_demo_mode():
@@ -173,13 +183,13 @@ async def facebook_callback(
         )
 
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001"
+            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001")
         )
 
     # Validate state parameter
     if not oauth_state:
         logger.warning(f"Invalid or expired Facebook OAuth state: {state}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error=invalid_state")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error=invalid_state"))
 
     user_id = oauth_state.get("user_id", "pending_login")
     token_param = ""
@@ -219,14 +229,14 @@ async def facebook_callback(
         ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
 
         return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/facebook?facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}"
+            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}")
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(e.detail))}")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(e.detail))}"))
     except Exception as e:
         logger.error(f"Unexpected error in Facebook callback: {e}", exc_info=True)
-        return RedirectResponse(f"{frontend_url}/social-platforms/facebook?error={urllib.parse.quote(str(e))}")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(e))}"))
 
 @router.post("/exchange-token", response_model=FacebookTokenResponse)
 async def exchange_facebook_code(

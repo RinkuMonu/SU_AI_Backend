@@ -88,7 +88,8 @@ async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_
     }
     clean_req = {k: v for k, v in req.items() if v is not None}
     if clean_req:
-        await db["businesses"].update_one(query, {"$set": clean_req}, upsert=True)
+        has_name = bool(clean_req.get("businessName") or clean_req.get("name") or clean_req.get("business_name"))
+        await db["businesses"].update_one(query, {"$set": clean_req}, upsert=has_name)
     doc = await db["businesses"].find_one(query)
     if doc:
         doc["id"] = str(doc.pop("_id"))
