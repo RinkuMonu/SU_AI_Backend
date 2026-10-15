@@ -20,14 +20,15 @@ async def get_plans():
     enriched_plans = {}
     for k, v in PLANS.items():
         enriched = dict(v)
-        if enriched.get('gst_applicable'):
-            enriched['gst_amount'] = int(enriched['price'] * 0.18)
-            enriched['total_price'] = enriched['price'] + enriched['gst_amount']
+        if enriched.get("gst_applicable"):
+            gst = enriched.get("gst_amount", int(enriched["price"] * 0.18))
+            enriched["gst_amount"] = gst
+            enriched["total_price"] = enriched.get("total_price", enriched["price"] + gst)
         else:
-            enriched['gst_amount'] = 0
-            enriched['total_price'] = enriched['price']
+            enriched["gst_amount"] = 0
+            enriched["total_price"] = enriched["price"]
         enriched_plans[k] = enriched
-    return {'success': True, 'data': enriched_plans}
+    return {"success": True, "data": enriched_plans}
 
 @router.get("/me")
 async def get_my_subscription(
@@ -45,7 +46,8 @@ async def get_my_subscription(
         usage = {"posts_created": 0, "reels_created": 0}
         
     sub["usage"] = usage
-    sub["plan_details"] = PLANS.get(sub.get("plan_id", "FREE"), PLANS["FREE"])
+    plan_id = sub.get("plan_id", "FREE")
+    sub["plan_details"] = PLANS.get(plan_id) or (PLANS.get("GROWTH") if plan_id == "PRO" else PLANS.get("FREE"))
     
     # Exclude _id to avoid serialization issues
     if "_id" in sub:
@@ -94,4 +96,3 @@ async def get_credit_transactions(
 ):
     history = await CreditService.get_history(db, str(current_user["id"]))
     return {"success": True, "data": history}
-

@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+# Reload trigger 2
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.services.scheduler_service import scheduler_service
@@ -31,21 +32,26 @@ async def lifespan(app: FastAPI):
     close_mongo_connection()
 from fastapi.staticfiles import StaticFiles
 app = FastAPI(
-    title="SevenUnique AI API",
-    description="Backend API for SevenUnique AI Marketing Platform",
+    title="Dhanda Grow API",
+    description="Backend API for Dhanda Grow Platform",
     version="1.0.0",
     lifespan=lifespan,
 )
 import os
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
-# Set up CORS
+if os.path.exists("assets"):
+    app.mount("/assets", StaticFiles(directory="assets"), name="assets")
+
+# Set up CORS - works for localhost and all live deployments
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=settings.CORS_ORIGINS_LIST,
+    allow_origin_regex=r"https?://.*",
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
@@ -71,8 +77,10 @@ app.include_router(subscription_router)
 app.include_router(festivals_router, prefix="/api/v1")
 app.include_router(agent_router, prefix="/api/v1")
 app.include_router(fashion_router)
-app.include_router(instagram_router)
-app.include_router(facebook_router)
+app.include_router(instagram_router, prefix="/api/instagram")
+app.include_router(instagram_router, prefix="/api/v1/instagram")
+app.include_router(facebook_router, prefix="/api/facebook")
+app.include_router(facebook_router, prefix="/api/v1/facebook")
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
@@ -81,4 +89,21 @@ app.include_router(influencer_earnings_router, prefix="/api/v1")
 app.include_router(influencer_marketplace_router, prefix="/api/v1")
 @app.get("/")
 async def root():
-    return {"message": "Welcome to SevenUnique AI API"}
+    return {"message": "Welcome to Dhanda Grow API"}
+
+
+from fastapi.responses import JSONResponse
+from fastapi import Request
+import traceback
+import sys
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    print("GLOBAL EXCEPTION:", exc, file=sys.stderr)
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
+    )
+
+# reload trigger

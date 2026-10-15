@@ -30,6 +30,7 @@ class AIUsageAnalytics(BaseModel):
 
 
 class BusinessAnalytics(BaseModel):
+    """
     Business-related analytics.
 
     products: Current catalogue size (NOT date-filtered).
@@ -106,6 +107,7 @@ class MarketingScore(BaseModel):
 
 
 class Recommendation(BaseModel):
+    """
     A deterministic recommendation that varies based on actual user data.
 
     ``type`` indicates the area the recommendation targets, e.g.

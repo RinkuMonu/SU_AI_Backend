@@ -603,20 +603,26 @@ CRITICAL REQUIREMENTS:
             revised_pages = json.loads(raw_text)
             if isinstance(revised_pages, dict) and "pages" in revised_pages:
                 revised_pages = revised_pages["pages"]
+            elif isinstance(revised_pages, dict):
+                revised_pages = [revised_pages]
+            elif not isinstance(revised_pages, list):
+                revised_pages = []
         except:
             raise Exception("Failed to parse AI revision")
             
         import urllib.parse
         for page in revised_pages:
-            for section in page.get("sections", []):
-                if section.get("type") == "hero" and section.get("image_prompt"):
-                    if not section.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
-                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
-                for item in section.get("items", []):
-                    if item.get("image_prompt") and not item.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
-                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+            if isinstance(page, dict):
+                for section in page.get("sections", []):
+                    if isinstance(section, dict):
+                        if section.get("type") == "hero" and section.get("image_prompt"):
+                            if not section.get("image_url"):
+                                prompt_encoded = urllib.parse.quote(section["image_prompt"])
+                                section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
+                        for item in section.get("items", []):
+                            if isinstance(item, dict) and item.get("image_prompt") and not item.get("image_url"):
+                                prompt_encoded = urllib.parse.quote(item["image_prompt"])
+                                item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
                         
         site.pages = revised_pages
         collection = await WebsiteBuilderService.get_project_collection()
