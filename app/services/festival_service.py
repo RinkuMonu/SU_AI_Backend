@@ -59,6 +59,37 @@ INDIAN_FESTIVALS = [
 ]
 
 
+FESTIVAL_REALISTIC_IMAGES = {
+    "makar sankranti": "/images/festivals/makar_sankranti.png",
+    "republic day": "/images/festivals/republic_day.png",
+    "holi": "/images/festivals/holi.png",
+    "eid ul-fitr": "/images/festivals/eid.png",
+    "eid": "/images/festivals/eid.png",
+    "ram navami": "/images/festivals/navratri.png",
+    "akshaya tritiya": "/images/festivals/dhanteras.png",
+    "independence day": "/images/festivals/republic_day.png",
+    "raksha bandhan": "/images/festivals/rakhi.png",
+    "janmashtami": "/images/festivals/navratri.png",
+    "onam": "/images/festivals/onam.png",
+    "gandhi jayanti": "/images/festivals/gandhi_ji.png",
+    "navratri": "/images/festivals/navratri.png",
+    "dussehra": "/images/festivals/navratri.png",
+    "dhanteras": "/images/festivals/dhanteras.png",
+    "diwali": "/images/festivals/diwali.png",
+    "bhai dooj": "/images/festivals/rakhi.png",
+    "christmas": "/images/festivals/christmas.png",
+    "new year": "/images/festivals/new_year.png",
+}
+
+
+def get_festival_image_url(fest_name: str) -> str:
+    name_lower = (fest_name or "").lower().strip()
+    for k, v in FESTIVAL_REALISTIC_IMAGES.items():
+        if k in name_lower:
+            return v
+    return "/images/festivals/diwali.png"
+
+
 def get_upcoming_festivals(days_ahead: int = 30) -> List[dict]:
     """Returns festivals coming up within `days_ahead` days from today."""
     today = date.today()
@@ -156,11 +187,11 @@ Output ONLY valid JSON, no markdown.
   ]
 }}"""
 
-    ai_provider = AIProviderFactory.get_provider()
+    ai_provider = AIProviderFactory.get_provider("gemini")
     try:
         res = await ai_provider.generate_text(
             prompt=prompt,
-            system_prompt="You are an expert Indian marketing strategist. Output only raw JSON with no markdown. Do not include any thinking or explanation.",
+            system_prompt="You are an elite Indian creative marketing director. Output only raw JSON with no markdown. Do not include any thinking or explanation. Ensure 100% culturally authentic Indian celebrations.",
             max_tokens=4096
         )
         raw = res.get("text", "{}").strip()
@@ -192,10 +223,13 @@ Output ONLY valid JSON, no markdown.
         # Compute actual scheduled dates from days_left
         fest_date_obj = date.fromisoformat(festival["date"])
         campaign_start = fest_date_obj - timedelta(days=10)
+        fest_img_url = get_festival_image_url(fest_name)
 
         for asset in data.get("assets", []):
             sched = campaign_start + timedelta(days=asset.get("day", 1) - 1)
             asset["scheduled_date"] = sched.isoformat()
+            if "content" in asset and isinstance(asset["content"], dict):
+                asset["content"]["image_url"] = fest_img_url
 
         campaign_doc = {
             "business_id": business_id,
@@ -253,7 +287,6 @@ async def generate_festival_content(db, business_id: str, festival: dict, conten
     from app.ai.factory import AIProviderFactory
     import json
     import re
-    from datetime import date, timedelta
     from bson import ObjectId
 
     business = await db["businesses"].find_one({"_id": ObjectId(business_id)})
@@ -263,52 +296,147 @@ async def generate_festival_content(db, business_id: str, festival: dict, conten
     business_name = business.get("name", "Our Business")
     category = business.get("category", "General")
     target_audience = business.get("target_audience", "All customers")
-    tone = business.get("brand_tone", "Friendly and professional")
+    tone = business.get("brand_tone", "Friendly, culturally authentic, celebratory, and professional")
 
     fest_name = festival["name"]
     fest_date = festival["date"]
+    fest_emoji = festival.get("emoji", "🎉")
 
     if content_type == "reel":
-        prompt = f"""You are an AI marketing strategist for Indian businesses.
-Create a Reel specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+        prompt = f"""You are an elite Indian creative marketing director and social media expert.
+Generate an authentic, highly engaging, and realistic Instagram Reel concept for the festival "{fest_name}" {fest_emoji}.
+Business Name: {business_name} ({category})
+Brand Tone: {tone}
+Target Audience: {target_audience}
 
-Output valid JSON only matching this schema:
+Guidelines:
+- Cultural Authenticity: Capture real Indian festival traditions, family warmth, authentic emotions, and festive joy for {fest_name}.
+- Realistic & Relatable: Use natural Indian Hinglish or engaging Indian English. Avoid generic robotic cliches.
+- Practical Storyboard: Include realistic camera movements, warm lighting, real Indian wardrobe (traditional wear, kurta, saree, festive colors), and relatable Indian setting.
+- Visual Description: Detailed realistic scene breakdown.
+
+Output ONLY valid JSON matching this schema exactly (no markdown code fences, no extra text):
 {{
   "reel": {{
-    "title": "", "concept": "", "hook": "", "duration": "30 seconds",
-    "caption": "", "hashtags": [], "cta": "", "music": "", "thumbnail_text": "",
+    "title": "Festive Reel Title",
+    "concept": "Creative concept connecting {fest_name} with {business_name}",
+    "hook": "First 3-second visual and audio hook that stops scrolling",
+    "duration": "30 seconds",
+    "music": "Recommended trending Indian festive track or traditional festive fusion",
+    "caption": "Full Instagram caption with natural Indian festive enthusiasm and emojis",
+    "hashtags": ["#{fest_name.replace(' ', '')}", "#IndianFestivals", "#TrendingReels"],
+    "cta": "Clear call to action for the business",
+    "thumbnail_text": "Bold text for the reel cover",
     "scenes": [
-      {{"scene_number": 1, "duration": "0-5 sec", "visual": "", "on_screen_text": "", "voiceover": "", "image_prompt": ""}}
+      {{
+        "scene_number": 1,
+        "duration": "0-5 sec",
+        "visual": "Cinematic shot of real Indian festive morning preparation, warm ambient golden lighting",
+        "on_screen_text": "Engaging hook text",
+        "voiceover": "Natural friendly voiceover in Hinglish",
+        "image_prompt": "Cinematic 8k realistic photo of Indian family celebrating {fest_name}, authentic Indian attire, warm festival lighting, photorealistic"
+      }},
+      {{
+        "scene_number": 2,
+        "duration": "5-15 sec",
+        "visual": "Dynamic shot showcasing the festival celebration and brand connection",
+        "on_screen_text": "Key festive message",
+        "voiceover": "Storytelling narrative",
+        "image_prompt": "Realistic Indian festive scene for {fest_name}, vibrant traditional decorations, authentic emotions"
+      }},
+      {{
+        "scene_number": 3,
+        "duration": "15-25 sec",
+        "visual": "Customer joy and festive product/service experience",
+        "on_screen_text": "Special {fest_name} offer",
+        "voiceover": "Exclusive festival offer details",
+        "image_prompt": "High end Indian lifestyle photography celebrating {fest_name}, realistic warm tones"
+      }},
+      {{
+        "scene_number": 4,
+        "duration": "25-30 sec",
+        "visual": "Heartwarming festive greeting and celebratory finale",
+        "on_screen_text": "Brand wishes and CTA",
+        "voiceover": "Warm festive greeting and call to action",
+        "image_prompt": "Heartwarming realistic Indian festive portrait with {fest_name} celebration, golden hour lighting"
+      }}
     ]
   }}
 }}"""
     elif content_type == "post":
-        prompt = f"""You are an AI marketing strategist for Indian businesses.
-Create a Social Media Post specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+        prompt = f"""You are an elite Indian creative marketing director and social media copywriter.
+Generate an authentic, highly engaging, and realistic Social Media Post for the festival "{fest_name}" {fest_emoji}.
+Business Name: {business_name} ({category})
+Brand Tone: {tone}
+Target Audience: {target_audience}
 
-Output valid JSON only matching this schema:
+Guidelines:
+- Cultural Depth: Truly reflect how Indians celebrate {fest_name} with reverence, joy, togetherness, and authentic rituals.
+- Compelling Copy: Write a heartwarming yet high-converting caption in modern Indian style (friendly Hinglish / warm English).
+- Visual Aesthetics: Describe a realistic photo shoot (no cartoons, no anime, genuine Indian models, authentic ethnic attire, festive ambience like diyas, rangoli, kites, or flowers depending on the festival).
+
+Output ONLY valid JSON matching this schema exactly (no markdown code fences, no extra text):
 {{
   "post": {{
-    "title": "", "headline": "", "caption": "", "body": "", "cta": "",
-    "hashtags": [], "visual_concept": "", "image_prompt": ""
+    "title": "Festive Post Title",
+    "headline": "Catchy headline for the post",
+    "caption": "Full Instagram & Facebook caption with greetings, story, business festive offer, and emojis",
+    "body": "Post main body copy highlighting the festival spirit and brand message",
+    "cta": "Direct call to action (e.g., Visit store, Order online, DM us)",
+    "hashtags": ["#{fest_name.replace(' ', '')}", "#IndianFestivals", "#{business_name.replace(' ', '')}"],
+    "visual_concept": "Detailed creative direction for the graphic or photo",
+    "image_prompt": "A photorealistic, 8k award-winning commercial photo of an Indian setting celebrating {fest_name}. Genuine Indian faces, traditional festive garments, natural joyful expressions, warm ambient lighting, beautiful authentic decorations, highly detailed, realistic texture, no cartoon, no anime, no AI distortion"
   }}
 }}"""
     else:
-        prompt = f"""You are an AI marketing strategist for Indian businesses.
-Create a complete campaign specifically for {fest_name}. Business: {business_name} ({category}). Tone: {tone}.
+        prompt = f"""You are an elite Indian creative marketing director and brand strategist.
+Create a complete, realistic, and culturally rich 360-degree marketing campaign for "{fest_name}" {fest_emoji}.
+Business Name: {business_name} ({category})
+Brand Tone: {tone}
+Target Audience: {target_audience}
 
-Output valid JSON only matching this schema:
+Output ONLY valid JSON matching this schema exactly (no markdown code fences, no extra text):
 {{
-  "campaign": {{"name": "", "objective": "", "target_audience": "", "offer": "", "duration": ""}},
-  "reel": {{ "title": "...", "concept": "...", "caption": "..." }},
-  "post": {{ "title": "...", "caption": "...", "image_prompt": "..." }}
+  "campaign": {{
+    "name": "{fest_name} Celebration Campaign",
+    "objective": "Brand awareness and festive sales growth",
+    "target_audience": "{target_audience}",
+    "offer": "Special {fest_name} festive discount or exclusive bundle",
+    "duration": "10-day festive countdown"
+  }},
+  "reel": {{
+    "title": "Festive Reel Title",
+    "concept": "Creative Instagram reel concept celebrating {fest_name}",
+    "hook": "Strong 3-second hook",
+    "duration": "30 seconds",
+    "music": "Trending Indian festive track or festive fusion",
+    "caption": "Complete engaging reel caption with emojis",
+    "hashtags": ["#{fest_name.replace(' ', '')}", "#FestiveVibes"],
+    "cta": "Call to action",
+    "thumbnail_text": "Cover text",
+    "scenes": [
+      {{"scene_number": 1, "duration": "0-7 sec", "visual": "Authentic Indian festive morning preparation", "on_screen_text": "Festive greeting hook", "voiceover": "Warm welcoming voiceover"}},
+      {{"scene_number": 2, "duration": "7-18 sec", "visual": "Family and friends celebrating {fest_name} together", "on_screen_text": "Story moment", "voiceover": "Connecting emotion with brand"}},
+      {{"scene_number": 3, "duration": "18-30 sec", "visual": "Celebratory conclusion and brand festive greeting", "on_screen_text": "Special Offer & CTA", "voiceover": "Festive wishes and CTA"}}
+    ]
+  }},
+  "post": {{
+    "title": "Festive Post Title",
+    "headline": "Eye-catching Festive Headline",
+    "caption": "Complete heartwarming social media caption for {fest_name}",
+    "body": "Inspiring brand message connecting with customer festive sentiments",
+    "cta": "Festive Offer CTA",
+    "hashtags": ["#{fest_name.replace(' ', '')}", "#IndianTraditions"],
+    "visual_concept": "Editorial quality Indian festive photo direction",
+    "image_prompt": "Photorealistic 8k editorial photo celebrating {fest_name}, beautiful authentic Indian atmosphere, festive attire, warm cinematic lighting"
+  }}
 }}"""
 
-    ai_provider = AIProviderFactory.get_provider()
+    ai_provider = AIProviderFactory.get_provider("gemini")
     try:
         res = await ai_provider.generate_text(
             prompt=prompt,
-            system_prompt="You are an expert Indian marketing strategist. Output only raw JSON with no markdown.",
+            system_prompt="You are an elite Indian creative marketing director and social media expert. Output only raw JSON with no markdown fences, no thinking, no explanation. Ensure 100% culturally authentic, realistic Indian celebrations.",
             max_tokens=4096
         )
         raw = res.get("text", "{}").strip()
@@ -330,17 +458,39 @@ Output valid JSON only matching this schema:
             raw = raw[first_brace:last_brace + 1]
             
         data = json.loads(raw)
-        
+
+        fest_img_url = get_festival_image_url(fest_name)
+        assets = []
+        if "reel" in data and isinstance(data["reel"], dict):
+            data["reel"]["image_url"] = fest_img_url
+            assets.append({
+                "id": "reel_1",
+                "type": "reel",
+                "platform": "instagram",
+                "content": data["reel"]
+            })
+        if "post" in data and isinstance(data["post"], dict):
+            data["post"]["image_url"] = fest_img_url
+            assets.append({
+                "id": "post_1",
+                "type": "post",
+                "platform": "instagram",
+                "content": data["post"]
+            })
+
         # Prepare document
         campaign_doc = {
             "business_id": business_id,
             "festival_name": fest_name,
+            "festival_emoji": fest_emoji,
             "festival_date": fest_date,
             "content_type": content_type,
             "generated_content": data,
+            "assets": assets,
+            "offer_strategy": data.get("campaign", {}).get("offer") or f"Special {fest_name} Celebration Offer",
             "status": "generated"
         }
         return campaign_doc
     except Exception as e:
-        print("Error generating festival content:", e)
+        logger.error(f"Error generating festival content for {fest_name}: {e}")
         return None
