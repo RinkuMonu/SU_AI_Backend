@@ -136,6 +136,7 @@ async def instagram_connect(
 
 
 @router.get("/callback")
+@router.get("/callback/")
 async def instagram_callback(
     code: str = Query(None),
     state: str = Query(None),

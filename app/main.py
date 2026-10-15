@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-# Reload trigger 2
+# Reload trigger 5
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.services.scheduler_service import scheduler_service

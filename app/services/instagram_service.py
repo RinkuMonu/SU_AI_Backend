@@ -308,21 +308,23 @@ class InstagramService:
     @classmethod
     def get_authorization_url(cls, state: str, custom_scopes: list = None) -> str:
         """
-        Generate Instagram Business Login authorization URL using modern scopes.
+        Generate direct Instagram Login authorization URL on instagram.com.
+        Prompts for Instagram username and password.
         """
-        app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "INSTAGRAM_APPID", None) or getattr(settings, "FACEBOOK_APP_ID", None)
+        app_id = settings.INSTAGRAM_APP_ID or "28782263541408278"
         redirect_uri = settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
 
-        if not app_id:
-            raise HTTPException(
-                status_code=500,
-                detail="Instagram App ID is not configured"
-            )
-
-        scopes = cls.normalize_scopes(custom_scopes)
+        scopes = [
+            "instagram_business_basic",
+            "instagram_business_content_publish",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_comments",
+        ]
+        if custom_scopes:
+            scopes = cls.normalize_scopes(custom_scopes)
         scopes_str = ",".join(scopes)
 
-        auth_url = (
+        return (
             f"https://www.instagram.com/oauth/authorize"
             f"?client_id={app_id}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
@@ -330,7 +332,6 @@ class InstagramService:
             f"&scope={urllib.parse.quote(scopes_str)}"
             f"&state={urllib.parse.quote(state)}"
         )
-        return auth_url
 
     @staticmethod
     async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
@@ -339,8 +340,8 @@ class InstagramService:
         then exchange for a long-lived token.
         Supports both Instagram OAuth and Facebook Dialog flows.
         """
-        app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "INSTAGRAM_APPID", None) or getattr(settings, "FACEBOOK_APP_ID", None)
-        app_secret = settings.INSTAGRAM_APP_SECRET or getattr(settings, "INSTAGRAM_SECTRET", None) or getattr(settings, "FACEBOOK_APP_SECRET", None) or getattr(settings, "app_secert_id", None)
+        app_id = settings.INSTAGRAM_APP_ID or settings.FACEBOOK_APP_ID
+        app_secret = settings.INSTAGRAM_APP_SECRET or settings.FACEBOOK_APP_SECRET
         effective_redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
 
         if not app_id or not app_secret:
