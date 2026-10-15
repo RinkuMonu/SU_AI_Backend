@@ -16,7 +16,7 @@ import asyncio
 import secrets
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Union, Tuple
 
 import httpx
 from bson import ObjectId

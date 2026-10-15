@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -15,14 +15,16 @@ class GenerateReelRequest(BaseModel):
     offer: Optional[str] = None
     additional_instruction: Optional[str] = None
 
-    @validator("duration")
+    @field_validator("duration")
+    @classmethod
     def validate_duration(cls, v):
         allowed_durations = [10, 15, 20, 30]
         if v not in allowed_durations:
             raise ValueError(f"Duration must be one of {allowed_durations}")
         return v
         
-    @validator("language")
+    @field_validator("language")
+    @classmethod
     def validate_language(cls, v):
         allowed_languages = ["English", "Hindi", "Hinglish"]
         if v not in allowed_languages:

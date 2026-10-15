@@ -15,6 +15,8 @@ class CaptionResponse(BaseModel):
     cta: str
 
 class AIGenerationHistoryResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     id: str
     user_id: str
     business_id: str
