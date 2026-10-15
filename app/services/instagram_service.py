@@ -281,10 +281,34 @@ class InstagramService:
 
     # ─── OAuth Flow ───────────────────────────
 
-    @staticmethod
-    def get_authorization_url(state: str, custom_scopes: list = None) -> str:
+    @classmethod
+    def normalize_scopes(cls, scopes: Optional[List[str]] = None) -> List[str]:
+        """Convert legacy or requested scopes to current Instagram Business Login scopes."""
+        scope_map = {
+            "instagram_basic": "instagram_business_basic",
+            "instagram_content_publish": "instagram_business_content_publish",
+            "instagram_manage_comments": "instagram_business_manage_comments",
+            "instagram_manage_messages": "instagram_business_manage_messages",
+        }
+        if not scopes:
+            return [
+                "instagram_business_basic",
+                "instagram_business_content_publish",
+                "instagram_business_manage_messages",
+                "instagram_business_manage_comments",
+            ]
+        normalized = []
+        for s in scopes:
+            clean = s.strip()
+            mapped = scope_map.get(clean, clean)
+            if mapped and mapped not in normalized:
+                normalized.append(mapped)
+        return normalized
+
+    @classmethod
+    def get_authorization_url(cls, state: str, custom_scopes: list = None) -> str:
         """
-        Generate Instagram Business Login authorization URL.
+        Generate Instagram Business Login authorization URL using modern scopes.
         """
         app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "INSTAGRAM_APPID", None) or getattr(settings, "FACEBOOK_APP_ID", None)
         redirect_uri = settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
@@ -295,19 +319,12 @@ class InstagramService:
                 detail="Instagram App ID is not configured"
             )
 
-        scopes = custom_scopes or [
-            "instagram_basic",
-            "instagram_content_publish",
-            "instagram_manage_comments",
-            "instagram_manage_messages",
-        ]
+        scopes = cls.normalize_scopes(custom_scopes)
         scopes_str = ",".join(scopes)
 
         auth_url = (
             f"https://www.instagram.com/oauth/authorize"
-            f"?enable_fb_login=0"
-            f"&force_authentication=1"
-            f"&client_id={app_id}"
+            f"?client_id={app_id}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
             f"&response_type=code"
             f"&scope={urllib.parse.quote(scopes_str)}"

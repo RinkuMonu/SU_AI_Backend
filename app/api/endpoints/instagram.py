@@ -118,12 +118,7 @@ async def instagram_connect(
     })
 
     custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
-    effective_scopes = custom_scopes or [
-        "instagram_basic",
-        "instagram_content_publish",
-        "instagram_manage_comments",
-        "instagram_manage_messages",
-    ]
+    effective_scopes = InstagramService.normalize_scopes(custom_scopes)
 
     if InstagramService.is_demo_mode():
         logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
