@@ -58,6 +58,8 @@ FEMALE_STYLES = ["casual", "fashion", "streetwear", "luxury"]
 
 
 class PhotoshootGenerateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     product_id: Optional[str] = None
     category: Optional[str] = None
     color: Optional[str] = None
@@ -124,6 +126,8 @@ class TryOnStatusResponse(BaseModel):
 # ----------------------------------------------
 
 class GenerationHistoryItem(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     id: str
     type: str
     product_id: Optional[str] = None
