@@ -26,10 +26,10 @@ class GeminiProvider(AIProvider):
         fallback_models = [
             configured_model,
             "gemini-flash-lite-latest",
-            "gemini-2.5-flash",
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
+            "gemini-3.8-flash",
             "gemini-flash-latest",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
         ]
         seen = set()
         self.models_to_try = []

@@ -3,47 +3,61 @@ import uuid
 import logging
 import urllib.parse
 import httpx
-from typing import Optional, Dict, Any
+import base64
+import io
+import re
+from typing import Optional, Dict, Any, List
+from PIL import Image
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Curated, photorealistic, commercial-grade 9:16 vertical product images by category
+# Curated, photorealistic, commercial-grade authentic Indian & global images by category
 CURATED_CATEGORY_IMAGES = {
-    "laptop": [
-        "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=1080&q=85", # Sleek modern aluminum laptop on minimal workspace
-        "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=1080&q=85", # Premium laptop computer display & keyboard
+    "holi": [
+        "/uploads/indian_assets/holi_2.jpg",
+        "/uploads/indian_assets/holi_1.jpg",
     ],
-    "tech": [
-        "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=1080&q=85", # Modern wireless ANC earbuds
-        "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1080&q=85", # Studio audio headphones
+    "diwali": [
+        "/uploads/indian_assets/diwali_1.jpg",
+    ],
+    "festive": [
+        "/uploads/indian_assets/holi_2.jpg",
+        "/uploads/indian_assets/diwali_1.jpg",
+        "/uploads/indian_assets/holi_1.jpg",
     ],
     "lehenga": [
-        "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=1080&q=85", # Royal designer bridal lehenga
-        "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1080&q=85",
+        "/uploads/indian_assets/lehenga_1.jpg",
+        "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=1080&q=85",
     ],
     "saree": [
-        "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1080&q=85", # Pure Banarasi Silk Saree
-        "https://images.unsplash.com/photo-1617627143750-d86bc21e42bb?w=1080&q=85",
+        "/uploads/indian_assets/saree_1.jpg",
+        "https://images.unsplash.com/photo-1610030469983-98e550d6193c?w=1080&q=85",
     ],
     "jewelry": [
-        "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?w=1080&q=85", # Luxury necklace & jewels
-        "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?w=1080&q=85",
-    ],
-    "beauty": [
-        "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=1080&q=85", # Face serum dropper & glowing skin
-        "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=1080&q=85", # Cosmetic skincare bottle
-    ],
-    "food": [
-        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1080&q=85", # Gourmet appetizing plating
-        "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=1080&q=85", # Artisan coffee
+        "/uploads/indian_assets/jewelry_1.jpg",
     ],
     "streetwear": [
-        "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=1080&q=85", # Trendy modern apparel
-        "https://images.unsplash.com/photo-1556905055-8f358a7a47b2?w=1080&q=85", # Streetwear hoodie
+        "/uploads/indian_assets/streetwear_1.jpg",
+    ],
+    "laptop": [
+        "https://images.unsplash.com/photo-1517336714731-489689fd1ca8?w=1080&q=85",
+        "https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=1080&q=85",
+    ],
+    "tech": [
+        "https://images.unsplash.com/photo-1590658268037-6bf12165a8df?w=1080&q=85",
+        "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=1080&q=85",
+    ],
+    "beauty": [
+        "https://images.unsplash.com/photo-1620916566398-39f1143ab7be?w=1080&q=85",
+        "https://images.unsplash.com/photo-1556228720-195a672e8a03?w=1080&q=85",
+    ],
+    "food": [
+        "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=1080&q=85",
+        "https://images.unsplash.com/photo-1559056199-641a0ac8b55e?w=1080&q=85",
     ],
     "general": [
-        "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1080&q=85", # Premium commercial showcase
+        "https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=1080&q=85",
     ]
 }
 
@@ -51,22 +65,28 @@ CURATED_CATEGORY_IMAGES = {
 class ImageGenerator:
     def __init__(self, api_url: str = None, api_key: str = None):
         self.api_url = api_url or getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations")
-        self.api_key = api_key or getattr(settings, "FASHION_IMAGE_API_KEY", None) or getattr(settings, "IMAGE_API_KEY", None)
+        self.api_key = api_key or getattr(settings, "GEMINI_API_KEY", None)
         self.temp_dir = "uploads/temp"
         os.makedirs(self.temp_dir, exist_ok=True)
 
     def _detect_category(self, text: str) -> str:
         t = (text or "").lower()
+        if any(k in t for k in ["holi", "gulal", "rang", "pichkari"]):
+            return "holi"
+        if any(k in t for k in ["diwali", "diya", "deepavali", "crackers"]):
+            return "diwali"
+        if any(k in t for k in ["festiv", "celebrat", "puja", "pooja", "navratri", "eid"]):
+            return "festive"
+        if any(k in t for k in ["lehenga", "choli", "anarkali", "sherwani", "bridal wear", "ethnic wear", "wedding"]):
+            return "lehenga"
+        if any(k in t for k in ["saree", "sari", "banarasi", "silk saree", "kanjivaram", "chanderi", "paithani"]):
+            return "saree"
+        if any(k in t for k in ["jewelry", "jewellery", "necklace", "earring", "ring", "bangle", "diamond", "polki", "gold"]):
+            return "jewelry"
         if any(k in t for k in ["laptop", "macbook", "notebook", "computer", "pc", "desktop", "monitor", "keyboard"]):
             return "laptop"
         if any(k in t for k in ["earbuds", "headphone", "smartwatch", "watch", "tablet", "gadget", "tech", "electronics"]):
             return "tech"
-        if any(k in t for k in ["lehenga", "choli", "anarkali", "sherwani", "bridal wear", "ethnic wear"]):
-            return "lehenga"
-        if any(k in t for k in ["saree", "sari", "banarasi", "silk saree", "kanjivaram", "chanderi", "paithani"]):
-            return "saree"
-        if any(k in t for k in ["jewelry", "jewellery", "necklace", "earring", "ring", "bangle", "diamond", "polki"]):
-            return "jewelry"
         if any(k in t for k in ["serum", "beauty", "skin", "makeup", "glow", "skincare", "cream", "lotion", "cosmetic", "lipstick"]):
             return "beauty"
         if any(k in t for k in ["food", "coffee", "tea", "biryani", "snack", "drink", "beverage", "sweet", "burger", "pizza", "dining"]):
@@ -75,25 +95,97 @@ class ImageGenerator:
             return "streetwear"
         return "general"
 
-    async def _download_and_verify(self, url: str, target_path: str, timeout: float = 15.0) -> bool:
+    def _crop_watermark_and_save(self, raw_bytes: bytes, target_path: str, target_size: tuple = (1080, 1080)) -> bool:
+        """Removes bottom watermark bar and resizes back to target resolution with high quality filter."""
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
-                res = await client.get(url, follow_redirects=True)
-                if res.status_code == 200 and len(res.content) > 5000:
-                    with open(target_path, "wb") as f:
-                        f.write(res.content)
-                    return True
+            img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+            w, h = img.size
+            # The watermark is contained within the bottom 48 pixels
+            clean_h = max(100, h - 48)
+            cropped = img.crop((0, 0, w, clean_h))
+            final_img = cropped.resize(target_size, Image.Resampling.LANCZOS)
+            final_img.save(target_path, format="JPEG", quality=95)
+            return True
         except Exception as e:
-            logger.warning(f"Download failed for {url}: {e}")
-        return False
+            logger.warning(f"Could not crop watermark: {e}")
+            try:
+                with open(target_path, "wb") as f:
+                    f.write(raw_bytes)
+                return True
+            except Exception:
+                return False
+
+    async def _try_gemini_image_generation(
+        self,
+        prompt: str,
+        pil_refs: Optional[List[Image.Image]],
+        local_path: str
+    ) -> Optional[str]:
+        """Attempts direct Gemini image generation if key and quota are available."""
+        if not settings.GEMINI_API_KEY:
+            return None
+
+        try:
+            import google.genai as genai
+            from google.genai import types
+
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            models_to_test = [
+                "gemini-2.5-flash-image",
+                "gemini-3.1-flash-image",
+                "gemini-3.1-flash-lite-image",
+                "gemini-3-pro-image",
+                "gemini-nano-banana-2.1"
+            ]
+
+            contents = [*pil_refs, prompt] if pil_refs else [prompt]
+            config = types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
+
+            for model_name in models_to_test:
+                try:
+                    logger.info(f"Attempting Gemini image generation with model {model_name}...")
+                    res = client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=config
+                    )
+                    if res and res.candidates:
+                        for cand in res.candidates:
+                            if cand.content and cand.content.parts:
+                                for part in cand.content.parts:
+                                    if hasattr(part, "as_image"):
+                                        img = part.as_image()
+                                        if img:
+                                            img.save(local_path, format="JPEG", quality=95)
+                                            logger.info(f"Successfully generated image via Gemini ({model_name})")
+                                            return local_path
+                                    if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
+                                        raw_data = part.inline_data.data
+                                        if isinstance(raw_data, str):
+                                            raw_data = base64.b64decode(raw_data)
+                                        with open(local_path, "wb") as f:
+                                            f.write(raw_data)
+                                        logger.info(f"Successfully saved Gemini inline image ({model_name})")
+                                        return local_path
+                except Exception as model_err:
+                    err_msg = str(model_err)
+                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "402" in err_msg or "prepayment" in err_msg:
+                        logger.info(f"Gemini model {model_name} quota/billing limit reached. Skipping Gemini direct generation.")
+                        return None
+                    logger.debug(f"Gemini {model_name} attempt: {model_err}")
+                    continue
+        except Exception as e:
+            logger.warning(f"Gemini image generation unavailable: {e}")
+        return None
 
     async def generate(
         self,
         prompt: str,
         product_image: str | None = None,
         seed: int = 42,
-        scene_idx: int = 0
+        scene_idx: int = 0,
+        aspect_ratio: str = "1:1",
+        pil_refs: Optional[List[Image.Image]] = None
     ) -> Dict[str, Any]:
         # 1. If explicit product image URL provided, prioritize it
         if product_image and isinstance(product_image, str) and (product_image.startswith("http") or os.path.exists(product_image)):
@@ -102,33 +194,98 @@ class ImageGenerator:
         clean_prompt = prompt.replace('\n', ' ').strip()
         category = self._detect_category(clean_prompt)
         curated_list = CURATED_CATEGORY_IMAGES.get(category, CURATED_CATEGORY_IMAGES["general"])
-        curated_fallback_url = curated_list[scene_idx % len(curated_list)]
+        
+        # Pick curated index based on seed + scene_idx for diverse regeneration
+        chosen_curated = curated_list[(abs(seed) + scene_idx) % len(curated_list)]
 
-        # 2. Build focused prompt directly matching the specified product
-        flux_prompt = (
-            f"Editorial commercial product photography of {clean_prompt[:180]}, "
-            f"photorealistic, 8k resolution, cinematic commercial lighting, 9:16 vertical orientation, "
-            f"advertising studio shoot, crisp details"
-        )
+        if aspect_ratio == "1:1":
+            width, height = 1080, 1080
+            orientation_str = "square 1:1 aspect ratio, centered composition"
+        elif aspect_ratio == "16:9":
+            width, height = 1280, 720
+            orientation_str = "16:9 landscape cinematic orientation"
+        else:
+            width, height = 720, 1280
+            orientation_str = "9:16 vertical orientation"
 
-        safe_prompt = urllib.parse.quote(flux_prompt[:300])
-        pollinations_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=720&height=1280&model=flux&nologo=true&seed={seed + scene_idx}"
-
-        # 3. Attempt download of generated image into local temp file
         local_filename = f"gen_{uuid.uuid4().hex[:12]}.jpg"
         local_path = os.path.join(self.temp_dir, local_filename)
 
-        download_ok = await self._download_and_verify(pollinations_url, local_path, timeout=14.0)
-        if download_ok and os.path.exists(local_path):
-            return {"image_url": local_path}
+        # 2. Build strictly photorealistic prompt with authentic Indian ethnicity
+        filtered_prompt = re.sub(r'\b(cartoon|anime|illustration|drawing|sketch|painting|vector|3d render|cgi)\b', '', clean_prompt, flags=re.IGNORECASE)
 
-        # 4. Fallback to category-matched curated photo (never across categories)
-        logger.info(f"Using high-res curated photo for category '{category}': {curated_fallback_url}")
-        fallback_local = os.path.join(self.temp_dir, f"curated_{category}_{scene_idx}.jpg")
-        if not os.path.exists(fallback_local):
-            await self._download_and_verify(curated_fallback_url, fallback_local, timeout=12.0)
+        human_terms = [
+            "woman", "women", "girl", "girls", "man", "men", "boy", "boys", "people", "person",
+            "model", "face", "portrait", "bride", "groom", "couple", "holi", "diwali", "festiv",
+            "celebrat", "saree", "lehenga", "kurta", "sherwani", "ethnic", "fashion"
+        ]
+        is_human_scene = any(k in filtered_prompt.lower() for k in human_terms)
 
-        if os.path.exists(fallback_local) and os.path.getsize(fallback_local) > 5000:
-            return {"image_url": fallback_local}
+        if is_human_scene:
+            indian_ethnicity_clause = (
+                "authentic Indian person with natural South Asian facial features, authentic warm wheatish Indian skin tone, "
+                "dark brown eyes, natural black hair, traditional Indian facial structure, candid genuine Indian expression, "
+            )
+            anti_east_asian = "strictly no Chinese face, no East Asian face, no Caucasian face, no porcelain doll face, no fantasy doll, "
+        else:
+            indian_ethnicity_clause = ""
+            anti_east_asian = ""
 
-        return {"image_url": curated_fallback_url}
+        realistic_photo_prompt = (
+            f"A real authentic 35mm photograph of {filtered_prompt.strip()}, {indian_ethnicity_clause}"
+            f"shot on Canon EOS R5 with 85mm f/1.4 lens, natural lighting, hyper-detailed human skin pores, "
+            f"realistic textures, {orientation_str}, 8k resolution, authentic realistic photograph, "
+            f"{anti_east_asian}strictly no anime, no cartoon, no 3d render, no illustration, no drawing, no CGI, no painting, no watermark"
+        )
+        final_prompt = realistic_photo_prompt[:500].strip()
+
+        # 3. Attempt Gemini Direct Generation
+        gemini_result_path = await self._try_gemini_image_generation(
+            prompt=final_prompt,
+            pil_refs=pil_refs,
+            local_path=local_path
+        )
+        if gemini_result_path and os.path.exists(gemini_result_path):
+            public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
+            return {"image_url": public_url, "local_path": local_path, "provider": "gemini"}
+
+        # 4. For Indian cultural, festive and human categories:
+        # Prioritize 100% verified, authentic Indian photography assets to prevent stylized/anime doll outputs
+        if category in ["holi", "diwali", "festive", "lehenga", "saree", "jewelry", "streetwear"]:
+            if chosen_curated.startswith("/uploads/"):
+                public_url = settings.get_public_url(chosen_curated)
+                logger.info(f"Delivering authentic Indian photographic asset for '{category}': {public_url}")
+                return {"image_url": public_url, "provider": f"authentic-indian-{category}"}
+            elif chosen_curated.startswith("http"):
+                logger.info(f"Delivering verified curated photographic asset for '{category}': {chosen_curated}")
+                return {"image_url": chosen_curated, "provider": f"authentic-indian-{category}"}
+
+        # 5. Non-human / General Fallback via Clean Watermark-Free Pipeline
+        safe_prompt = urllib.parse.quote(final_prompt)
+        candidate_urls = [
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width=768&height=768",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width={width}&height={height}&model=flux",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}",
+        ]
+
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with httpx.AsyncClient(timeout=25.0, headers=headers) as client:
+            for render_url in candidate_urls:
+                try:
+                    res = await client.get(render_url, follow_redirects=True)
+                    if res.status_code == 200 and len(res.content) > 5000:
+                        cleaned_ok = self._crop_watermark_and_save(res.content, local_path, (width, height))
+                        if cleaned_ok and os.path.exists(local_path):
+                            public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
+                            logger.info(f"Cleaned watermark-free realistic image saved: {public_url}")
+                            return {"image_url": public_url, "local_path": local_path, "provider": "realistic-pipeline"}
+                except Exception as e:
+                    logger.warning(f"Attempt failed for {render_url}: {e}")
+                    continue
+
+        # 6. Absolute Fallback: Curated photo
+        if chosen_curated.startswith("/uploads/"):
+            return {"image_url": settings.get_public_url(chosen_curated), "provider": "curated-fallback"}
+        return {"image_url": chosen_curated, "provider": "curated-fallback"}
+
+

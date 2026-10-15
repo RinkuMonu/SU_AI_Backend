@@ -85,8 +85,8 @@ async def generate_post(
         if doc:
             product = serialize_product(doc)
 
-    # If still not found, use first product of the business as fallback
-    if not product:
+    # If still not found, only fallback to first product if user specified product_id or has no custom prompt/references
+    if not product and product_id:
         all_products = await get_products(db, str(business.id))
         if all_products:
             product = all_products[0]
@@ -105,6 +105,7 @@ async def generate_post(
         objective=request.objective,
         language=request.language,
         additional_instruction=request.additional_instruction,
+        reference_images=request.reference_images or [],
     )
 
     # ---------------------------------

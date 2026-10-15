@@ -98,3 +98,20 @@ async def delete_campaign(
         raise HTTPException(status_code=404, detail="Campaign not found")
         
     return {"success": True, "message": "Campaign deleted"}
+
+@router.post("/{campaign_id}/ad-copy", response_model=dict)
+async def generate_campaign_ad_copy(
+    campaign_id: str,
+    context: dict = None,
+    current_user=Depends(get_current_user),
+    business=Depends(get_current_business)
+):
+    db = get_database()
+    campaign_svc = CampaignService(db)
+    ad_copy = await campaign_svc.generate_ad_copy(
+        campaign_id=campaign_id,
+        business_id=str(business.id),
+        context=context or {}
+    )
+    return {"success": True, "data": ad_copy}
+

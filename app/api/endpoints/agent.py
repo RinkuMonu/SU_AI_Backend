@@ -22,7 +22,7 @@ async def execute_command(
     Receives a natural language command (Hindi/Hinglish/English),
     parses the intent, and routes it to the correct AI service.
     """
-    user_id = str(current_user.get("id", ""))
+    user_id = str(current_user.get("id", "")) if isinstance(current_user, dict) else str(getattr(current_user, "id", ""))
     if not user_id:
         return {"success": False, "message": "Unauthorized"}
         

@@ -33,6 +33,8 @@ class ContentService:
             "creative_direction": payload.get(
                 "creative_direction"
             ),
+            "image_url": payload.get("image_url") or payload.get("media_url"),
+            "media_url": payload.get("media_url") or payload.get("image_url"),
 
             "status": "draft",
 
