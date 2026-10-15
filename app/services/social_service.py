@@ -12,11 +12,14 @@ class SocialService:
         """
         from app.services.instagram_service import InstagramService
 
-        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
+        query = {"_id": ObjectId(content_id)} if ObjectId.is_valid(content_id) else {"_id": content_id}
+        content = await db["contents"].find_one(query)
+        if not content and ObjectId.is_valid(content_id):
+            content = await db["contents"].find_one({"_id": str(content_id)})
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
 
-        image_url = content.get("image_url")
+        image_url = content.get("image_url") or content.get("media_url") or content.get("imageUrl")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
         if isinstance(hashtags, list):
@@ -43,11 +46,14 @@ class SocialService:
     async def publish_to_facebook(db, business_id: str, content_id: str):
         from app.services.facebook_service import FacebookService
         
-        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
+        query = {"_id": ObjectId(content_id)} if ObjectId.is_valid(content_id) else {"_id": content_id}
+        content = await db["contents"].find_one(query)
+        if not content and ObjectId.is_valid(content_id):
+            content = await db["contents"].find_one({"_id": str(content_id)})
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
             
-        image_url = content.get("image_url")
+        image_url = content.get("image_url") or content.get("media_url") or content.get("imageUrl")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
         if isinstance(hashtags, list):

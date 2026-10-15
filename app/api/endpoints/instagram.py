@@ -566,10 +566,11 @@ async def instagram_post(
             message="[DEMO MODE] Image published to Instagram successfully",
         )
 
+    effective_image_url = request.get_effective_image_url()
     result = await InstagramService.publish_image(
         db=db,
         user_id=user_id,
-        image_url=request.image_url,
+        image_url=effective_image_url,
         caption=request.caption,
         content_id=request.content_id,
     )
@@ -615,10 +616,11 @@ async def instagram_reel(
             message="[DEMO MODE] Reel published to Instagram successfully",
         )
 
+    effective_video_url = request.get_effective_video_url()
     result = await InstagramService.publish_reel(
         db=db,
         user_id=user_id,
-        video_url=request.video_url,
+        video_url=effective_video_url,
         caption=request.caption,
         content_id=request.content_id,
         share_to_feed=request.share_to_feed,
