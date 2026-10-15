@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
@@ -47,6 +48,14 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
     GOOGLE_REDIRECT_URI: str = "http://localhost:3000/login/user"
+    # LinkedIn OAuth
+    LINKEDIN_CLIENT_ID: Optional[str] = None
+    LINKEDIN_CLIENT_SECRET: Optional[str] = None
+    Linkedin_client_id: Optional[str] = None
+    Linkedin_client_secret: Optional[str] = None
+    LINKEDIN_REDIRECT_URI: str = "http://localhost:3000/login/user"
+    LINKEDIN_SCOPES: str = "openid profile email w_member_social"
+
     BACKEND_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_API_URL: str | None = None
 
@@ -96,6 +105,12 @@ class Settings(BaseSettings):
             self.SMTP_FROM_EMAIL = self.SMTP_FROM
         elif self.SMTP_USERNAME and self.SMTP_FROM_EMAIL == "noreply@dhandagrow.com":
             self.SMTP_FROM_EMAIL = self.SMTP_USERNAME
+                # Resolve LinkedIn settings
+        if not self.LINKEDIN_CLIENT_ID and self.Linkedin_client_id:
+            self.LINKEDIN_CLIENT_ID = self.Linkedin_client_id
+        if not self.LINKEDIN_CLIENT_SECRET and self.Linkedin_client_secret:
+            self.LINKEDIN_CLIENT_SECRET = self.Linkedin_client_secret
+
         if self.NEXT_PUBLIC_API_URL and self.BACKEND_URL == "http://localhost:8000":
             self.BACKEND_URL = self.NEXT_PUBLIC_API_URL
         if not self.INSTAGRAM_APP_ID and self.INSTAGRAM_APPID:
@@ -104,6 +119,7 @@ class Settings(BaseSettings):
             self.INSTAGRAM_APP_SECRET = self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET
         return self
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
+    model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="ignore")
 
 settings = Settings()

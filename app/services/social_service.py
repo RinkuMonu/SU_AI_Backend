@@ -82,8 +82,23 @@ class SocialService:
         linkedin_author_id = business.get("linkedin_author_id")
         linkedin_access_token = business.get("linkedin_access_token")
         
+        # Fallback to users or linkedin_connections
         if not linkedin_author_id or not linkedin_access_token:
-            raise HTTPException(status_code=400, detail="LinkedIn is not connected for this business.")
+            owner_id = business.get("ownerId") or business.get("owner_id") or business_id
+            oid = ObjectId(owner_id) if ObjectId.is_valid(str(owner_id)) else str(owner_id)
+            user_doc = await db["users"].find_one({"_id": oid})
+            if user_doc:
+                linkedin_author_id = linkedin_author_id or user_doc.get("linkedin_author_id")
+                linkedin_access_token = linkedin_access_token or user_doc.get("linkedin_access_token")
+            
+            if not linkedin_author_id or not linkedin_access_token:
+                conn = await db["linkedin_connections"].find_one({"connected": True})
+                if conn:
+                    linkedin_author_id = linkedin_author_id or conn.get("author_id")
+                    linkedin_access_token = linkedin_access_token or conn.get("access_token")
+
+        if not linkedin_author_id or not linkedin_access_token:
+            raise HTTPException(status_code=400, detail="LinkedIn is not connected. Please connect LinkedIn in Settings > Social Platforms or Login with LinkedIn.")
             
         content = await db["contents"].find_one({
             "_id": ObjectId(content_id),

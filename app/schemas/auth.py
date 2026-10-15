@@ -204,3 +204,12 @@ class GoogleAuthLoginRequest(BaseModel):
     redirect_uri: Optional[str] = None
     accountType: Optional[str] = 'business'
     mode: Optional[str] = 'login'
+
+
+class LinkedInAuthLoginRequest(BaseModel):
+    code: Optional[str] = Field(default=None, description="LinkedIn OAuth authorization code")
+    access_token: Optional[str] = Field(default=None, description="LinkedIn OAuth access token")
+    id_token: Optional[str] = Field(default=None, description="LinkedIn OpenID ID token")
+    redirect_uri: Optional[str] = Field(default=None, description="Redirect URI passed in authorization")
+    mode: Optional[str] = Field(default="login", description="Auth mode: login or signup")
+    accountType: Optional[str] = Field(default="business", description="Account type: business or personal")

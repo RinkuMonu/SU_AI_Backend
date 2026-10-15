@@ -1,7 +1,10 @@
+import logging
+import urllib.parse
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Depends, status, Request, Response, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from app.schemas.auth import (
+    LinkedInAuthLoginRequest,
     SignupRequest,
     SendOTPRequest,
     VerifyOTPRequest,
@@ -22,6 +25,7 @@ from bson import ObjectId
 from pydantic import EmailStr
 import jwt
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 def set_refresh_cookie(response: Response, refresh_token: str):
@@ -1174,3 +1178,295 @@ async def instagram_signup(req: InstagramAuthLoginRequest, response: Response):
     """Explicitly register a new user via Instagram Login."""
     req.mode = "signup"
     return await instagram_login(req, response)
+
+
+from app.services.linkedin_service import LinkedInService
+
+@router.get("/linkedin/connect")
+async def linkedin_connect(
+    redirect_uri: Optional[str] = Query(None),
+    mode: str = Query("login")
+):
+    """Returns LinkedIn OAuth 2.0 authorization URL."""
+    auth_url = LinkedInService.get_authorization_url(redirect_uri=redirect_uri, mode=mode)
+    return {"success": True, "authorization_url": auth_url, "url": auth_url}
+
+
+@router.post("/linkedin/login")
+async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
+    """Authenticate or register user via LinkedIn OAuth."""
+    db = get_database()
+    if not req.code and not req.access_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide 'code' or 'access_token'."
+        )
+
+    mode = (req.mode or "login").lower().strip()
+    user, access_token_jwt, refresh_token_jwt = await LinkedInService.authenticate_linkedin_user(
+        db=db,
+        code=req.code,
+        access_token=req.access_token,
+        id_token=getattr(req, "id_token", None),
+        redirect_uri=req.redirect_uri,
+        account_type=req.accountType or "business",
+        mode=mode,
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "LinkedIn authentication successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload
+        }
+    }
+
+
+@router.post("/linkedin/signup", status_code=status.HTTP_201_CREATED)
+async def linkedin_signup(req: LinkedInAuthLoginRequest, response: Response):
+    """Register user using LinkedIn Login."""
+    req.mode = "signup"
+    return await linkedin_login(req, response)
+
+
+@router.get("/linkedin/callback")
+async def linkedin_callback(
+    request: Request,
+    response: Response,
+    code: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    error: Optional[str] = Query(None),
+    error_description: Optional[str] = Query(None),
+):
+    """Direct callback handler for LinkedIn OAuth redirect."""
+    from fastapi.responses import RedirectResponse
+    frontend_base = settings.FRONTEND_URL or "http://localhost:3000"
+    if error or error_description:
+        err_msg = error_description or error
+        return RedirectResponse(url=f"{frontend_base}/login/user?error={urllib.parse.quote(str(err_msg))}")
+
+    if code:
+        state_param = f"&state={state}" if state else ""
+        
+        # Calculate the exact callback URL that received this request
+        base_url = str(request.base_url).rstrip("/")
+        proto = request.headers.get("x-forwarded-proto")
+        if proto:
+            host = request.headers.get("x-forwarded-host") or request.url.netloc
+            base_url = f"{proto}://{host}"
+        elif request.headers.get("host") and "ngrok" in request.headers.get("host", ""):
+            base_url = f"https://{request.headers.get('host')}"
+            
+        current_redirect_uri = f"{base_url}{request.url.path}"
+        
+        # Attempt direct token exchange & login on backend
+        try:
+            db = get_database()
+            mode = "signup" if (state and "signup" in state) else "login"
+            user, access_token_jwt, refresh_token_jwt = await LinkedInService.authenticate_linkedin_user(
+                db=db,
+                code=code,
+                redirect_uri=current_redirect_uri,
+                account_type="business",
+                mode=mode,
+            )
+            redirect_resp = RedirectResponse(
+                url=f"{frontend_base}/login/user?token={access_token_jwt}&provider=linkedin{state_param}",
+                status_code=status.HTTP_302_FOUND,
+            )
+            set_refresh_cookie(redirect_resp, refresh_token_jwt)
+            return redirect_resp
+        except Exception as e:
+            logger.warning(f"Direct LinkedIn callback exchange failed, redirecting code to frontend: {e}")
+            return RedirectResponse(url=f"{frontend_base}/login/user?code={code}&provider=linkedin{state_param}")
+
+    return RedirectResponse(url=f"{frontend_base}/login/user")
+
+
+
+@router.get("/linkedin/status")
+async def linkedin_status(current_user=Depends(get_current_user)):
+    db = get_database()
+    uid = str(current_user.get("id") or current_user.get("_id"))
+    user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
+    
+    user_doc = await db["users"].find_one({"_id": user_oid}) if ObjectId.is_valid(uid) else None
+    biz_doc = await db["businesses"].find_one({
+        "$or": [
+            {"ownerId": uid},
+            {"ownerId": user_oid},
+            {"userId": uid},
+            {"userId": user_oid},
+        ]
+    })
+    conn = await db["linkedin_connections"].find_one({"user_id": uid})
+    if not conn and user_doc and user_doc.get("email"):
+        conn = await db["linkedin_connections"].find_one({"email": user_doc["email"]})
+        
+    author_id = (
+        (biz_doc and biz_doc.get("linkedin_author_id")) or
+        (user_doc and user_doc.get("linkedin_author_id")) or
+        (conn and conn.get("author_id")) or
+        ""
+    )
+    access_token = (
+        (biz_doc and biz_doc.get("linkedin_access_token")) or
+        (user_doc and user_doc.get("linkedin_access_token")) or
+        (conn and conn.get("access_token")) or
+        ""
+    )
+    connected = bool(
+        (biz_doc and biz_doc.get("linkedin_connected")) or
+        (user_doc and user_doc.get("linkedin_connected")) or
+        (conn and conn.get("connected")) or
+        (author_id and access_token)
+    )
+    return {
+        "success": True,
+        "connected": connected,
+        "linkedin_connected": connected,
+        "author_id": author_id,
+        "linkedin_author_id": author_id,
+        "has_token": bool(access_token),
+        "access_token": access_token if access_token else "",
+        "linkedin_access_token": access_token if access_token else "",
+    }
+
+
+@router.post("/linkedin/save-credentials")
+async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    db = get_database()
+    uid = str(current_user.get("id") or current_user.get("_id"))
+    user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
+    
+    author_id = (req.get("author_id") or req.get("linkedin_author_id") or "").strip()
+    access_token = (req.get("access_token") or req.get("linkedin_access_token") or "").strip()
+    connected = req.get("connected", bool(author_id and access_token))
+    
+    # 1. Update users
+    if ObjectId.is_valid(uid):
+        user_set = {
+            "linkedin_author_id": author_id,
+            "linkedin_access_token": access_token,
+            "linkedin_connected": connected,
+            "updated_at": now,
+        }
+        if author_id:
+            li_id = author_id.replace("urn:li:person:", "")
+            user_set["linkedinId"] = li_id
+            user_set["linkedin_id"] = li_id
+        await db["users"].update_one({"_id": user_oid}, {"$set": user_set})
+        
+    # 2. Update businesses
+    biz_query = {
+        "$or": [
+            {"ownerId": uid},
+            {"ownerId": user_oid},
+            {"userId": uid},
+            {"userId": user_oid},
+        ]
+    }
+    await db["businesses"].update_one(
+        biz_query,
+        {
+            "$set": {
+                "linkedin_author_id": author_id,
+                "linkedin_access_token": access_token,
+                "linkedin_connected": connected,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "ownerId": uid,
+                "userId": uid,
+                "businessName": "My Business",
+                "business_name": "My Business",
+                "businessType": "Retail",
+                "industry": "General",
+                "created_at": now,
+            }
+        },
+        upsert=True
+    )
+    
+    # 3. Update linkedin_connections
+    if author_id or access_token:
+        await db["linkedin_connections"].update_one(
+            {"user_id": uid},
+            {"$set": {
+                "user_id": uid,
+                "platform": "linkedin",
+                "author_id": author_id,
+                "access_token": access_token,
+                "connected": connected,
+                "updated_at": now,
+            }},
+            upsert=True
+        )
+    else:
+        await db["linkedin_connections"].delete_one({"user_id": uid})
+        
+    return {
+        "success": True,
+        "message": "LinkedIn credentials saved successfully",
+        "author_id": author_id,
+        "connected": connected,
+    }
+
+
+@router.post("/linkedin/disconnect")
+async def linkedin_disconnect(current_user=Depends(get_current_user)):
+    now = datetime.now(timezone.utc)
+    db = get_database()
+    uid = str(current_user.get("id") or current_user.get("_id"))
+    user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
+    
+    if ObjectId.is_valid(uid):
+        await db["users"].update_one(
+            {"_id": user_oid},
+            {"$set": {
+                "linkedin_author_id": "",
+                "linkedin_access_token": "",
+                "linkedin_connected": False,
+                "updated_at": now,
+            }}
+        )
+    await db["businesses"].update_many(
+        {"$or": [{"ownerId": uid}, {"ownerId": user_oid}, {"userId": uid}, {"userId": user_oid}]},
+        {"$set": {
+            "linkedin_author_id": "",
+            "linkedin_access_token": "",
+            "linkedin_connected": False,
+            "updated_at": now,
+        }}
+    )
+    await db["linkedin_connections"].delete_one({"user_id": uid})
+    return {"success": True, "message": "LinkedIn disconnected successfully"}

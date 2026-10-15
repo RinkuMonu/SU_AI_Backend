@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+from typing import Optional
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 # Reload trigger 5
@@ -15,6 +16,7 @@ from app.api.endpoints.agent import router as agent_router
 from app.api.endpoints.fashion import router as fashion_router
 from app.api.endpoints.instagram import router as instagram_router
 from app.api.endpoints.facebook import router as facebook_router
+from app.api.endpoints.linkedin import router as linkedin_router
 from app.api.endpoints.influencers import router as influencers_router
 from app.api.endpoints.influencer_profile import router as influencer_profile_router
 from app.api.endpoints.business_collaborations import router as business_collaborations_router
@@ -81,12 +83,44 @@ app.include_router(instagram_router, prefix="/api/instagram")
 app.include_router(instagram_router, prefix="/api/v1/instagram")
 app.include_router(facebook_router, prefix="/api/facebook")
 app.include_router(facebook_router, prefix="/api/v1/facebook")
+app.include_router(linkedin_router, prefix="/api/linkedin")
+app.include_router(linkedin_router, prefix="/api/v1/linkedin")
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
 app.include_router(influencer_content_router, prefix="/api/v1")
 app.include_router(influencer_earnings_router, prefix="/api/v1")
 app.include_router(influencer_marketplace_router, prefix="/api/v1")
+
+@app.get("/api/linkedin/callback", tags=["LinkedIn OAuth"])
+@app.get("/api/v1/linkedin/callback", tags=["LinkedIn OAuth"])
+async def linkedin_callback_alias(
+    request: Request,
+    response: Response,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    from app.api.endpoints.auth import linkedin_callback
+    return await linkedin_callback(
+        request=request,
+        response=response,
+        code=code,
+        state=state,
+        error=error,
+        error_description=error_description,
+    )
+
+@app.get("/api/linkedin/connect", tags=["LinkedIn OAuth"])
+@app.get("/api/v1/linkedin/connect", tags=["LinkedIn OAuth"])
+async def linkedin_connect_alias(
+    redirect_uri: Optional[str] = None,
+    mode: str = "login"
+):
+    from app.api.endpoints.auth import linkedin_connect
+    return await linkedin_connect(redirect_uri=redirect_uri, mode=mode)
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to Dhanda Grow API"}
