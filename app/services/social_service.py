@@ -27,16 +27,20 @@ class SocialService:
         full_caption = f"{caption}\n\n{hashtags}".strip()
 
         if not image_url:
-            import urllib.parse
-            # Fallback image generation
-            fallback_prompt = f"Professional product showcase representing: {hashtags} {caption[:50]}"
-            prompt_encoded = urllib.parse.quote(fallback_prompt)
-            image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1080&height=1080&nologo=true"
+            image_url = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1080&q=80"
 
-        user_id = content.get("user_id") or business_id
+                # Check active user connection first, then content user_id
+        effective_user_id = str(business_id)
+        conn = await InstagramService.get_connection(db, effective_user_id)
+        if not conn and content.get("user_id"):
+            content_user_id = str(content.get("user_id"))
+            conn_content = await InstagramService.get_connection(db, content_user_id)
+            if conn_content:
+                effective_user_id = content_user_id
+
         return await InstagramService.publish_image(
             db=db,
-            user_id=str(user_id),
+            user_id=effective_user_id,
             image_url=image_url,
             caption=full_caption,
             content_id=content_id,

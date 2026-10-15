@@ -80,13 +80,13 @@ DEMO_MEDIA_ID = "17900000000000001"
 
 def _should_use_demo(db_conn) -> bool:
     """
-    Returns True when we should return demo/mock responses:
-    - No Instagram App credentials configured, OR
-    - Credentials configured but no user has connected yet (dev environment)
+    Returns True ONLY when explicitly configured in demo mode and no real credentials exist.
     """
+    if db_conn and db_conn.get("encrypted_access_token") and db_conn.get("instagram_user_id") not in (None, "", "17841400000000001"):
+        return False
+    if db_conn and db_conn.get("ig_access_token") and db_conn.get("instagram_user_id") not in (None, "", "17841400000000001"):
+        return False
     if InstagramService.is_demo_mode():
-        return True
-    if db_conn is None and settings.ENVIRONMENT == "development":
         return True
     return False
 

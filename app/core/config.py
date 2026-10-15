@@ -68,10 +68,14 @@ class Settings(BaseSettings):
         """Converts a local media path into a fully qualified public URL using BACKEND_URL."""
         if not path:
             return ""
+        import re
+        base = (self.BACKEND_URL or "https://untapped-petite-shallot.ngrok-free.dev").rstrip("/")
+        # If path points to localhost/127.0.0.1, rewrite to public BACKEND_URL
+        if "localhost" in path or "127.0.0.1" in path:
+            return re.sub(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?", base, path)
         if path.startswith("http://") or path.startswith("https://"):
             return path
         clean_path = path if path.startswith("/") else f"/{path}"
-        base = (self.BACKEND_URL or "").rstrip("/")
         if base:
             return f"{base}{clean_path}"
         return clean_path
