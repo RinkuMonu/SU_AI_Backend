@@ -51,17 +51,20 @@ class Settings(BaseSettings):
     FACEBOOK_APP_ID: str | None = None
     FACEBOOK_APP_SECRET: str | None = None
     FACEBOOK_API_VERSION: str = "v19.0"
-    FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
+    FACEBOOK_REDIRECT_URI: str = "https://api.dhandagrow.com/api/facebook/callback"
     FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "http://localhost:3000/login/user"
+    GOOGLE_REDIRECT_URI: str = "https://dhandagrow.com/login/user"
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID: Optional[str] = None
     # LinkedIn OAuth
     LINKEDIN_CLIENT_ID: Optional[str] = None
     LINKEDIN_CLIENT_SECRET: Optional[str] = None
     Linkedin_client_id: Optional[str] = None
     Linkedin_client_secret: Optional[str] = None
-    LINKEDIN_REDIRECT_URI: str = "http://localhost:3000/login/user"
+    LINKEDIN_REDIRECT_URI: str = "https://dhandagrow.com/login/user"
     LINKEDIN_SCOPES: str = "openid profile email w_member_social"
 
     BACKEND_URL: str = "http://localhost:8000"
@@ -129,6 +132,10 @@ class Settings(BaseSettings):
             self.JWT_SECRET_KEY = self.JWT_SECRET
         if self.JWT_SECRET and self.JWT_ACCESS_SECRET == "development_access_secret":
             self.JWT_ACCESS_SECRET = self.JWT_SECRET
+        if not self.GOOGLE_CLIENT_ID:
+            self.GOOGLE_CLIENT_ID = self.google_client_id or self.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+        if not self.GOOGLE_CLIENT_SECRET and self.google_client_secret:
+            self.GOOGLE_CLIENT_SECRET = self.google_client_secret
         if self.MONGODB_URI and (not self.MONGO_URI or self.MONGO_URI == "mongodb://localhost:27017"):
             self.MONGO_URI = self.MONGODB_URI
         return self

@@ -17,14 +17,31 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 
 class GoogleService:
     @staticmethod
+    def get_credentials() -> Tuple[Optional[str], Optional[str]]:
+        import os
+        cid = (
+            settings.GOOGLE_CLIENT_ID
+            or getattr(settings, 'google_client_id', None)
+            or os.getenv('GOOGLE_CLIENT_ID')
+            or os.getenv('NEXT_PUBLIC_GOOGLE_CLIENT_ID')
+        )
+        secret = (
+            settings.GOOGLE_CLIENT_SECRET
+            or getattr(settings, 'google_client_secret', None)
+            or os.getenv('GOOGLE_CLIENT_SECRET')
+        )
+        return cid, secret
+
+    @staticmethod
     def is_configured() -> bool:
-        return bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET)
+        cid, secret = GoogleService.get_credentials()
+        return bool(cid and secret)
 
     @staticmethod
     def get_authorization_url(redirect_uri: Optional[str] = None, state: Optional[str] = None) -> str:
-        client_id = settings.GOOGLE_CLIENT_ID
+        client_id, _ = GoogleService.get_credentials()
         if not client_id:
-            raise HTTPException(status_code=500, detail='Google Client ID not configured.')
+            raise HTTPException(status_code=500, detail='Google Client ID not configured. Please set GOOGLE_CLIENT_ID in server environment.')
         final_redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
         final_state = state or secrets.token_urlsafe(16)
         params = {
@@ -41,11 +58,13 @@ class GoogleService:
 
     @staticmethod
     async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
-        client_id = settings.GOOGLE_CLIENT_ID
-        client_secret = settings.GOOGLE_CLIENT_SECRET
+        client_id, client_secret = GoogleService.get_credentials()
         final_redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
         if not client_id or not client_secret:
-            raise HTTPException(status_code=500, detail='Google credentials not configured.')
+            raise HTTPException(
+                status_code=500,
+                detail='Google credentials not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your server environment variables.'
+            )
         payload = {
             'code': code,
             'client_id': client_id,
