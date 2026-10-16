@@ -19,15 +19,15 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# ── Uploads / runtime-generated files ──────────────────────────
+# ── Uploads / runtime-generated media & temporary caches ──────
 uploads/temp/
 uploads/videos/
 uploads/audio/
-# Keep the uploads folder itself but ignore its contents
-uploads/*
-!uploads/.gitkeep
+uploads/reels/
+uploads/fashion/
+uploads/post_*.jpg
 
-# ── Scratch / temporary frontend files dropped in backend ──────
+# ── Scratch / temporary files dropped in backend ───────────────
 frontend_*.tsx
 frontend_*.ts
 temp_*.tsx
@@ -35,3 +35,5 @@ temp_*.ts
 temp_*.txt
 *_temp.*
 *_scratch.*
+scratch_*.py
+scratch_*.js

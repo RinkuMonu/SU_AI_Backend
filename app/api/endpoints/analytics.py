@@ -110,3 +110,42 @@ async def sync_social_metrics(
             status_code=500,
             detail="Failed to sync social metrics. Please try again later.",
         )
+
+
+@router.post("/visual-forecast")
+async def get_visual_forecast(
+    request: dict = None,
+    range_param: str = Query("30d", alias="range"),
+    current_user=Depends(get_current_user),
+):
+    """
+    Generate predictive visual marketing health gauges & forecast powered by Gemini API.
+    """
+    try:
+        db = get_database()
+        service = AnalyticsService(db)
+        user_id = str(current_user.get("id") or current_user.id)
+        business_id = current_user.get("business_id")
+
+        range_days = 30
+        if range_param == "7d":
+            range_days = 7
+        elif range_param == "90d":
+            range_days = 90
+
+        analytics_data = (request or {}).get("data") if request else {}
+        if not analytics_data:
+            analytics_data = await service.get_overview(
+                user_id=user_id,
+                business_id=business_id,
+                range_param=range_param,
+            )
+
+        forecast_data = await service.generate_visual_forecast(analytics_data, range_days)
+        return {"success": True, "data": forecast_data}
+    except Exception as exc:
+        logger.error("Visual forecast failed for user %s: %s", current_user.get("id"), exc, exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate visual forecast.",
+        )

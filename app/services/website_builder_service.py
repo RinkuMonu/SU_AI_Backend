@@ -14,6 +14,193 @@ from app.ai.factory import AIProviderFactory
 
 class WebsiteBuilderService:
     @staticmethod
+    def resolve_curated_image(category: str = "", prompt: str = "", index: int = 0, is_hero: bool = False) -> str:
+        text = f"{category} {prompt}".lower()
+        
+        GALLERIES = [
+            (
+                ["coffee", "cafe", "latte", "cappuccino", "espresso", "barista", "bakery", "bistro", "tea", "roast", "brew"],
+                "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1447933601403-0c6688de566e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["fashion", "cloth", "wear", "apparel", "boutique", "dress", "lehenga", "saree", "suit", "shirt", "outfit", "style"],
+                "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["restaurant", "food", "dining", "pizza", "burger", "meal", "chef", "culinary", "kitchen", "snack"],
+                "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["tech", "software", "app", "digital", "developer", "it", "code", "ai", "platform", "agency"],
+                "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["salon", "beauty", "spa", "makeup", "hair", "skincare", "cosmetic", "massage"],
+                "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1512290900672-1f41334e2c99?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["gym", "fitness", "workout", "crossfit", "yoga", "trainer", "training", "exercise", "sport"],
+                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["real estate", "property", "home", "house", "interior", "architect", "villa", "apartment", "realty"],
+                "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["jewelry", "jewellery", "gold", "diamond", "ring", "necklace", "luxury", "watch"],
+                "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=800&q=80"
+                ]
+            ),
+            (
+                ["health", "clinic", "doctor", "medical", "hospital", "dental", "dentist", "care", "wellness"],
+                "https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=1920&q=80",
+                [
+                    "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80",
+                    "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=800&q=80"
+                ]
+            )
+        ]
+        
+        default_hero = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80"
+        default_items = [
+            "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=800&q=80",
+            "https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=800&q=80"
+        ]
+        
+        for keywords, hero_img, item_imgs in GALLERIES:
+            if any(k in text for k in keywords):
+                if is_hero:
+                    return hero_img
+                return item_imgs[index % len(item_imgs)]
+                
+        if is_hero:
+            return default_hero
+        return default_items[index % len(default_items)]
+
+    @staticmethod
+    def resolve_palette(text: str = "", category: str = "", brand_guidelines: dict = None) -> dict:
+        if brand_guidelines and isinstance(brand_guidelines, dict):
+            p = brand_guidelines.get("primary_color")
+            s = brand_guidelines.get("secondary_color")
+            if p and str(p).startswith("#"):
+                return {
+                    "primary": str(p),
+                    "secondary": str(s) if s and str(s).startswith("#") else str(p),
+                    "accent": "#F59E0B",
+                    "font": brand_guidelines.get("font") or "outfit"
+                }
+
+        combined = f"{text} {category}".lower()
+
+        COLOR_KEYWORDS = [
+            (["green", "emerald", "forest", "nature", "organic", "plant", "botanical"], "#059669", "#047857", "#10B981"),
+            (["blue", "navy", "ocean", "royal", "sky"], "#1D4ED8", "#1E40AF", "#3B82F6"),
+            (["red", "crimson", "ruby", "scarlet"], "#DC2626", "#B91C1C", "#EF4444"),
+            (["purple", "violet", "lavender", "indigo"], "#7C3AED", "#6D28D9", "#8B5CF6"),
+            (["pink", "rose", "blush", "pastel"], "#E11D48", "#BE123C", "#FB7185"),
+            (["orange", "amber", "sunset", "peach"], "#EA580C", "#C2410C", "#F97316"),
+            (["yellow", "gold", "golden"], "#D97706", "#B45309", "#FBBF24"),
+            (["dark", "black", "charcoal", "luxury", "minimalist"], "#0F172A", "#1E293B", "#94A3B8"),
+            (["brown", "coffee", "roast", "mocha", "terracotta"], "#78350F", "#92400E", "#D97706"),
+            (["teal", "cyan", "turquoise"], "#0D9488", "#0F766E", "#14B8A6")
+        ]
+        for keywords, prim, sec, acc in COLOR_KEYWORDS:
+            if any(k in combined for k in keywords):
+                return {"primary": prim, "secondary": sec, "accent": acc, "font": "outfit"}
+
+        if any(w in combined for w in ["coffee", "cafe", "espresso", "latte", "tea", "roast", "brew", "bistro"]):
+            return {"primary": "#78350F", "secondary": "#92400E", "accent": "#D97706", "font": "outfit"}
+        elif any(w in combined for w in ["fashion", "cloth", "wear", "apparel", "boutique", "dress", "lehenga", "saree"]):
+            return {"primary": "#0F172A", "secondary": "#334155", "accent": "#BE185D", "font": "outfit"}
+        elif any(w in combined for w in ["restaurant", "food", "dining", "pizza", "burger", "meal", "chef"]):
+            return {"primary": "#DC2626", "secondary": "#B91C1C", "accent": "#F59E0B", "font": "outfit"}
+        elif any(w in combined for w in ["tech", "software", "app", "digital", "developer", "it", "code", "ai"]):
+            return {"primary": "#2563EB", "secondary": "#1D4ED8", "accent": "#06B6D4", "font": "outfit"}
+        elif any(w in combined for w in ["salon", "beauty", "spa", "makeup", "hair", "skincare", "cosmetic"]):
+            return {"primary": "#DB2777", "secondary": "#BE185D", "accent": "#F472B6", "font": "outfit"}
+        elif any(w in combined for w in ["gym", "fitness", "workout", "crossfit", "yoga", "trainer"]):
+            return {"primary": "#EA580C", "secondary": "#C2410C", "accent": "#10B981", "font": "outfit"}
+        elif any(w in combined for w in ["real estate", "property", "home", "house", "interior", "architect"]):
+            return {"primary": "#0D9488", "secondary": "#0F766E", "accent": "#0284C7", "font": "outfit"}
+        elif any(w in combined for w in ["jewelry", "jewellery", "gold", "diamond", "ring", "luxury"]):
+            return {"primary": "#B45309", "secondary": "#78350F", "accent": "#FBBF24", "font": "outfit"}
+        elif any(w in combined for w in ["health", "clinic", "doctor", "medical", "hospital", "dental"]):
+            return {"primary": "#0284C7", "secondary": "#0369A1", "accent": "#10B981", "font": "outfit"}
+            
+        return {"primary": "#4F46E5", "secondary": "#4338CA", "accent": "#F59E0B", "font": "outfit"}
+
+    @staticmethod
+    def resolve_brand_logo(b_name: str, primary_color: str, brand_guidelines: dict = None) -> str:
+        if brand_guidelines and isinstance(brand_guidelines, dict) and brand_guidelines.get("logo_url"):
+            return brand_guidelines["logo_url"]
+            
+        initial = (b_name[0] if b_name else "B").upper()
+        clean_name = b_name[:20].strip()
+        import urllib.parse
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 50" width="240" height="50">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="{primary_color}" />
+      <stop offset="100%" stop-color="{primary_color}" stop-opacity="0.85" />
+    </linearGradient>
+  </defs>
+  <rect x="2" y="5" width="40" height="40" rx="12" fill="url(#g)"/>
+  <text x="22" y="32" font-family="'Outfit', sans-serif" font-size="22" font-weight="900" fill="#ffffff" text-anchor="middle">{initial}</text>
+  <text x="52" y="32" font-family="'Outfit', sans-serif" font-size="20" font-weight="800" fill="{primary_color}">{clean_name}</text>
+</svg>"""
+        return f"data:image/svg+xml;utf8,{urllib.parse.quote(svg)}"
+
+    @staticmethod
     async def get_session_collection():
         db = get_database()
         return db["website_builder_sessions"]
@@ -123,7 +310,10 @@ class WebsiteBuilderService:
         if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
             return await WebsiteBuilderService.generate_website(session)
             
-        ai = AIProviderFactory.get_provider()
+        if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]) and not data:
+            return await WebsiteBuilderService.generate_recommendations(session)
+
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         
         # 1. Fetch Business Profile if not checked yet
         if not session.collected_data.get("profile_checked"):
@@ -160,6 +350,17 @@ Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business 
                         session.collected_data[k] = str(v).strip()
         except:
             pass
+
+        b_name = session.collected_data.get("Business Name")
+        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business", "A", "An", "The"]:
+            b_cat = session.collected_data.get("Business Category")
+            if b_cat and str(b_cat).strip() not in ["None", "null", "A", "An", "The"]:
+                session.collected_data["Business Name"] = str(b_cat).strip().title()
+            else:
+                clean_msg = message.replace("website", "").replace("build", "").replace("create", "").replace("my", "").replace("want", "").replace("for", "").strip().title()
+                if clean_msg and clean_msg not in ["A", "An", "The"]:
+                    session.collected_data["Business Name"] = clean_msg
+                    session.collected_data["Business Category"] = clean_msg
 
         if session.collected_data.get("Language"):
             session.language = session.collected_data.get("Language")
@@ -336,7 +537,7 @@ Respond very briefly."""
 
     @staticmethod
     async def generate_recommendations(session: WebsiteBuilderSession):
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = f"Generate exactly THREE website design recommendations for a business with data: {session.collected_data}. Return JSON with 'recommendations' array containing: id, name, description, reason, palette, style."
         result = await ai.generate_json(prompt, system_prompt="You are an expert web designer AI.")
         
@@ -400,25 +601,67 @@ Respond very briefly."""
         user_prompts = [m.get("content") for m in session.messages if m.get("role") == "user" and m.get("content")]
         full_user_intent = " | ".join(user_prompts) if user_prompts else "Website"
         
-        b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category") or full_user_intent.title()
-        b_cat = session.collected_data.get("Business Category", full_user_intent)
+        b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category")
+        if not b_name or str(b_name).strip().upper() in ["A", "AN", "THE", "MYBUSINESS", "NONE", "NULL", ""]:
+            clean_intent = full_user_intent.replace("build", "").replace("website", "").replace("create", "").replace("want", "").replace("for", "").strip()
+            if clean_intent and len(clean_intent) > 2 and clean_intent.upper() not in ["A", "AN", "THE"]:
+                b_name = clean_intent.title()
+            elif session.collected_data.get("Business Category"):
+                b_name = f"{session.collected_data['Business Category'].title()} Studio"
+            else:
+                b_name = "My Business"
 
-        # Dynamic topic-aligned schema example & fallback
+        b_cat = session.collected_data.get("Business Category", full_user_intent)
+        if str(b_cat).strip().upper() in ["A", "AN", "THE", ""]:
+            b_cat = b_name
+
+        brand_guidelines = session.collected_data.get("Brand Guidelines") or {}
+        theme_data = WebsiteBuilderService.resolve_palette(full_user_intent, b_cat, brand_guidelines)
+        logo_url = session.collected_data.get("Logo") or WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
+
+        # Dynamic topic-aligned schema example with rich multi-sections
         schema_example = json.dumps({
-            "logo": {"source": "uploaded", "url": "https://example.com/logo.png"},
-            "theme": {"primary": session.collected_data.get("Primary Color") or session.collected_data.get("Theme") or "purple", "font": "inter"},
+            "theme": theme_data,
+            "logo": logo_url,
             "pages": [
                 {
                     "name": "Home",
                     "sections": [
-                        {"type": "hero", "title": f"Welcome to {b_name}", "subtitle": f"Your trusted destination for premium {b_cat} services & products.", "cta": f"Explore {b_cat}", "image_prompt": f"high quality beautiful {b_cat} background banner", "image_url": ""},
+                        {
+                            "type": "hero", 
+                            "title": f"Welcome to {b_name}", 
+                            "subtitle": f"Experience handcrafted excellence and premium quality tailored for your lifestyle in {b_cat}.", 
+                            "cta": f"Explore {b_cat}", 
+                            "image_prompt": f"high quality beautiful {b_cat} background banner", 
+                            "image_url": ""
+                        },
                         {
                             "type": "features", 
-                            "title": f"Featured {b_cat} Highlights", 
+                            "title": f"Featured {b_cat} Collections", 
+                            "subtitle": f"Our most popular selections crafted with care",
                             "items": [
-                                {"title": f"Top Quality {b_cat}", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
-                                {"title": "Specialized Solutions", "description": f"Customized features and tailored packages designed for {b_cat}.", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
-                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
+                                {"title": f"Signature {b_cat} Classic", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "price": "$29.00", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
+                                {"title": "Artisanal Specialty", "description": f"Customized features and tailored packages designed for {b_cat}.", "price": "$39.00", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
+                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "price": "$49.00", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
+                            ]
+                        },
+                        {
+                            "type": "features",
+                            "title": f"Why Choose {b_name}",
+                            "subtitle": "Unmatched standards that set us apart",
+                            "items": [
+                                {"title": "Ethically Sourced & Crafted", "description": "We believe in sustainable, transparent practices in everything we produce.", "image_prompt": f"quality craftsmanship banner for {b_cat}"},
+                                {"title": "Dedicated Specialists", "description": f"Decades of expertise poured into every single {b_cat} detail.", "image_prompt": f"expert team at work in {b_cat}"},
+                                {"title": "Customer Satisfaction", "description": "Guaranteed quality and personalized support for every client.", "image_prompt": f"happy satisfied clients and 5 star service"}
+                            ]
+                        },
+                        {
+                            "type": "features",
+                            "title": "Customer Favorites & Reviews",
+                            "subtitle": "Loved by thousands in our community",
+                            "items": [
+                                {"title": "Top Rated Selection", "description": "Outstanding quality! Exceeded our expectations in every single way.", "price": "5.0 ★ Rating", "image_prompt": f"top customer choice {b_cat}"},
+                                {"title": "Seasonal Special", "description": "A must-try favorite recommended by our loyal regulars.", "price": "$34.00", "image_prompt": f"popular trending {b_cat}"}
                             ]
                         }
                     ]
@@ -429,8 +672,9 @@ Respond very briefly."""
                         {
                             "type": "features", 
                             "title": f"About {b_name}", 
+                            "subtitle": f"Our mission and story in {b_cat}",
                             "items": [
-                                {"title": "Our Mission", "description": f"How {b_name} strives to deliver unmatched excellence in {b_cat}.", "image_prompt": f"professional team working on {b_cat}"},
+                                {"title": "Our Heritage", "description": f"How {b_name} strives to deliver unmatched excellence in {b_cat}.", "image_prompt": f"professional team working on {b_cat}"},
                                 {"title": "Our Quality Commitment", "description": f"Rigorous standards and dedication to perfection in every {b_cat} project.", "image_prompt": f"quality guarantee badge for {b_cat}"}
                             ]
                         }
@@ -441,24 +685,12 @@ Respond very briefly."""
                     "sections": [
                         {
                             "type": "features", 
-                            "title": f"Our {b_cat} Offerings", 
+                            "title": f"Our Complete {b_cat} Catalog", 
+                            "subtitle": f"Browse our full collection of products & packages",
                             "items": [
-                                {"title": f"Flagship {b_cat} Collection", "description": f"Best-in-class products and gear for {b_cat}.", "image_prompt": f"featured product showcase {b_cat}"},
-                                {"title": f"Custom {b_cat} Packages", "description": f"Tailored options engineered specifically for your {b_cat} requirements.", "image_prompt": f"custom designed {b_cat} item"},
-                                {"title": f"Popular Essentials", "description": f"Top trending items highly recommended in {b_cat}.", "image_prompt": f"popular essential collection {b_cat}"}
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "name": "Services",
-                    "sections": [
-                        {
-                            "type": "features", 
-                            "title": f"Professional {b_cat} Services", 
-                            "items": [
-                                {"title": "Expert Consultation", "description": f"Professional advisory and strategic planning for {b_cat}.", "image_prompt": f"professional consultant working on {b_cat}"},
-                                {"title": "Dedicated Support", "description": f"24/7 client service and complete care for all {b_cat} queries.", "image_prompt": f"customer care team supporting {b_cat}"}
+                                {"title": f"Flagship {b_cat} Tier", "description": f"Best-in-class products and gear for {b_cat}.", "price": "$59.00", "image_prompt": f"featured product showcase {b_cat}"},
+                                {"title": f"Custom Packages", "description": f"Tailored options engineered specifically for your {b_cat} requirements.", "price": "$89.00", "image_prompt": f"custom designed {b_cat} item"},
+                                {"title": f"Everyday Essentials", "description": f"Top trending items highly recommended in {b_cat}.", "price": "$24.00", "image_prompt": f"popular essential collection {b_cat}"}
                             ]
                         }
                     ]
@@ -469,34 +701,18 @@ Respond very briefly."""
                         {
                             "type": "features", 
                             "title": "Get In Touch", 
+                            "subtitle": "We'd love to hear from you",
                             "items": [
                                 {"title": "Email Us", "description": f"contact@{b_name.lower().replace(' ', '')}.com", "image_prompt": "modern contact support desk email"},
-                                {"title": "Phone Helpline", "description": "+1 (800) 555-0199", "image_prompt": "phone hotline customer support"}
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "name": "WhatsApp",
-                    "sections": [
-                        {"type": "hero", "title": "WhatsApp Support", "subtitle": f"Connect directly with our {b_cat} specialists on WhatsApp 24/7.", "cta": "Chat on WhatsApp"}
-                    ]
-                },
-                {
-                    "name": "Google Map",
-                    "sections": [
-                        {
-                            "type": "features", 
-                            "title": "Location & Address", 
-                            "items": [
-                                {"title": "Main Office & Showroom", "description": f"742 Innovation Parkway, Suite 100", "image_prompt": f"modern building exterior facade for {b_cat}"}
+                                {"title": "Phone Helpline", "description": "+1 (800) 555-0199", "image_prompt": "phone hotline customer support"},
+                                {"title": "Showroom Location", "description": "742 Innovation Parkway, Suite 100", "image_prompt": f"modern showroom for {b_cat}"}
                             ]
                         }
                     ]
                 }
             ]
         })
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = (
             f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
 
@@ -506,15 +722,21 @@ Business Topic / Category: '{b_cat}'
 Language: {session.language or 'English'}.
 
 CRITICAL REQUIREMENTS:
-1. You MUST heavily prioritize and implement ALL specific instructions, custom content, themes, and image concepts mentioned in the 'User Prompt / Intent' above.
-2. EVERYTHING (titles, descriptions, section headlines, image_prompts) MUST be tailored to the topic '{b_cat}', business name '{b_name}', AND the user's specific prompt.
+1. Heavily prioritize and implement ALL specific instructions, custom content, themes, and image concepts mentioned in the 'User Prompt / Intent'.
+2. EVERYTHING (titles, descriptions, section headlines, prices, image_prompts) MUST be tailored to '{b_cat}', business name '{b_name}', AND the user's specific prompt.
 3. Every item MUST include a detailed English 'image_prompt' that describes crisp visual photography relevant to '{b_cat}'.
-4. Generate ALL 7 pages specified in the schema: Home, About, Products, Services, Contact, WhatsApp, and Google Map.
-5. Return ONLY valid JSON matching this structure: {schema_example}."""
+4. Include rich content sections on Home: Hero, Featured Collections with prices, Why Choose Us, and Customer Favorites.
+5. In 'theme', provide matching hex codes: {{"primary": "{theme_data['primary']}", "secondary": "{theme_data['secondary']}", "font": "outfit"}}.
+6. Return ONLY valid JSON matching this structure: {schema_example}."""
         )
         
         try:
-            result = await ai.generate_json(prompt, system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure.")
+            result = await ai.generate_json(
+                prompt,
+                system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure. Be creative, attractive, and fast.",
+                temperature=0.2,
+                max_tokens=8192
+            )
         except Exception as e:
             import logging
             logging.error(f"AI generation failed: {e}")
@@ -523,23 +745,43 @@ CRITICAL REQUIREMENTS:
         if not result or result.get("error") or not result.get("pages"):
              result = json.loads(schema_example)
         
+        # Merge validated theme
+        g_theme = result.get("theme", {})
+        if isinstance(g_theme, dict):
+            p_col = g_theme.get("primary")
+            s_col = g_theme.get("secondary")
+            if p_col and str(p_col).startswith("#"):
+                theme_data["primary"] = str(p_col)
+            if s_col and str(s_col).startswith("#"):
+                theme_data["secondary"] = str(s_col)
+
+        logo_url = WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
+        result["theme"] = theme_data
+        result["logo"] = logo_url
+        result["business_name"] = b_name
+
         raw_pages = result.get("pages", [])
         if not isinstance(raw_pages, list) or len(raw_pages) == 0:
              raw_pages = json.loads(schema_example)["pages"]
              
-        import urllib.parse
         for page in raw_pages:
-            for section in page.get("sections", []):
-                # For hero sections with an image prompt
-                if section.get("type") == "hero" and section.get("image_prompt"):
-                    if not section.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(section["image_prompt"])
-                        section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
-                # For features sections with items
-                for item in section.get("items", []):
-                    if item.get("image_prompt") and not item.get("image_url"):
-                        prompt_encoded = urllib.parse.quote(item["image_prompt"])
-                        item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+            for s_idx, section in enumerate(page.get("sections", [])):
+                if section.get("type") == "hero":
+                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
+                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=b_cat,
+                            prompt=section.get("image_prompt", "") or section.get("title", ""),
+                            index=s_idx,
+                            is_hero=True
+                        )
+                for i_idx, item in enumerate(section.get("items", [])):
+                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
+                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=b_cat,
+                            prompt=item.get("image_prompt", "") or item.get("title", ""),
+                            index=i_idx + s_idx,
+                            is_hero=False
+                        )
 
         project = WebsiteProject(
             user_id=session.user_id,
@@ -549,13 +791,16 @@ CRITICAL REQUIREMENTS:
             template_id=str(session.selected_template) if session.selected_template is not None else "default",
             language=session.language or "English",
             pages=raw_pages,
-            theme=result.get("theme", {}),
+            theme=theme_data,
             status="published",
             website_data=result
         )
         
         collection = await WebsiteBuilderService.get_project_collection()
         doc = project.model_dump(by_alias=True, exclude={"id"})
+        doc["logo"] = logo_url
+        doc["theme"] = theme_data
+        doc["business_name"] = b_name
         res = await collection.insert_one(doc)
         project.id = str(res.inserted_id)
         
@@ -576,7 +821,7 @@ CRITICAL REQUIREMENTS:
         if not site:
             raise HTTPException(status_code=404, detail="Website not found")
             
-        ai = AIProviderFactory.get_provider()
+        ai = AIProviderFactory.get_provider(preferred="gemini")
         prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."
         result = await ai.generate_text(prompt, system_prompt="You are an expert web designer. Return ONLY the JSON array representing the revised pages.")
         
@@ -610,19 +855,30 @@ CRITICAL REQUIREMENTS:
         except:
             raise Exception("Failed to parse AI revision")
             
-        import urllib.parse
         for page in revised_pages:
-            if isinstance(page, dict):
-                for section in page.get("sections", []):
-                    if isinstance(section, dict):
-                        if section.get("type") == "hero" and section.get("image_prompt"):
-                            if not section.get("image_url"):
-                                prompt_encoded = urllib.parse.quote(section["image_prompt"])
-                                section["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1920&height=1080&nologo=true"
-                        for item in section.get("items", []):
-                            if isinstance(item, dict) and item.get("image_prompt") and not item.get("image_url"):
-                                prompt_encoded = urllib.parse.quote(item["image_prompt"])
-                                item["image_url"] = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=800&height=600&nologo=true"
+            if not isinstance(page, dict):
+                continue
+            for s_idx, section in enumerate(page.get("sections", [])):
+                if not isinstance(section, dict):
+                    continue
+                if section.get("type") == "hero":
+                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
+                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=site.business_name or "business",
+                            prompt=section.get("image_prompt", "") or section.get("title", ""),
+                            index=s_idx,
+                            is_hero=True
+                        )
+                for i_idx, item in enumerate(section.get("items", [])):
+                    if not isinstance(item, dict):
+                        continue
+                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
+                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                            category=site.business_name or "business",
+                            prompt=item.get("image_prompt", "") or item.get("title", ""),
+                            index=i_idx + s_idx,
+                            is_hero=False
+                        )
                         
         site.pages = revised_pages
         collection = await WebsiteBuilderService.get_project_collection()
@@ -667,7 +923,7 @@ Current Website State:
 
 Return ONLY valid JSON with the modification."""
 
-        ai_provider = AIProviderFactory.get_provider()
+        ai_provider = AIProviderFactory.get_provider(preferred="gemini")
         try:
             res = await ai_provider.generate_text(
                 prompt=prompt,

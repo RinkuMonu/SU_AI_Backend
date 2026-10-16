@@ -240,4 +240,97 @@ async def get_generation_by_id(generation_id: str, current_user: User = Depends(
     return doc
 
 
+@router.post("/image", response_model=dict)
+async def generate_image_endpoint(request: ImageGenerationRequest, current_user: User = Depends(get_current_user)):
+    """
+    Generates a realistic social media image matching prompt and any uploaded reference images.
+    """
+    import os, io, re, json, random
+    import httpx
+    from PIL import Image
+    from app.core.config import settings
+    from app.ai.image.generator import ImageGenerator
+
+    extracted_subject = None
+    extracted_traits = None
+    pil_refs = []
+
+    # 1. If reference images provided, extract subject using Gemini Vision
+    if request.reference_images and settings.GEMINI_API_KEY:
+        try:
+            import google.genai as genai
+            client = genai.Client(api_key=settings.GEMINI_API_KEY)
+            for img_ref in request.reference_images[:3]:
+                if not img_ref or not isinstance(img_ref, str):
+                    continue
+                clean_ref = img_ref.strip()
+                if "uploads/" in clean_ref:
+                    rel_part = clean_ref.split("uploads/")[-1].split("?")[0]
+                    local_path = os.path.join(os.getcwd(), "uploads", rel_part)
+                    if os.path.exists(local_path):
+                        img = Image.open(local_path).convert("RGB")
+                        img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                        pil_refs.append(img)
+                        continue
+                if clean_ref.startswith("http://") or clean_ref.startswith("https://"):
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    async with httpx.AsyncClient(timeout=10.0, headers=headers) as c:
+                        res = await c.get(clean_ref, follow_redirects=True)
+                        if res.status_code == 200 and len(res.content) > 1000:
+                            img = Image.open(io.BytesIO(res.content)).convert("RGB")
+                            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                            pil_refs.append(img)
+
+            if pil_refs:
+                vision_prompt = (
+                    "Examine this reference image with extreme visual precision.\n"
+                    "Identify:\n"
+                    "1. Exact Primary Subject (exact name if historical figure, deity, celebrity, or exact product type/garment/item):\n"
+                    "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
+                    "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
+                )
+                v_res = client.models.generate_content(
+                    model=getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
+                    contents=[*pil_refs, vision_prompt]
+                )
+                if v_res and v_res.text:
+                    v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
+                    v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
+                    if v_match:
+                        v_json = json.loads(v_match.group(0))
+                        extracted_subject = v_json.get("subject_name")
+                        extracted_traits = v_json.get("key_traits")
+        except Exception:
+            pass
+
+    # 2. Formulate realistic photorealistic prompt anchored on subject & authentic Indian features
+    base_prompt = request.prompt or request.additional_instruction or "high quality social media photography"
+    human_terms = ["woman", "women", "girl", "girls", "man", "men", "boy", "person", "people", "portrait", "face", "model", "holi", "diwali", "festiv", "saree", "lehenga", "ethnic"]
+    is_human = any(k in base_prompt.lower() for k in human_terms)
+    indian_clause = "authentic Indian person, natural South Asian facial features, warm wheatish Indian skin tone, dark brown eyes, strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, " if is_human else ""
+
+    if extracted_subject:
+        if extracted_subject.lower() not in base_prompt.lower():
+            final_prompt = (
+                f"Raw authentic photograph of {extracted_subject}, {extracted_traits or ''}, "
+                f"{indian_clause}{base_prompt}, cinematic natural lighting, photorealistic skin and fabric textures, 8k resolution, authentic likeness, documentary photography"
+            )
+        else:
+            final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
+    else:
+        final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
+
+    # 3. Generate image
+    image_gen = ImageGenerator()
+    seed = random.randint(1000, 999999)
+    res = await image_gen.generate(prompt=final_prompt, aspect_ratio="1:1", seed=seed, pil_refs=pil_refs)
+
+    return {
+        "success": True,
+        "data": {
+            "image_url": res.get("image_url", "")
+        }
+    }
+
+
 

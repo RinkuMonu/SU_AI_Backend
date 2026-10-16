@@ -34,3 +34,4 @@ class ImageGenerationRequest(BaseModel):
     product_id: Optional[str] = None
     reference_images: Optional[List[str]] = None
     additional_instruction: Optional[str] = None
+    reference_images: Optional[List[str]] = []

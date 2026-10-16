@@ -35,11 +35,14 @@ class GeminiProvider(AIProvider):
 
         fallback_models = [
             configured_model,
+            "gemini-flash-lite-latest",
             "gemini-3.8-flash",
+            "gemini-flash-latest",
             "gemini-2.0-flash",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
-            "gemini-flash-lite-latest",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
         ]
         seen = set()
         self.models_to_try: List[str] = []
@@ -93,7 +96,7 @@ class GeminiProvider(AIProvider):
 
         # Fallback to direct REST API via httpx
         temperature = kwargs.get("temperature", 0.7)
-        max_tokens = kwargs.get("max_tokens", 3000)
+        max_tokens = kwargs.get("max_tokens", 8192)
 
         payload: Dict[str, Any] = {
             "contents": [
@@ -121,7 +124,7 @@ class GeminiProvider(AIProvider):
             params = {"key": self.api_key}
 
             try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(url, params=params, json=payload)
                     
                     if response.status_code == 200:

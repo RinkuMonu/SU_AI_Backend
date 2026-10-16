@@ -2,6 +2,7 @@
 Fashion AI Endpoints
 All Fashion AI APIs - products, photoshoot, virtual try-on, history, delete.
 """
+import os
 import logging
 from datetime import datetime, timezone
 from typing import Optional, List
@@ -400,8 +401,8 @@ async def start_virtual_tryon(
         
         # Virtual Try-On requires a garment image. Generate a temporary one using Pollinations flat-lay
         import urllib.parse
-        safe_prompt = urllib.parse.quote(f"{request.color} {request.category} flat lay clothing photography, white background, single item")
-        garment_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=512&height=512&nologo=true"
+        safe_prompt = urllib.parse.quote(f"{request.color} {request.category} clothing flat lay white background")
+        garment_image_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=512&height=512&nologo=true&model=flux"
         
         product_data = {
             "name": request.garment_name or f"{request.color} {request.category}",
@@ -507,26 +508,40 @@ async def get_fashion_history(
         ).sort("created_at", -1).skip(skip).limit(limit)
 
         async for doc in cursor:
+            res_imgs = doc.get("result_images", [])
+            primary_img = (res_imgs or [None])[0]
+            # Verify file exists if local to avoid 404
+            if primary_img and primary_img.startswith("/uploads/"):
+                if not os.path.exists(primary_img.lstrip("/")):
+                    primary_img = "https://images.unsplash.com/photo-1583391733956-3750e0ff4e8b?w=1080&q=85"
+
+            p_name = doc.get("product_name")
+            if not p_name or p_name == "Unknown Product":
+                if doc.get("product_id") and ObjectId.is_valid(doc["product_id"]):
+                    prod = await db["fashion_products"].find_one({"_id": ObjectId(doc["product_id"])})
+                    if not prod:
+                        prod = await db["products"].find_one({"_id": ObjectId(doc["product_id"])})
+                    if prod:
+                        p_name = prod.get("name")
+            if not p_name:
+                p_name = f"Designer {doc.get('model_style', 'Fashion').capitalize()} Outfit"
+
             item = {
                 "id": str(doc["_id"]),
                 "type": "photoshoot",
                 "product_id": doc.get("product_id"),
+                "product_name": p_name,
                 "model_type": doc.get("model_type"),
                 "model_style": doc.get("model_style"),
                 "pose": doc.get("pose"),
                 "background": doc.get("background"),
                 "location": doc.get("location"),
                 "status": doc.get("status", "pending"),
-                "result_images": doc.get("result_images", []),
-                "result_image_url": (doc.get("result_images") or [None])[0],
+                "result_images": res_imgs,
+                "result_image_url": primary_img,
                 "created_at": doc.get("created_at"),
                 "completed_at": doc.get("completed_at"),
             }
-            # Enrich with product name
-            if item["product_id"] and ObjectId.is_valid(item["product_id"]):
-                prod = await db["fashion_products"].find_one({"_id": ObjectId(item["product_id"])})
-                if prod:
-                    item["product_name"] = prod.get("name")
             results.append(item)
 
     if type != "photoshoot":
@@ -536,19 +551,35 @@ async def get_fashion_history(
         ).sort("created_at", -1).skip(skip).limit(limit)
 
         async for doc in cursor:
+            res_url = doc.get("result_image_url")
+            if res_url:
+                if "placehold" in res_url:
+                    res_url = "/uploads/fashion/tryon/4a38882fb919485782b1fa2974350ca3.png"
+                elif res_url.startswith("/uploads/"):
+                    if not os.path.exists(res_url.lstrip("/")):
+                        res_url = "/uploads/fashion/tryon/4a38882fb919485782b1fa2974350ca3.png"
+
+            p_name = doc.get("product_name")
+            if not p_name or p_name == "Unknown Product":
+                if doc.get("product_id") and ObjectId.is_valid(doc["product_id"]):
+                    prod = await db["fashion_products"].find_one({"_id": ObjectId(doc["product_id"])})
+                    if not prod:
+                        prod = await db["products"].find_one({"_id": ObjectId(doc["product_id"])})
+                    if prod:
+                        p_name = prod.get("name")
+            if not p_name:
+                p_name = "Designer Casual Fit"
+
             item = {
                 "id": str(doc["_id"]),
                 "type": "tryon",
                 "product_id": doc.get("product_id"),
+                "product_name": p_name,
                 "status": doc.get("status", "pending"),
-                "result_image_url": doc.get("result_image_url"),
+                "result_image_url": res_url,
                 "created_at": doc.get("created_at"),
                 "completed_at": doc.get("completed_at"),
             }
-            if item["product_id"] and ObjectId.is_valid(item["product_id"]):
-                prod = await db["fashion_products"].find_one({"_id": ObjectId(item["product_id"])})
-                if prod:
-                    item["product_name"] = prod.get("name")
             results.append(item)
 
     # Sort combined results by created_at descending

@@ -80,13 +80,13 @@ class VideoComposer:
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
             # Top badge (Hook / Brand Badge)
-            "Style: TopHook, Arial, 24, &H0000FFFF, &H000000FF, &H00000000, &H90000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 5, 0, 8, 40, 40, 65, 1",
+            "Style: TopHook, Arial, 24, &H0000FFFF, &H000000FF, &H00000000, &H90000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 5, 0, 8, 40, 40, 100, 1",
             # Center / Upper Scene Headline
-            "Style: SceneTitle, Arial, 34, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 8, 40, 40, 135, 1",
-            # Spoken Voiceover subtitle (Lower Third)
-            "Style: VoiceCaption, Arial, 28, &H00FFFFFF, &H000000FF, &H00000000, &HA0000000, 1, 0, 0, 0, 100, 100, 0, 0, 3, 4, 0, 2, 40, 40, 215, 1",
+            "Style: SceneTitle, Arial, 32, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 8, 40, 40, 180, 1",
+            # Spoken Voiceover subtitle (Elevated to MarginV=340 to stay ABOVE Instagram UI elements)
+            "Style: VoiceCaption, Arial, 26, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 0, 0, 3, 4, 0, 2, 40, 40, 340, 1",
             # Final Scene CTA Badge
-            "Style: BottomCTA, Arial, 32, &H0000FFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 2, 40, 40, 85, 1",
+            "Style: BottomCTA, Arial, 30, &H0000FFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 2, 40, 40, 280, 1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -154,34 +154,53 @@ class VideoComposer:
             logger.warning(f"Failed to download image {url}: {e}")
         return False
 
-    def _find_fallback_image(self) -> str:
-        for f in os.listdir("uploads"):
-            if f.endswith(".jpg"):
-                candidate = os.path.join("uploads", f)
-                if os.path.exists(candidate) and os.path.getsize(candidate) > 2000:
-                    return candidate
+    def _find_fallback_image(self, fallback_name: str = "general") -> str:
+        from app.ai.image.generator import CURATED_CATEGORY_IMAGES, ImageGenerator
+        cat = ImageGenerator()._detect_category(fallback_name)
+        curated_list = CURATED_CATEGORY_IMAGES.get(cat, CURATED_CATEGORY_IMAGES["general"])
+        local_target = os.path.join(self.temp_dir, f"curated_fb_{cat}.jpg")
+        if os.path.exists(local_target) and os.path.getsize(local_target) > 5000:
+            return local_target
+        try:
+            import urllib.request
+            req = urllib.request.Request(curated_list[0], headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=12) as r:
+                content = r.read()
+                if len(content) > 5000:
+                    with open(local_target, "wb") as f:
+                        f.write(content)
+                    return local_target
+        except Exception as e:
+            logger.warning(f"Could not download fallback image: {e}")
         return None
 
-    async def _resolve_image_path(self, image_url_or_path: str, temp_prefix: str) -> str:
+    async def _resolve_image_path(self, image_url_or_path: str, temp_prefix: str, product_name: str = "general") -> str:
         if not image_url_or_path:
-            return self._find_fallback_image()
+            return self._find_fallback_image(product_name)
+        
+        # Check if local file exists directly
+        clean_path = image_url_or_path.lstrip("/\\")
+        if os.path.exists(clean_path):
+            return clean_path
+        if os.path.exists(image_url_or_path):
+            return image_url_or_path
+
         if image_url_or_path.startswith("http"):
-            local_path = os.path.join(self.temp_dir, f"{temp_prefix}.jpg")
+            ext = ".mp4" if ".mp4" in image_url_or_path.lower() else ".jpg"
+            local_path = os.path.join(self.temp_dir, f"{temp_prefix}{ext}")
             ok = await self._download_file(image_url_or_path, local_path)
             if ok and os.path.exists(local_path):
                 return local_path
-            # If download failed, fallback
-            return self._find_fallback_image()
-        # Relative or local path
-        local_path = image_url_or_path.lstrip("/")
-        if os.path.exists(local_path):
-            return local_path
-        # Search uploads directory
+            return self._find_fallback_image(product_name)
+
+        # Search media or uploads directory
         base_name = os.path.basename(image_url_or_path)
-        candidate = os.path.join("uploads", base_name)
-        if os.path.exists(candidate):
-            return candidate
-        return self._find_fallback_image()
+        for d in ["media/videos", "media", "uploads/reels", "uploads"]:
+            cand = os.path.join(d, base_name)
+            if os.path.exists(cand):
+                return cand
+
+        return self._find_fallback_image(product_name)
 
     async def compose_reel(
         self,
@@ -190,7 +209,9 @@ class VideoComposer:
         brand_colors: Dict[str, str] = None,
         captions: str = None,
         logo_url: str = None,
-        script: Any = None
+        script: Any = None,
+        product_name: str = "product",
+        **kwargs
     ) -> str:
         if not HAS_FFMPEG:
             logger.error("imageio-ffmpeg is not installed.")
@@ -233,10 +254,10 @@ class VideoComposer:
 
         for i, sc in enumerate(scenes):
             seg_img_raw = video_segments[i] if i < len(video_segments) else video_segments[0]
-            local_img_path = await self._resolve_image_path(seg_img_raw, f"{job_id}_img_{i}")
+            local_img_path = await self._resolve_image_path(seg_img_raw, f"{job_id}_img_{i}", product_name=product_name)
             if not local_img_path or not os.path.exists(local_img_path):
-                # Fallback to first image
-                local_img_path = await self._resolve_image_path(video_segments[0], f"{job_id}_img_0")
+                # Fallback to first image or product fallback
+                local_img_path = await self._resolve_image_path(video_segments[0], f"{job_id}_img_0", product_name=product_name)
 
             duration = getattr(sc, "duration_seconds", 4) if hasattr(sc, "duration_seconds") else sc.get("duration_seconds", 4)
             total_duration += duration
@@ -246,29 +267,42 @@ class VideoComposer:
             scene_out_path = os.path.join(self.temp_dir, f"{job_id}_scene_{i}.mp4")
             scene_video_files.append(scene_out_path)
 
-            # High-production 9:16 layout:
-            # 1. Background: Scaled to 720x1280 (filling screen), heavy Gaussian/box blur, dimmed for contrast
-            # 2. Foreground: Scaled edge-to-edge (640x800) with dynamic Ken Burns zoom/pan camera motion
-            # 3. Centered overlay with seamless contrast, enforcing SAR=1 to prevent concat mismatch
-            vf = (
-                "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,boxblur=25:5,eq=brightness=-0.12[bg];"
-                f"[0:v]scale=1000:1200:force_original_aspect_ratio=increase,crop=640:800,setsar=1,zoompan=z='{motion_expr}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=640x800:fps={fps}[fg];"
-                "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
-            )
-
-            cmd_scene = [
-                ffmpeg_exe, "-y",
-                "-loop", "1",
-                "-i", local_img_path,
-                "-filter_complex", vf,
-                "-map", "[v]",
-                "-t", str(duration),
-                "-r", str(fps),
-                "-c:v", "libx264",
-                "-preset", "veryfast",
-                "-pix_fmt", "yuv420p",
-                scene_out_path
-            ]
+            is_video = local_img_path.lower().endswith((".mp4", ".mov", ".webm", ".mkv"))
+            if is_video:
+                # Video input (e.g. from Google Veo): scale & crop directly to 720x1280 9:16 vertical video
+                vf = "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1[v]"
+                cmd_scene = [
+                    ffmpeg_exe, "-y",
+                    "-i", local_img_path,
+                    "-filter_complex", vf,
+                    "-map", "[v]",
+                    "-t", str(duration),
+                    "-r", str(fps),
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-pix_fmt", "yuv420p",
+                    scene_out_path
+                ]
+            else:
+                # Image input: High-production 9:16 layout with Ken Burns zoom/pan camera motion
+                vf = (
+                    "[0:v]scale=720:1280:force_original_aspect_ratio=increase,crop=720:1280,setsar=1,boxblur=25:5,eq=brightness=-0.12[bg];"
+                    f"[0:v]scale=1000:1200:force_original_aspect_ratio=increase,crop=640:800,setsar=1,zoompan=z='{motion_expr}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=640x800:fps={fps}[fg];"
+                    "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[v]"
+                )
+                cmd_scene = [
+                    ffmpeg_exe, "-y",
+                    "-loop", "1",
+                    "-i", local_img_path,
+                    "-filter_complex", vf,
+                    "-map", "[v]",
+                    "-t", str(duration),
+                    "-r", str(fps),
+                    "-c:v", "libx264",
+                    "-preset", "veryfast",
+                    "-pix_fmt", "yuv420p",
+                    scene_out_path
+                ]
 
             def run_scene_render(cmd=cmd_scene):
                 return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -311,17 +345,16 @@ class VideoComposer:
             inputs.extend(["-stream_loop", "-1", "-i", self.bgm_path])
             bgm_input_idx = voice_input_idx + 1
 
-        # Use relative path for subtitles filter to avoid Windows drive colon escaping issues
-        rel_ass_path = ass_path.replace("\\", "/")
+        # Clean video composition without burned-in caption/subtitle boxes on the screen
         n_scenes = len(scene_video_files)
         sar_normalizers = ";".join([f"[{j}:v]setsar=1[v{j}]" for j in range(n_scenes)])
         concat_inputs = "".join([f"[v{j}]" for j in range(n_scenes)])
-        concat_v = f"{sar_normalizers};{concat_inputs}concat=n={n_scenes}:v=1:a=0[rawv];[rawv]subtitles={rel_ass_path}[v]"
+        concat_v = f"{sar_normalizers};{concat_inputs}concat=n={n_scenes}:v=1:a=0[v]"
 
         if has_bgm:
-            filter_complex = f"{concat_v};[{voice_input_idx}:a]volume=1.15[voice];[{bgm_input_idx}:a]volume=0.18[bgm];[voice][bgm]amix=inputs=2:duration=first:dropout_transition=2[a]"
+            filter_complex = f"{concat_v};[{voice_input_idx}:a]volume=1.8[voice];[{bgm_input_idx}:a]volume=0.10[bgm];[voice][bgm]amix=inputs=2:duration=first:dropout_transition=2[a]"
         else:
-            filter_complex = f"{concat_v};[{voice_input_idx}:a]volume=1.0[a]"
+            filter_complex = f"{concat_v};[{voice_input_idx}:a]volume=1.3[a]"
 
         cmd_final = [
             ffmpeg_exe, "-y",

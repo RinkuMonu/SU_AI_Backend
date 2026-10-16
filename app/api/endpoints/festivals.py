@@ -256,15 +256,6 @@ async def generate_post_endpoint(festival_name: str, current_user=Depends(get_cu
 @router.post("/{festival_name}/generate-all-content")
 async def generate_all_endpoint(festival_name: str, current_user=Depends(get_current_user), db=Depends(get_database)):
     return await _handle_generation(festival_name, "all", current_user, db)
-@router.post("/{festival_id}/generate-post")
-async def generate_post_endpoint(festival_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
-    # Phase 1 setup
-    return {"success": True, "message": "Post generated successfully (stub)"}
-
-@router.post("/{festival_id}/generate-all-content")
-async def generate_all_endpoint(festival_id: str, current_user=Depends(get_current_user), db=Depends(get_database)):
-    # Phase 1 setup
-    return {"success": True, "message": "All content generated successfully (stub)"}
 
 @router.post("/{campaign_id}/schedule")
 async def schedule_content(campaign_id: str, payload: dict = Body(...), current_user=Depends(get_current_user), db=Depends(get_database)):

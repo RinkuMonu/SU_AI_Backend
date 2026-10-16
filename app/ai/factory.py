@@ -12,7 +12,14 @@ class AIProviderFactory:
     _instances = {}
 
     @classmethod
-    def get_provider(cls) -> AIProvider:
+    def get_provider(cls, preferred: str = None) -> AIProvider:
+        if preferred and preferred.lower() == "gemini":
+            from app.ai.providers.gemini_provider import GeminiProvider
+            return GeminiProvider()
+        elif preferred and preferred.lower() == "groq":
+            from app.ai.providers.groq_provider import GroqProvider
+            return GroqProvider()
+
         provider_name = (settings.AI_PROVIDER or "gemini").lower()
         
         if provider_name in cls._instances:

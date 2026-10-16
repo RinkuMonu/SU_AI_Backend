@@ -24,42 +24,23 @@ logger = logging.getLogger(__name__)
 class FashionImageProvider:
     """
     Pluggable image generation provider for Fashion AI.
-    Currently uses Pollinations.ai (free, no API key required).
-    Replace this class implementation to switch providers.
+    Uses Google Gemini API as primary provider.
     """
 
-    def __init__(self, provider_name: str = "pollinations"):
+    def __init__(self, provider_name: str = "gemini"):
         self.provider_name = provider_name
 
-    async def generate(self, prompt: str, negative_prompt: str = "", **kwargs) -> dict:
+    async def generate(self, prompt: str, product: dict = None, request = None, **kwargs) -> dict:
         """
-        Generate a fashion image from a prompt.
-        Returns: {"status": "completed", "image_url": "...", "provider": "..."}
+        Generate a fashion image from a prompt using Gemini.
+        Returns: {"status": "completed", "image_url": "...", "provider": "gemini"}
         """
-        if self.provider_name == "pollinations":
-            return await self._generate_pollinations(prompt)
-        else:
-            return {
-                "status": "failed",
-                "error": f"Image provider '{self.provider_name}' is not configured."
-            }
-
-    async def _generate_pollinations(self, prompt: str) -> dict:
-        """Use Pollinations.ai - free, no API key needed."""
-        try:
-            safe_prompt = urllib.parse.quote(prompt[:800])
-            image_url = (
-                f"https://image.pollinations.ai/prompt/{safe_prompt}"
-                f"?width=1024&height=1024&nologo=true&model=flux&seed=-1"
-            )
-            return {
-                "status": "completed",
-                "image_url": image_url,
-                "provider": "pollinations"
-            }
-        except Exception as e:
-            logger.error(f"Pollinations generation failed: {e}")
-            return {"status": "failed", "error": str(e)}
+        from app.services.fashion.gemini_fashion_service import get_gemini_fashion_service
+        return await get_gemini_fashion_service().generate_photoshoot(
+            prompt=prompt,
+            product=product or {},
+            request=request
+        )
 
 
 # Singleton instance
@@ -69,9 +50,7 @@ _image_provider: Optional[FashionImageProvider] = None
 def get_fashion_image_provider() -> FashionImageProvider:
     global _image_provider
     if _image_provider is None:
-        from app.core.config import settings
-        provider_name = getattr(settings, "FASHION_IMAGE_PROVIDER", "pollinations")
-        _image_provider = FashionImageProvider(provider_name=provider_name)
+        _image_provider = FashionImageProvider(provider_name="gemini")
     return _image_provider
 
 
@@ -90,9 +69,11 @@ async def create_fashion_generation_job(
     Returns the generation_id (string).
     """
     now = datetime.now(timezone.utc)
+    p_name = product.get("name") or getattr(request, "garment_name", None) or f"{request.color} {request.category}"
     doc = {
         "user_id": user_id,
         "product_id": str(product.get("id") or product.get("_id", "")),
+        "product_name": p_name,
         "type": "photoshoot",
         "model_type": request.model_type,
         "model_style": request.model_style,
@@ -103,7 +84,7 @@ async def create_fashion_generation_job(
         "view": request.view,
         "status": "pending",
         "result_images": [],
-        "provider": None,
+        "provider": "gemini",
         "provider_job_id": None,
         "prompt_used": None,
         "error": None,
@@ -177,7 +158,7 @@ Original prompt:
 
         # 3. Generate image
         provider = get_fashion_image_provider()
-        result = await provider.generate(prompt=final_prompt, negative_prompt=negative_prompt)
+        result = await provider.generate(prompt=final_prompt, product=product, request=request)
 
         if result.get("status") == "failed":
             await update_status(
@@ -193,7 +174,7 @@ Original prompt:
         await update_status(
             "completed",
             result_images=[image_url],
-            provider=result.get("provider", "pollinations"),
+            provider=result.get("provider", "gemini_flux"),
             prompt_used=final_prompt[:1000],
             completed_at=datetime.now(timezone.utc),
         )

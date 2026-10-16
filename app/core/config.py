@@ -23,13 +23,15 @@ class Settings(BaseSettings):
 
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
+    VIDEO_PROVIDER: str = "veo"
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
 
-    FASHION_IMAGE_PROVIDER: str = "pollinations"
+    FASHION_IMAGE_PROVIDER: str = "gemini"
     FASHION_IMAGE_API_KEY: str | None = None
-    VIRTUAL_TRYON_PROVIDER: str = ""
+    VIRTUAL_TRYON_PROVIDER: str = "gemini"
     VIRTUAL_TRYON_API_KEY: str | None = None
 
     INSTAGRAM_APP_ID: str | None = None

@@ -88,8 +88,10 @@ async def generate_post(
         if product_doc:
             products_data.append(serialize_product(product_doc))
 
-    # If still no products found, use first product of the business as fallback
-    if not products_data:
+    # If still not found, only fallback to first product if user specified product_id/product_ids or has no custom prompt/references
+    has_custom_input = bool(request.additional_instruction or request.reference_images)
+    has_requested_products = bool(request.product_id or request.product_ids)
+    if not products_data and (has_requested_products or not has_custom_input):
         all_products = await get_products(db, str(business.id))
         if all_products:
             products_data.append(all_products[0])
@@ -112,6 +114,7 @@ async def generate_post(
         objective=request.objective,
         language=request.language,
         additional_instruction=request.additional_instruction,
+        reference_images=request.reference_images or [],
     )
 
     # ---------------------------------

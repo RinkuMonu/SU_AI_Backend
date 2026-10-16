@@ -50,6 +50,8 @@ async def generate_reel(
         })
         if doc:
             product = serialize_product(doc)
+            if request.product_category:
+                product["category"] = request.product_category
 
     # 2. Check fashion_products collection if ObjectId
     if not product and ObjectId.is_valid(product_id):
@@ -58,15 +60,16 @@ async def generate_reel(
             product = {
                 "id": str(fdoc["_id"]),
                 "name": fdoc.get("name", "Product"),
+                "category": fdoc.get("category") or request.product_category or "Fashion & Apparel",
                 "description": fdoc.get("description", ""),
                 "price": fdoc.get("price", 0),
                 "image_url": fdoc.get("image_url"),
                 "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
             }
 
-    # 3. If not found by ObjectId, try matching by name or product_name
+    # 3. Match by name or product_name if not found by ID
     search_name = request.product_name or (product_id if product_id not in ["general", "default", ""] else None)
-    if not product and search_name:
+    if not product and search_name and ObjectId.is_valid(str(business.id)):
         doc = await db["products"].find_one({
             "business_id": b_id_query,
             "$or": [
@@ -76,6 +79,8 @@ async def generate_reel(
         })
         if doc:
             product = serialize_product(doc)
+            if request.product_category:
+                product["category"] = request.product_category
         else:
             fdoc = await db["fashion_products"].find_one({
                 "name": {"$regex": f"^{re.escape(search_name)}$", "$options": "i"}
@@ -84,40 +89,50 @@ async def generate_reel(
                 product = {
                     "id": str(fdoc["_id"]),
                     "name": fdoc.get("name", search_name),
+                    "category": fdoc.get("category") or request.product_category or "Fashion & Apparel",
                     "description": fdoc.get("description", ""),
                     "price": fdoc.get("price", 0),
                     "image_url": fdoc.get("image_url"),
                     "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
                 }
 
-    # 4. If explicit product details or custom product provided in request
+    # 4. Explicit product details, custom product, or preset in request (Strictly lock to user input)
     if not product and (request.product_name or (product_id and product_id not in ["general", "default", ""])):
-        chosen_name = request.product_name or product_id
-        chosen_desc = request.product_description or f"Premium quality {chosen_name}"
+        chosen_name = request.product_name or (product_id.replace("preset_", "").replace("_", " ").title())
+        chosen_category = request.product_category or "Commercial Product"
+        chosen_desc = request.product_description or f"High quality {chosen_name}"
         chosen_img = request.product_image_url
         product = {
             "id": product_id or str(ObjectId()),
             "name": chosen_name,
+            "category": chosen_category,
             "description": chosen_desc,
             "price": 99.99,
             "image_url": chosen_img,
             "images": [chosen_img] if chosen_img else []
         }
 
-    # 5. Fallback to first existing product in business catalogue
+    # 5. Creative mode fallback (DO NOT substitute an arbitrary catalogue product!)
+    if not product and request.generation_mode == "creative":
+        product = {
+            "id": "creative_general",
+            "name": request.product_name or "Brand Story",
+            "category": "Creative / Brand Story",
+            "description": request.additional_instruction or "Creative Brand Storytelling",
+            "image_url": request.product_image_url,
+            "images": [request.product_image_url] if request.product_image_url else []
+        }
+
+    # 6. Fallback if completely unspecified
     if not product:
-        all_products = await get_products(db, str(business.id))
-        if all_products:
-            product = all_products[0]
-            
-    # 6. Default fallback with request info or sensible name
-    if not product:
-        final_name = request.product_name or "Exclusive Product"
-        final_desc = request.product_description or f"High quality {final_name}"
+        final_name = request.product_name or "Commercial Showcase"
+        final_category = request.product_category or "General Commercial"
+        final_desc = request.product_description or f"Featured Showcase of {final_name}"
         final_img = request.product_image_url
         product = {
             "id": product_id or "general",
             "name": final_name,
+            "category": final_category,
             "description": final_desc,
             "price": 99.99,
             "image_url": final_img,
