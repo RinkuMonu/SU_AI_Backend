@@ -100,6 +100,7 @@ class SubscriptionService:
 
     @staticmethod
     async def upgrade_plan(db, user_id: str, new_plan_id: str):
+        new_plan_id = (new_plan_id or "").strip().upper()
         if new_plan_id not in PLANS:
             raise HTTPException(status_code=400, detail="Invalid plan")
             

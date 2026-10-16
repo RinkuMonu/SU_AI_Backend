@@ -63,7 +63,8 @@ async def checkout(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    if request.plan_id not in PLANS:
+    plan_id = (request.plan_id or "").strip().upper()
+    if plan_id not in PLANS:
         raise HTTPException(status_code=400, detail="Invalid plan")
         
     # Mock checkout process

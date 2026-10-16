@@ -11,6 +11,7 @@ from app.services.subscription_service import SubscriptionService
 class PayinService:
     @staticmethod
     async def create_payment(db, user_id: str, user_email: str, plan_id: str) -> Dict[str, Any]:
+        plan_id = (plan_id or "").strip().upper()
         if plan_id not in PLANS:
             raise HTTPException(status_code=400, detail="Invalid plan")
         

@@ -146,7 +146,7 @@ async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
     user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
         db=db,
         access_token=access_token,
-        account_type=req.accountType or "business",
+        account_type=req.accountType or "user",
     )
     set_refresh_cookie(response, refresh_token_jwt)
 
@@ -158,16 +158,16 @@ async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
         "email": user.email,
         "phone": user.phone,
         "contactNumber": user.contactNumber,
-        "accountType": user.accountType,
+        "accountType": getattr(user, "accountType", "user") or "user",
         "role": getattr(user, "role", "user") or "user",
         "name": getattr(user, "name", user.fullName) or user.fullName,
         "emailVerified": bool(user.emailVerified),
         "email_verified": bool(user.emailVerified),
         "isVerified": bool(user.emailVerified),
         "profileImageUrl": user.profileImageUrl,
-        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
-        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
-        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "onboardingCompleted": True,
+        "onboarding_completed": True,
+        "onboarding_step": getattr(user, "onboarding_step", 3) or 3,
     }
 
     return {

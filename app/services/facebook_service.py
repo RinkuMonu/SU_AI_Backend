@@ -46,6 +46,23 @@ FACEBOOK_LOGIN_PERMISSIONS = [
 
 
 class FacebookService:
+    @classmethod
+    def get_redirect_uri(cls) -> str:
+        """
+        Dynamically determine the Facebook callback redirect URI.
+        Prefers BACKEND_URL if it is an ngrok tunnel or dev backend,
+        otherwise uses FACEBOOK_REDIRECT_URI.
+        """
+        backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        configured = getattr(settings, "FACEBOOK_REDIRECT_URI", "").strip()
+        if backend_url and ("ngrok" in backend_url or "localhost" in backend_url):
+            return f"{backend_url}/api/facebook/callback"
+        if configured:
+            return configured
+        if backend_url:
+            return f"{backend_url}/api/facebook/callback"
+        return "http://localhost:8000/api/facebook/callback"
+
     @staticmethod
     def is_demo_mode() -> bool:
         """Returns True if Facebook App credentials are not configured."""
@@ -53,8 +70,8 @@ class FacebookService:
         app_secret = getattr(settings, "FACEBOOK_APP_SECRET", None) or getattr(settings, "INSTAGRAM_APP_SECRET", None)
         return not bool(app_id and app_secret)
 
-    @staticmethod
-    def get_authorization_url(state: str, custom_scopes: Optional[List[str]] = None) -> str:
+    @classmethod
+    def get_authorization_url(cls, state: str, custom_scopes: Optional[List[str]] = None) -> str:
         """
         Generate Facebook Login authorization URL with requested Instagram permissions.
         """
@@ -62,7 +79,7 @@ class FacebookService:
         if not app_id:
             raise HTTPException(status_code=500, detail="Facebook/Instagram App ID not configured")
 
-        redirect_uri = getattr(settings, "FACEBOOK_REDIRECT_URI", "http://localhost:8000/api/facebook/callback")
+        redirect_uri = cls.get_redirect_uri()
         api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0")
 
         configured_scopes = getattr(settings, "FACEBOOK_SCOPES", None)
@@ -84,15 +101,15 @@ class FacebookService:
             f"&state={state}"
         )
 
-    @staticmethod
-    async def exchange_code_for_token(code: str) -> Dict[str, Any]:
+    @classmethod
+    async def exchange_code_for_token(cls, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         """
         Exchange authorization code for user access token,
         then upgrade to a 60-day long-lived token.
         """
         app_id = getattr(settings, "FACEBOOK_APP_ID", None) or getattr(settings, "INSTAGRAM_APP_ID", None)
         app_secret = getattr(settings, "FACEBOOK_APP_SECRET", None) or getattr(settings, "INSTAGRAM_APP_SECRET", None)
-        redirect_uri = getattr(settings, "FACEBOOK_REDIRECT_URI", "http://localhost:8000/api/facebook/callback")
+        redirect_uri = redirect_uri or cls.get_redirect_uri()
         api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0")
 
         if not app_id or not app_secret:
@@ -490,10 +507,12 @@ class FacebookService:
     async def authenticate_facebook_user(
         db,
         access_token: str,
-        account_type: str = "business",
+        account_type: str = "user",
     ):
         """
         Authenticate or register a user using Facebook Login.
+        If existing user (individual or business), preserves their role and marks onboarding complete.
+        If new user, registers as an Individual ('user') role with onboarding completed directly.
         Issues JWT access & refresh tokens and returns user doc + tokens.
         """
         from app.models.user import User
@@ -534,6 +553,8 @@ class FacebookService:
                 "facebook_connected": True,
                 "facebook_connected_at": now,
                 "updated_at": now,
+                "onboardingCompleted": True,
+                "onboarding_completed": True,
             }
             if picture_url and not existing_user.get("profileImageUrl"):
                 update_data["profileImageUrl"] = picture_url
@@ -545,7 +566,10 @@ class FacebookService:
             await db["users"].update_one({"_id": existing_user["_id"]}, {"$set": update_data})
             user_doc = await db["users"].find_one({"_id": existing_user["_id"]})
             user = User(**user_doc)
+            user.onboardingCompleted = True
         else:
+            # Default new Facebook registration to Individual User role
+            eff_account_type = "user" if account_type in (None, "", "user", "individual") else account_type
             random_pwd = get_password_hash(f"fb_{uuid.uuid4()}_{secrets.token_hex(8)}")
             user = User(
                 fullName=full_name,
@@ -553,25 +577,27 @@ class FacebookService:
                 lastName=last_name,
                 email=email,
                 hashed_password=random_pwd,
-                accountType=account_type or "business",
+                accountType=eff_account_type,
+                role="user",
                 authProviders=["facebook"],
                 emailVerified=True,
                 email_verified=True,
                 emailVerifiedAt=now,
                 termsAcceptedAt=now,
                 profileImageUrl=picture_url,
-                role="user",
             )
-            user.onboardingCompleted = False
-            user.onboarding_step = 1
+            user.onboardingCompleted = True
+            user.onboarding_step = 3
             doc = user.model_dump(by_alias=True, exclude={"id"})
             doc["facebookId"] = fb_id
             doc["facebook_access_token"] = encrypted_token
             doc["facebook_connected"] = True
             doc["facebook_connected_at"] = now
-            doc["onboardingCompleted"] = False
-            doc["onboarding_completed"] = False
-            doc["onboarding_step"] = 1
+            doc["onboardingCompleted"] = True
+            doc["onboarding_completed"] = True
+            doc["onboarding_step"] = 3
+            doc["accountType"] = eff_account_type
+            doc["role"] = "user"
             result = await db["users"].insert_one(doc)
             user.id = str(result.inserted_id)
 
@@ -712,6 +738,46 @@ class FacebookService:
         api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0")
 
         async with httpx.AsyncClient(timeout=30.0) as client:
+            # 1. Automatically resolve real Page Access Token from /me/accounts if token is user token or page token missing
+            user_token_candidate = (business and business.get("fb_user_access_token")) or fb_page_token
+            if user_token_candidate and user_token_candidate not in ("DEMO_FB_ACCESS_TOKEN", "DEMO_MODE"):
+                try:
+                    acc_res = await client.get(
+                        f"{GRAPH_API_BASE}/{api_version}/me/accounts",
+                        params={"fields": "id,name,access_token", "access_token": user_token_candidate}
+                    )
+                    if acc_res.status_code == 200:
+                        accounts_data = acc_res.json().get("data", [])
+                        if accounts_data:
+                            matched_acc = None
+                            if fb_page_id:
+                                for p in accounts_data:
+                                    if str(p.get("id")) == str(fb_page_id):
+                                        matched_acc = p
+                                        break
+                            if not matched_acc:
+                                matched_acc = accounts_data[0]
+                                fb_page_id = str(matched_acc["id"])
+
+                            if matched_acc.get("access_token"):
+                                fb_page_token = matched_acc["access_token"]
+                                logger.info(f"Resolved valid Page Access Token for Facebook Page '{matched_acc.get('name')}' ({fb_page_id})")
+                                if business:
+                                    try:
+                                        await db["businesses"].update_one(
+                                            {"$or": business_query_or},
+                                            {"$set": {
+                                                "fb_page_id": fb_page_id,
+                                                "fb_page_name": matched_acc.get("name"),
+                                                "fb_page_access_token": fb_page_token,
+                                                "fb_access_token": fb_page_token,
+                                            }}
+                                        )
+                                    except Exception:
+                                        pass
+                except Exception as acc_e:
+                    logger.warning(f"Could not auto-fetch Page token from accounts: {acc_e}")
+
             try:
                 is_valid_image = bool(
                     effective_image_url and
@@ -781,9 +847,17 @@ class FacebookService:
                 logger.error(f"Facebook Graph API Publish Error ({e.response.status_code}): {err_data}")
 
                 is_perm_issue = (
-                    "pages_manage_posts" in err_msg
-                    or (err_code == 200 and "pages_manage_posts" in str(err_data))
-                    or "pages_read_engagement" in err_msg
+                    err_code == 200
+                    or "publish_actions" in err_msg.lower()
+                    or "pages_manage_posts" in err_msg.lower()
+                    or "pages_read_engagement" in err_msg.lower()
+                    or "permission" in err_msg.lower()
+                    or "deprecated" in err_msg.lower()
+                    or "manage_pages" in err_msg.lower()
+                    or "publish_pages" in err_msg.lower()
+                    or "publish_to_groups" in err_msg.lower()
+                    or "unsupported post request" in err_msg.lower()
+                    or "oauth" in err_msg.lower()
                 )
 
                 # Development / Test mode graceful publishing fallback:

@@ -26,8 +26,14 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-flash-lite-latest"
     GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
     VIDEO_PROVIDER: str = "veo"
+    VOICE_PROVIDER: str = "gtts"
+    VIDEO_API_KEY: Optional[str] = None
+    IMAGE_API_KEY: Optional[str] = None
+    IMAGE_API_URL: Optional[str] = None
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    JWT_SECRET: Optional[str] = None
+    MONGODB_URI: Optional[str] = None
 
     FASHION_IMAGE_PROVIDER: str = "gemini"
     FASHION_IMAGE_API_KEY: str | None = None
@@ -119,6 +125,12 @@ class Settings(BaseSettings):
             self.INSTAGRAM_APP_ID = self.INSTAGRAM_APPID
         if not self.INSTAGRAM_APP_SECRET and (self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET):
             self.INSTAGRAM_APP_SECRET = self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET
+        if not self.JWT_SECRET_KEY and self.JWT_SECRET:
+            self.JWT_SECRET_KEY = self.JWT_SECRET
+        if self.JWT_SECRET and self.JWT_ACCESS_SECRET == "development_access_secret":
+            self.JWT_ACCESS_SECRET = self.JWT_SECRET
+        if self.MONGODB_URI and (not self.MONGO_URI or self.MONGO_URI == "mongodb://localhost:27017"):
+            self.MONGO_URI = self.MONGODB_URI
         return self
 
     _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
