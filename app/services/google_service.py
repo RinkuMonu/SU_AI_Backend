@@ -130,27 +130,8 @@ class GoogleService:
         # Check if user already exists in active users collection
         existing = await db['users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
 
-        if auth_mode == 'login':
-            if not existing:
-                # Check if user exists in pending_users
-                pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
-                if pending_existing:
-                    user_id = str(pending_existing['_id'])
-                    user = User.from_mongo(pending_existing)
-                    user.id = user_id
-                    user.onboardingCompleted = False
-                    jwt_access_token = AuthService.create_token(
-                        user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-                    )
-                    jwt_refresh_token = AuthService.create_token(
-                        user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-                    )
-                    return user, jwt_access_token, jwt_refresh_token
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No account found with this Google email. Please sign up first."
-                )
-
+        if existing:
+            # User exists in active users collection -> log them in
             user_id = str(existing['_id'])
             user = User.from_mongo(existing)
             update_data = {
@@ -170,50 +151,42 @@ class GoogleService:
             user.emailVerified = True
             user.email_verified = True
             user.id = user_id
-
-        elif auth_mode == 'signup':
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An account with this email already exists. Please log in instead."
-                )
-
-            # Clear any abandoned previous pending registration
-            await db['pending_users'].delete_many({'$or': [{'email': email}, {'googleId': google_id}]})
-
-            random_pwd = get_password_hash(secrets.token_urlsafe(32))
-            user = User(
-                fullName=full_name,
-                name=full_name,
-                firstName=first_name,
-                lastName=last_name,
-                email=email,
-                hashed_password=random_pwd,
-                accountType=account_type or 'business',
-                authProviders=['google'],
-                emailVerified=True,
-                email_verified=True,
-                emailVerifiedAt=now,
-                termsAcceptedAt=now,
-                profileImageUrl=picture_url,
-                role='user',
-                onboardingCompleted=False,
-                onboarding_step=1
-            )
-            doc = user.model_dump(by_alias=True, exclude={'id'})
-            doc['googleId'] = google_id
-            doc['onboardingCompleted'] = False
-            doc['onboarding_step'] = 1
-
-            # Save to pending_users ONLY (do NOT save into users collection until onboarding is completed)
-            result = await db['pending_users'].insert_one(doc)
-            user.id = str(result.inserted_id)
-
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid auth mode: {mode}. Allowed modes are 'login' or 'signup'."
-            )
+            # Check if user exists in pending_users
+            pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
+            if pending_existing:
+                user_id = str(pending_existing['_id'])
+                user = User.from_mongo(pending_existing)
+                user.id = user_id
+                user.onboardingCompleted = False
+            else:
+                # Brand new user -> auto-register in pending_users for onboarding
+                random_pwd = get_password_hash(secrets.token_urlsafe(32))
+                user = User(
+                    fullName=full_name,
+                    name=full_name,
+                    firstName=first_name,
+                    lastName=last_name,
+                    email=email,
+                    hashed_password=random_pwd,
+                    accountType=account_type or 'business',
+                    authProviders=['google'],
+                    emailVerified=True,
+                    email_verified=True,
+                    emailVerifiedAt=now,
+                    termsAcceptedAt=now,
+                    profileImageUrl=picture_url,
+                    role='user',
+                    onboardingCompleted=False,
+                    onboarding_step=1
+                )
+                doc = user.model_dump(by_alias=True, exclude={'id'})
+                doc['googleId'] = google_id
+                doc['onboardingCompleted'] = False
+                doc['onboarding_step'] = 1
+
+                result = await db['pending_users'].insert_one(doc)
+                user.id = str(result.inserted_id)
 
         jwt_access_token = AuthService.create_token(
             user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
