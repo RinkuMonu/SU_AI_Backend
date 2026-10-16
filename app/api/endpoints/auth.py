@@ -29,12 +29,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 def set_refresh_cookie(response: Response, refresh_token: str):
+    is_live = (
+        settings.ENVIRONMENT == "production"
+        or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
+        or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
+    )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=settings.ENVIRONMENT == "production",
-        samesite="lax" if settings.ENVIRONMENT == "development" else "none",
+        secure=is_live,
+        samesite="none" if is_live else "lax",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 
@@ -229,7 +234,16 @@ async def logout(request: Request, response: Response):
     refresh_token = request.cookies.get("refresh_token")
     if refresh_token:
         await AuthService.logout(refresh_token)
-    response.delete_cookie("refresh_token")
+    is_live = (
+        settings.ENVIRONMENT == "production"
+        or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
+        or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        secure=is_live,
+        samesite="none" if is_live else "lax"
+    )
     return {"success": True, "message": "Logged out successfully"}
 
 @router.post("/refresh")

@@ -48,7 +48,12 @@ class LinkedInService:
                 detail="LinkedIn Client ID not configured in server settings."
             )
 
-        final_redirect = redirect_uri or settings.LINKEDIN_REDIRECT_URI or "http://localhost:3000/login/user"
+        default_redirect = f"{settings.FRONTEND_URL.rstrip('/')}/login/user" if settings.FRONTEND_URL else "http://localhost:3000/login/user"
+        configured_redirect = settings.LINKEDIN_REDIRECT_URI
+        if configured_redirect and settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://") and "localhost" in configured_redirect:
+            configured_redirect = default_redirect
+
+        final_redirect = redirect_uri or configured_redirect or default_redirect
         effective_state = state or f"{mode}_linkedin_{secrets.token_urlsafe(16)}"
         scopes = settings.LINKEDIN_SCOPES or "openid profile email w_member_social"
 
@@ -66,7 +71,12 @@ class LinkedInService:
         """Exchange authorization code for LinkedIn access token."""
         client_id = settings.LINKEDIN_CLIENT_ID or getattr(settings, "Linkedin_client_id", None)
         client_secret = settings.LINKEDIN_CLIENT_SECRET or getattr(settings, "Linkedin_client_secret", None)
-        final_redirect = redirect_uri or settings.LINKEDIN_REDIRECT_URI or "http://localhost:3000/login/user"
+        default_redirect = f"{settings.FRONTEND_URL.rstrip('/')}/login/user" if settings.FRONTEND_URL else "http://localhost:3000/login/user"
+        configured_redirect = settings.LINKEDIN_REDIRECT_URI
+        if configured_redirect and settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://") and "localhost" in configured_redirect:
+            configured_redirect = default_redirect
+
+        final_redirect = redirect_uri or configured_redirect or default_redirect
 
         if not client_id or not client_secret:
             raise HTTPException(

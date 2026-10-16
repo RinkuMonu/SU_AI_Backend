@@ -55,6 +55,11 @@ class FacebookService:
         """
         backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
         configured = getattr(settings, "FACEBOOK_REDIRECT_URI", "").strip()
+        # If in live production (api.dhandagrow.com), avoid stale ngrok or localtunnel from .env
+        if backend_url and "ngrok" not in backend_url and "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+            if not configured or "ngrok" in configured or "localhost" in configured or "loca.lt" in configured:
+                return f"{backend_url}/api/facebook/callback"
+
         if backend_url and ("ngrok" in backend_url or "localhost" in backend_url):
             return f"{backend_url}/api/facebook/callback"
         if configured:
