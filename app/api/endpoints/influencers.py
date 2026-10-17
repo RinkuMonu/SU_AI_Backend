@@ -308,21 +308,128 @@ async def search_locations(text: str, current_user = Depends(get_current_user)):
     from app.core.config import settings
     import os
     
-    # Optionally load from environment explicitly if not in settings yet
-    api_key = os.getenv("GEOAPIFY_API_KEY", "")
-    if not api_key:
-        api_key = getattr(settings, "GEOAPIFY_API_KEY", "")
+    # Load Google Maps API key from settings or environment
+    api_key = (
+        os.getenv("GOOGLE_MAPS_API_KEY", "") 
+        or getattr(settings, "GOOGLE_MAPS_API_KEY", "") 
+        or os.getenv("GOOGLE_MAP_API_KEY", "")
+        or getattr(settings, "GOOGLE_MAP_API_KEY", "")
+        or "AIzaSyCmTCmI8Hn8Du4M3rYzfSdhRVcx1oap59o"
+    )
         
     if not api_key:
-        raise HTTPException(status_code=500, detail="GEOAPIFY_API_KEY is not configured")
+        raise HTTPException(status_code=500, detail="GOOGLE_MAPS_API_KEY is not configured")
         
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            url = f"https://api.geoapify.com/v1/geocode/search?text={text}&apiKey={api_key}"
-            response = await client.get(url)
-            response.raise_for_status()
-            return {"success": True, "data": response.json()}
+            features = []
+            suggestions = []
+            
+            # 1. Primary: Use Google Places API (New) Autocomplete
+            try:
+                places_url = "https://places.googleapis.com/v1/places:autocomplete"
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-Goog-Api-Key": api_key
+                }
+                payload = {"input": text}
+                places_res = await client.post(places_url, headers=headers, json=payload)
+                if places_res.status_code == 200:
+                    places_data = places_res.json()
+                    suggestions = places_data.get("suggestions", [])
+                    for s in suggestions:
+                        pred = s.get("placePrediction", {})
+                        text_val = pred.get("text", {}).get("text", "")
+                        structured = pred.get("structuredFormat", {})
+                        main_text = structured.get("mainText", {}).get("text", "")
+                        secondary_text = structured.get("secondaryText", {}).get("text", "")
+                        place_id = pred.get("placeId", "")
+                        
+                        parts = [p.strip() for p in secondary_text.split(",") if p.strip()]
+                        country = parts[-1] if len(parts) >= 1 else ""
+                        state = parts[-2] if len(parts) >= 2 else (parts[0] if len(parts) == 1 else "")
+                        city = main_text
+                        
+                        features.append({
+                            "type": "Feature",
+                            "properties": {
+                                "formatted": text_val,
+                                "city": city,
+                                "state": state,
+                                "country": country,
+                                "place_id": place_id,
+                                "address_line1": main_text,
+                                "address_line2": secondary_text
+                            }
+                        })
+            except Exception as pe:
+                features = []
+
+            # 2. Fallback to Google Geocoding API if no suggestions
+            if not features:
+                geocode_url = f"https://maps.googleapis.com/maps/api/geocode/json?address={text}&key={api_key}"
+                geo_res = await client.get(geocode_url)
+                if geo_res.status_code == 200:
+                    geo_data = geo_res.json()
+                    for item in geo_data.get("results", []):
+                        formatted = item.get("formatted_address", "")
+                        comps = item.get("address_components", [])
+                        city = ""
+                        state = ""
+                        country = ""
+                        for comp in comps:
+                            types = comp.get("types", [])
+                            if "locality" in types:
+                                city = comp.get("long_name", "")
+                            elif "administrative_area_level_1" in types:
+                                state = comp.get("long_name", "")
+                            elif "country" in types:
+                                country = comp.get("long_name", "")
+                                
+                        features.append({
+                            "type": "Feature",
+                            "properties": {
+                                "formatted": formatted,
+                                "city": city,
+                                "state": state,
+                                "country": country,
+                                "place_id": item.get("place_id", ""),
+                                "address_line1": formatted
+                            }
+                        })
+
+            return {
+                "success": True, 
+                "data": {
+                    "features": features,
+                    "suggestions": suggestions
+                }
+            }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to fetch locations: {str(e)}")
+
+
+@router.get("/locations/details")
+async def get_location_details(place_id: str, current_user = Depends(get_current_user)):
+    """Fetch place details or coordinates using Google Maps Geocoding API."""
+    import httpx
+    from app.core.config import settings
+    import os
+    
+    api_key = (
+        os.getenv("GOOGLE_MAPS_API_KEY", "") 
+        or getattr(settings, "GOOGLE_MAPS_API_KEY", "") 
+        or "AIzaSyCmTCmI8Hn8Du4M3rYzfSdhRVcx1oap59o"
+    )
+    
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            url = f"https://maps.googleapis.com/maps/api/geocode/json?place_id={place_id}&key={api_key}"
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to fetch place details: {str(e)}")
 
 

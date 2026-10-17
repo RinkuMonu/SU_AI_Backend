@@ -63,8 +63,10 @@ class Settings(BaseSettings):
 
     PAYIN_URL: str = ""
     PAYIN_TOKEN: str = ""
-    
-    GEOAPIFY_API_KEY: str = ""
+    # Google Maps & Location API
+    GOOGLE_MAPS_API_KEY: str = "AIzaSyCmTCmI8Hn8Du4M3rYzfSdhRVcx1oap59o"
+    GOOGLE_MAP_API_KEY: Optional[str] = None
+    GEOAPIFY_API_KEY: Optional[str] = None
 
     def get_public_url(self, path: Optional[str]) -> str:
         """Converts a local media path into a fully qualified public URL using BACKEND_URL."""
@@ -100,6 +102,8 @@ class Settings(BaseSettings):
             self.INSTAGRAM_APP_ID = self.INSTAGRAM_APPID
         if not self.INSTAGRAM_APP_SECRET and (self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET):
             self.INSTAGRAM_APP_SECRET = self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET
+        if not self.GOOGLE_MAPS_API_KEY and self.GOOGLE_MAP_API_KEY:
+            self.GOOGLE_MAPS_API_KEY = self.GOOGLE_MAP_API_KEY
         return self
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
