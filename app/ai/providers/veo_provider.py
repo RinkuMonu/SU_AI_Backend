@@ -249,7 +249,7 @@ class VeoVideoProvider:
                     video_uri = getattr(gen_video, "uri", None)
 
                     # Ensure media directory exists
-                    media_dir = os.path.join("media", "videos")
+                    media_dir = os.path.join("uploads", "videos")
                     os.makedirs(media_dir, exist_ok=True)
 
                     out_filename = f"veo_{uuid.uuid4().hex[:10]}.mp4"
@@ -272,7 +272,7 @@ class VeoVideoProvider:
                     else:
                         raise VeoError("Generated video object did not contain video_bytes or uri.")
 
-                    rel_url = f"/media/videos/{out_filename}"
+                    rel_url = f"/uploads/videos/{out_filename}"
                     return rel_url
 
             except Exception as e:

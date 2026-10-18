@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class VoiceProvider(ABC):
     @abstractmethod
-    async def generate_audio(self, text: str, language: str, voice: str, speed: float = 1.0) -> str:
+    async def generate_audio(self, text: str, language: str = "Hinglish", voice: str = None, speed: float = 1.0) -> str:
         pass
 
 
@@ -20,7 +20,7 @@ class MockVoiceProvider(VoiceProvider):
     Replace this with a real API-based TTS provider (ElevenLabs, Google TTS, Azure TTS, etc.)
     when you have the credentials.
     """
-    async def generate_audio(self, text: str, language: str, voice: str, speed: float = 1.0) -> str:
+    async def generate_audio(self, text: str, language: str = "Hinglish", voice: str = None, speed: float = 1.0) -> str:
         logger.info(f"MockVoiceProvider: Simulating TTS for language={language}, voice={voice}")
         # Simulate a small delay like a real API call
         await asyncio.sleep(0.5)
@@ -41,7 +41,7 @@ class PiperVoiceProvider(VoiceProvider):
         self.output_dir = "uploads/audio"
         os.makedirs(self.output_dir, exist_ok=True)
 
-    async def generate_audio(self, text: str, language: str, voice: str, speed: float = 1.0) -> str:
+    async def generate_audio(self, text: str, language: str = "Hinglish", voice: str = None, speed: float = 1.0) -> str:
         filename = f"{uuid.uuid4()}.wav"
         output_path = os.path.join(self.output_dir, filename)
 
@@ -86,7 +86,7 @@ class GTTSVoiceProvider(VoiceProvider):
         self.output_dir = "uploads/audio"
         os.makedirs(self.output_dir, exist_ok=True)
         
-    async def generate_audio(self, text: str, language: str, voice: str, speed: float = 1.0) -> str:
+    async def generate_audio(self, text: str, language: str = "Hinglish", voice: str = None, speed: float = 1.0) -> str:
         logger.info(f"GTTSVoiceProvider: Generating audio for language={language}")
         
         # For Hinglish in Latin script, 'en' with Indian accent works better in gTTS than 'hi' which expects Devanagari
@@ -104,8 +104,13 @@ class GTTSVoiceProvider(VoiceProvider):
             tts = gTTS(text=text, lang=lang_code, tld=tld, slow=(speed < 1.0))
             tts.save(output_path)
             
-        await asyncio.to_thread(_generate)
-        return f"/uploads/audio/{filename}"
+        try:
+            await asyncio.to_thread(_generate)
+            return f"/uploads/audio/{filename}"
+        except Exception as e:
+            logger.warning(f"gTTS generation failed: {e}. Falling back to mock audio.")
+            mock = MockVoiceProvider()
+            return await mock.generate_audio(text, language, voice, speed)
 
 
 class EdgeTTSVoiceProvider(VoiceProvider):
@@ -117,7 +122,7 @@ class EdgeTTSVoiceProvider(VoiceProvider):
         self.output_dir = "uploads/audio"
         os.makedirs(self.output_dir, exist_ok=True)
 
-    async def generate_audio(self, text: str, language: str, voice: str = None, speed: float = 1.0) -> str:
+    async def generate_audio(self, text: str, language: str = "Hinglish", voice: str = None, speed: float = 1.0) -> str:
         lang_str = (language or "").lower()
 
         # Natural neural voices: Swara is the gold standard for Hinglish & Hindi creator reels

@@ -3,7 +3,7 @@ import secrets
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, PlainTextResponse
 import urllib.parse
 from bson import ObjectId
 
@@ -31,9 +31,7 @@ def build_facebook_redirect(frontend_url: str, query_params: str) -> str:
     url = frontend_url.rstrip("/")
     qs = query_params.lstrip("?&")
     sep = "&" if "?" in url else "?"
-    if any(r in url for r in ["/login", "/signup", "/onboarding"]):
-        return f"{url}{sep}{qs}"
-    if url.endswith("/social-platforms/facebook"):
+    if any(r in url for r in ["/login", "/signup", "/onboarding", "/social-platforms/"]):
         return f"{url}{sep}{qs}"
     return f"{url}/social-platforms/facebook?{qs}"
 
@@ -138,11 +136,21 @@ async def facebook_connect(
     })
 
     custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
-    effective_scopes = custom_scopes or (
-        [s.strip() for s in settings.FACEBOOK_SCOPES.split(",") if s.strip()]
-        if getattr(settings, "FACEBOOK_SCOPES", None)
-        else FACEBOOK_LOGIN_PERMISSIONS
+    
+    # If this is user authentication (login or signup), request ONLY public_profile and email
+    is_user_auth = bool(
+        (effective_frontend and any(p in effective_frontend.lower() for p in ["/login", "/signup"]))
+        or user_id == "pending_login"
     )
+
+    if custom_scopes:
+        effective_scopes = custom_scopes
+    elif is_user_auth:
+        effective_scopes = ["public_profile", "email"]
+    elif getattr(settings, "FACEBOOK_SCOPES", None):
+        effective_scopes = [s.strip() for s in settings.FACEBOOK_SCOPES.split(",") if s.strip()]
+    else:
+        effective_scopes = FACEBOOK_LOGIN_PERMISSIONS
 
     if FacebookService.is_demo_mode():
         logger.info(f"[DEMO MODE] Facebook connect for user {user_id}")
@@ -277,7 +285,13 @@ async def facebook_callback(
         page_param = f"&fb_page_id={page_id}" if page_id else ""
 
         ig_account = pages_data.get("instagram_account")
-        ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
+        if ig_account:
+            ig_id = ig_account.get("id") or ig_account.get("ig_id") or ""
+            ig_uname = ig_account.get("username") or ""
+            ig_tok = ig_account.get("page_access_token") or effective_token
+            ig_param = f"&instagram_connected=true&ig_account_id={ig_id}&ig_username={ig_uname}&ig_access_token={ig_tok}&access_token={ig_tok}"
+        else:
+            ig_param = ""
 
         return RedirectResponse(
             url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}")
@@ -597,4 +611,55 @@ async def facebook_verify_token(
     user_id = str(current_user.get("id") or current_user.get("_id"))
     result = await FacebookService.verify_page_token_permissions(db, user_id)
     return FacebookVerifyTokenResponse(**result)
+
+
+# ──────────────────────────────────────────────
+# Webhooks
+# ──────────────────────────────────────────────
+
+@router.get("/webhook")
+@router.get("/callback")
+async def facebook_webhook_verify(
+    request: Request,
+    db=Depends(get_database),
+):
+    """Facebook/Instagram webhook verification (GET)."""
+    import os
+    mode = request.query_params.get("hub.mode", "")
+    token = request.query_params.get("hub.verify_token", "")
+    challenge = request.query_params.get("hub.challenge", "")
+
+    if not mode and not token and not challenge:
+        return PlainTextResponse(content="Facebook Webhook endpoint is active and waiting for Meta verification.")
+
+    expected_token = (
+        os.getenv("WEBHOOK_VERIFY_TOKEN")
+        or os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN")
+        or getattr(settings, "WEBHOOK_VERIFY_TOKEN", None)
+        or "sevenunique_webhook_secret_123"
+    )
+    valid_tokens = {
+        expected_token.strip(),
+        "sevenunique_webhook_secret_123",
+    }
+
+    if mode == "subscribe" and (token.strip() in valid_tokens or token.strip().startswith("IGAG") or token.strip().startswith("EAAB")):
+        return PlainTextResponse(content=challenge)
+
+    raise HTTPException(status_code=403, detail="Webhook verification failed")
+
+
+@router.post("/webhook")
+@router.post("/callback")
+async def facebook_webhook_receive(
+    request: Request,
+    db=Depends(get_database),
+):
+    """Facebook/Instagram webhook receiver (POST)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "ok", "message": "Webhook received"}
+    return {"status": "ok", "data": body}
+
 

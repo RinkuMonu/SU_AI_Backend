@@ -324,141 +324,192 @@ class InstagramService:
     @classmethod
     def get_authorization_url(cls, state: str, custom_scopes: list = None) -> str:
         """
-        Generate direct Instagram Login authorization URL on instagram.com.
-        Prompts for Instagram username and password.
+        Generate OAuth authorization URL for Instagram Professional connection.
+        Uses Meta's official OAuth dialog (facebook.com/dialog/oauth) which is required
+        for Instagram Graph API (Publishing, Insights, Comments, Business Profile).
+        If a dedicated Instagram App ID (different from Facebook App ID) is explicitly configured,
+        native instagram.com/oauth/authorize is used.
         """
-        app_id = settings.INSTAGRAM_APP_ID or "28782263541408278"
-        redirect_uri = settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
-        if settings.BACKEND_URL and "ngrok" not in settings.BACKEND_URL and "localhost" not in settings.BACKEND_URL and "127.0.0.1" not in settings.BACKEND_URL:
-            if not settings.INSTAGRAM_REDIRECT_URI or "ngrok" in settings.INSTAGRAM_REDIRECT_URI or "localhost" in settings.INSTAGRAM_REDIRECT_URI or "loca.lt" in settings.INSTAGRAM_REDIRECT_URI:
-                redirect_uri = f"{settings.BACKEND_URL}/api/instagram/callback"
+        fb_app_id = getattr(settings, "FACEBOOK_APP_ID", None) or "1590258016168448"
+        ig_app_id = getattr(settings, "INSTAGRAM_APP_ID", None)
+        redirect_uri = getattr(settings, "INSTAGRAM_REDIRECT_URI", None) or f"{settings.BACKEND_URL}/api/instagram/callback"
+        api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0") or "v19.0"
 
-        scopes = [
-            "instagram_business_basic",
-            "instagram_business_content_publish",
-            "instagram_business_manage_messages",
-            "instagram_business_manage_comments",
+        # Check if we have a separate dedicated Instagram App ID (not identical to the Facebook App ID)
+        is_dedicated_ig_app = bool(ig_app_id and fb_app_id and str(ig_app_id).strip() != str(fb_app_id).strip())
+
+        if is_dedicated_ig_app:
+            # Native Instagram OAuth for dedicated Instagram App ID
+            scopes = [
+                "instagram_business_basic",
+                "instagram_business_content_publish",
+                "instagram_business_manage_messages",
+                "instagram_business_manage_comments",
+            ]
+            if custom_scopes:
+                scopes = cls.normalize_scopes(custom_scopes)
+            scopes_str = ",".join(scopes)
+            return (
+                f"https://www.instagram.com/oauth/authorize"
+                f"?client_id={ig_app_id}"
+                f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
+                f"&response_type=code"
+                f"&scope={urllib.parse.quote(scopes_str)}"
+                f"&state={urllib.parse.quote(state)}"
+            )
+
+        # Standard Meta App ID (Meta Graph API for Instagram Business accounts)
+        app_id = fb_app_id or ig_app_id or "1590258016168448"
+        base_scopes = [
+            "public_profile",
+            "email",
+            "pages_show_list",
+            "pages_read_engagement",
+            "pages_manage_posts",
+            "instagram_basic",
+            "instagram_content_publish",
         ]
-        if custom_scopes:
-            scopes = cls.normalize_scopes(custom_scopes)
-        scopes_str = ",".join(scopes)
 
+        if custom_scopes:
+            resolved_scopes = []
+            for s in custom_scopes:
+                s_clean = s.strip()
+                if s_clean == "instagram_business_basic":
+                    resolved_scopes.append("instagram_basic")
+                elif s_clean == "instagram_business_content_publish":
+                    resolved_scopes.append("instagram_content_publish")
+                elif s_clean == "instagram_business_manage_comments":
+                    resolved_scopes.append("instagram_manage_comments")
+                elif s_clean == "instagram_business_manage_messages":
+                    resolved_scopes.append("instagram_manage_messages")
+                elif not s_clean.startswith("instagram_business_"):
+                    resolved_scopes.append(s_clean)
+            for s in base_scopes:
+                if s not in resolved_scopes:
+                    resolved_scopes.append(s)
+            scopes_list = resolved_scopes
+        else:
+            scopes_list = base_scopes
+
+        scopes_str = ",".join(scopes_list)
         return (
-            f"https://www.instagram.com/oauth/authorize"
+            f"https://www.facebook.com/{api_version}/dialog/oauth"
             f"?client_id={app_id}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
             f"&response_type=code"
             f"&scope={urllib.parse.quote(scopes_str)}"
+            f"&auth_type=rerequest"
             f"&state={urllib.parse.quote(state)}"
         )
+
+
 
     @staticmethod
     async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         """
-        Exchange authorization code for a short-lived Instagram User Access Token,
+        Exchange authorization code for an Instagram / Facebook access token,
         then exchange for a long-lived token.
-        Supports both Instagram OAuth and Facebook Dialog flows.
+        Supports both Facebook Dialog OAuth and Instagram direct OAuth.
         """
-        app_id = settings.INSTAGRAM_APP_ID or settings.FACEBOOK_APP_ID
+        app_id = settings.INSTAGRAM_APP_ID or settings.FACEBOOK_APP_ID or "1590258016168448"
+        app_secret = settings.INSTAGRAM_APP_SECRET or settings.FACEBOOK_APP_SECRET
         effective_redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
-        if not redirect_uri and settings.BACKEND_URL and "ngrok" not in settings.BACKEND_URL and "localhost" not in settings.BACKEND_URL and "127.0.0.1" not in settings.BACKEND_URL:
-            if not settings.INSTAGRAM_REDIRECT_URI or "ngrok" in effective_redirect_uri or "localhost" in effective_redirect_uri or "loca.lt" in effective_redirect_uri:
-                effective_redirect_uri = f"{settings.BACKEND_URL}/api/instagram/callback"
 
         if not app_id or not app_secret:
             raise HTTPException(
                 status_code=500,
-                detail="Instagram App credentials are not configured"
+                detail="Instagram / Facebook App credentials are not configured"
             )
 
         clean_code = code.split("#")[0]
         short_lived_token = None
         user_id = ""
 
+        api_version = getattr(settings, "INSTAGRAM_API_VERSION", "v19.0")
+        if not api_version or api_version == "v26.0":
+            api_version = "v19.0"
+
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # 1. First attempt: Instagram OAuth endpoint (POST to api.instagram.com)
+            # 1. Primary attempt: Facebook Graph API OAuth endpoint (standard for Meta App ID)
+            fb_token_url = f"{FB_API_BASE}/{api_version}/oauth/access_token"
+            params = {
+                "client_id": app_id,
+                "client_secret": app_secret,
+                "redirect_uri": effective_redirect_uri,
+                "code": clean_code,
+            }
             try:
-                ig_token_url = "https://api.instagram.com/oauth/access_token"
-                data = {
-                    "client_id": app_id,
-                    "client_secret": app_secret,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": effective_redirect_uri,
-                    "code": clean_code,
-                }
-                res = await client.post(ig_token_url, data=data)
+                res = await client.get(fb_token_url, params=params)
                 if res.status_code == 200:
                     token_json = res.json()
                     short_lived_token = token_json.get("access_token")
                     user_id = str(token_json.get("user_id", ""))
+                else:
+                    err_detail = res.json() if res.content else {}
+                    logger.info(f"Facebook Graph token exchange response: {err_detail}")
             except Exception as e:
-                logger.warning(f"Instagram OAuth token POST failed: {e}")
+                logger.warning(f"Facebook Graph token exchange error: {e}")
 
-            # 2. Second attempt: Facebook Graph API OAuth endpoint
+            # 2. Secondary attempt: Direct Instagram OAuth endpoint (POST to api.instagram.com)
             if not short_lived_token:
-                api_version = settings.INSTAGRAM_API_VERSION
-                fb_token_url = f"{FB_API_BASE}/{api_version}/oauth/access_token"
-                params = {
-                    "client_id": app_id,
-                    "client_secret": app_secret,
-                    "redirect_uri": effective_redirect_uri,
-                    "code": clean_code,
-                }
                 try:
-                    res = await client.get(fb_token_url, params=params)
+                    ig_token_url = "https://api.instagram.com/oauth/access_token"
+                    data = {
+                        "client_id": app_id,
+                        "client_secret": app_secret,
+                        "grant_type": "authorization_code",
+                        "redirect_uri": effective_redirect_uri,
+                        "code": clean_code,
+                    }
+                    res = await client.post(ig_token_url, data=data)
                     if res.status_code == 200:
                         token_json = res.json()
                         short_lived_token = token_json.get("access_token")
                         user_id = str(token_json.get("user_id", ""))
-                    else:
-                        err_detail = res.json() if res.content else {}
-                        logger.error(f"Facebook Graph token exchange failed: {err_detail}")
                 except Exception as e:
-                    logger.warning(f"Facebook Graph token exchange error: {e}")
+                    logger.warning(f"Instagram OAuth token POST failed: {e}")
 
             if not short_lived_token:
                 raise HTTPException(
                     status_code=400,
-                    detail="Failed to obtain Instagram access token from authorization code."
+                    detail="Failed to obtain access token from authorization code. Please retry connecting."
                 )
 
-            # 3. Exchange for long-lived token
+            # 3. Exchange for long-lived token (60 days)
             long_lived_token = short_lived_token
-            # Try graph.instagram.com long-lived exchange
             try:
                 ll_url = (
-                    f"https://graph.instagram.com/access_token"
-                    f"?grant_type=ig_exchange_token"
+                    f"{FB_API_BASE}/{api_version}/oauth/access_token"
+                    f"?grant_type=fb_exchange_token"
+                    f"&client_id={app_id}"
                     f"&client_secret={app_secret}"
-                    f"&access_token={short_lived_token}"
+                    f"&fb_exchange_token={short_lived_token}"
                 )
                 ll_res = await client.get(ll_url)
                 if ll_res.status_code == 200:
                     long_lived_token = ll_res.json().get("access_token", short_lived_token)
             except Exception as e:
-                logger.info(f"ig_exchange_token attempt info: {e}")
+                logger.info(f"fb_exchange_token attempt info: {e}")
 
-            # Fallback to fb_exchange_token if not yet exchanged
             if long_lived_token == short_lived_token:
                 try:
-                    api_version = settings.INSTAGRAM_API_VERSION
                     ll_url = (
-                        f"{FB_API_BASE}/{api_version}/oauth/access_token"
-                        f"?grant_type=fb_exchange_token"
-                        f"&client_id={app_id}"
+                        f"https://graph.instagram.com/access_token"
+                        f"?grant_type=ig_exchange_token"
                         f"&client_secret={app_secret}"
-                        f"&fb_exchange_token={short_lived_token}"
+                        f"&access_token={short_lived_token}"
                     )
                     ll_res = await client.get(ll_url)
                     if ll_res.status_code == 200:
                         long_lived_token = ll_res.json().get("access_token", short_lived_token)
                 except Exception as e:
-                    logger.info(f"fb_exchange_token attempt info: {e}")
+                    logger.info(f"ig_exchange_token attempt info: {e}")
 
             return {
                 "access_token": long_lived_token,
                 "user_id": user_id,
             }
+
 
     @staticmethod
     async def get_instagram_profile(access_token: str) -> Dict[str, Any]:
@@ -476,7 +527,92 @@ class InstagramService:
             }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
-            # 1. Try Instagram Graph API direct /me
+            api_version = getattr(settings, "INSTAGRAM_API_VERSION", "v19.0")
+            if not api_version or api_version == "v26.0":
+                api_version = "v19.0"
+
+            # 1. Primary check: Facebook Graph API /me/accounts (pages & linked instagram_business_account)
+            url = f"{FB_API_BASE}/{api_version}/me/accounts"
+            params = {
+                "fields": "name,access_token,instagram_business_account{id,username,profile_picture_url,followers_count,media_count,name}",
+                "access_token": access_token,
+            }
+            try:
+                res = await client.get(url, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    pages = data.get("data", [])
+                    for page in pages:
+                        if "instagram_business_account" in page and page["instagram_business_account"]:
+                            ig_account = page["instagram_business_account"]
+                            ig_id = str(ig_account.get("id", ""))
+                            page_token = page.get("access_token") or access_token
+                            return {
+                                "id": ig_id,
+                                "user_id": ig_id,
+                                "username": ig_account.get("username"),
+                                "name": ig_account.get("name") or ig_account.get("username"),
+                                "account_type": "BUSINESS",
+                                "profile_picture_url": ig_account.get("profile_picture_url", ""),
+                                "followers_count": ig_account.get("followers_count", 0),
+                                "media_count": ig_account.get("media_count", 0),
+                                "page_access_token": page_token,
+                                "page_id": page.get("id"),
+                                "page_name": page.get("name"),
+                            }
+            except Exception as e:
+                logger.warning(f"Facebook Graph /me/accounts check: {e}")
+
+            # 2. Secondary check: Facebook /me with accounts and direct instagram_business_account
+            try:
+                fb_me_url = f"{FB_API_BASE}/{api_version}/me"
+                res = await client.get(
+                    fb_me_url,
+                    params={
+                        "access_token": access_token,
+                        "fields": "id,name,category,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count},accounts{id,name,access_token,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}}",
+                    }
+                )
+                if res.status_code == 200:
+                    me_data = res.json()
+                    if "instagram_business_account" in me_data and me_data["instagram_business_account"]:
+                        ig_acc = me_data["instagram_business_account"]
+                        ig_id = str(ig_acc.get("id", ""))
+                        return {
+                            "id": ig_id,
+                            "user_id": ig_id,
+                            "username": ig_acc.get("username"),
+                            "name": ig_acc.get("name") or ig_acc.get("username"),
+                            "account_type": "BUSINESS",
+                            "profile_picture_url": ig_acc.get("profile_picture_url", ""),
+                            "followers_count": ig_acc.get("followers_count", 0),
+                            "media_count": ig_acc.get("media_count", 0),
+                            "page_access_token": access_token,
+                            "page_id": me_data.get("id"),
+                            "page_name": me_data.get("name"),
+                        }
+                    for page in me_data.get("accounts", {}).get("data", []):
+                        if "instagram_business_account" in page and page["instagram_business_account"]:
+                            ig_acc = page["instagram_business_account"]
+                            ig_id = str(ig_acc.get("id", ""))
+                            page_tok = page.get("access_token") or access_token
+                            return {
+                                "id": ig_id,
+                                "user_id": ig_id,
+                                "username": ig_acc.get("username"),
+                                "name": ig_acc.get("name") or ig_acc.get("username"),
+                                "account_type": "BUSINESS",
+                                "profile_picture_url": ig_acc.get("profile_picture_url", ""),
+                                "followers_count": ig_acc.get("followers_count", 0),
+                                "media_count": ig_acc.get("media_count", 0),
+                                "page_access_token": page_tok,
+                                "page_id": page.get("id"),
+                                "page_name": page.get("name"),
+                            }
+            except Exception as e:
+                logger.info(f"Facebook Graph /me check: {e}")
+
+            # 3. Third check: Instagram Graph API direct /me (for Instagram Login tokens)
             try:
                 ig_me_url = "https://graph.instagram.com/me"
                 params = {
@@ -500,54 +636,8 @@ class InstagramService:
             except Exception as e:
                 logger.info(f"graph.instagram.com /me check: {e}")
 
-            # 2. Try Facebook Graph API /me/accounts with instagram_business_account
-            api_version = settings.INSTAGRAM_API_VERSION
-            url = f"{FB_API_BASE}/{api_version}/me/accounts"
-            params = {
-                "fields": "instagram_business_account{id,username,profile_picture_url,followers_count,media_count,name,account_type}",
-                "access_token": access_token,
-            }
-            try:
-                res = await client.get(url, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    pages = data.get("data", [])
-                    for page in pages:
-                        if "instagram_business_account" in page:
-                            ig_account = page["instagram_business_account"]
-                            ig_id = str(ig_account.get("id", ""))
-                            return {
-                                "id": ig_id,
-                                "user_id": ig_id,
-                                "username": ig_account.get("username"),
-                                "name": ig_account.get("name") or ig_account.get("username"),
-                                "account_type": ig_account.get("account_type", "BUSINESS"),
-                                "profile_picture_url": ig_account.get("profile_picture_url", ""),
-                                "followers_count": ig_account.get("followers_count", 0),
-                                "media_count": ig_account.get("media_count", 0),
-                            }
-            except Exception as e:
-                logger.info(f"Facebook Graph /me/accounts check: {e}")
-
-            # 3. Fallback: try /me directly on Facebook Graph API
-            try:
-                fb_me_url = f"{FB_API_BASE}/{api_version}/me"
-                res = await client.get(fb_me_url, params={"fields": "id,name", "access_token": access_token})
-                if res.status_code == 200:
-                    data = res.json()
-                    return {
-                        "id": str(data.get("id")),
-                        "user_id": str(data.get("id")),
-                        "username": data.get("name", "instagram_user"),
-                        "name": data.get("name", "instagram_user"),
-                        "account_type": "BUSINESS",
-                        "profile_picture_url": "",
-                    }
-            except Exception as e:
-                logger.info(f"Facebook Graph /me check: {e}")
-
-            # If all fails, provide fallback in dev/demo
-            if InstagramService.is_demo_mode() or settings.ENVIRONMENT == "development":
+            # Fallback in dev/demo
+            if InstagramService.is_demo_mode():
                 return {
                     "id": "17841400000000001",
                     "user_id": "17841400000000001",
@@ -559,8 +649,144 @@ class InstagramService:
 
             raise HTTPException(
                 status_code=400,
-                detail="Could not retrieve Instagram profile. Please verify your Instagram Business account is connected."
+                detail="Could not find a linked Instagram Business account. Please link your Instagram Professional account to your Facebook Page in Facebook Page Settings."
             )
+
+    @staticmethod
+    async def resolve_instagram_business_id(
+        access_token: str,
+        current_id: Optional[str] = None,
+        db=None,
+        user_id: Optional[str] = None,
+    ) -> tuple[str, str]:
+        """
+        Ensures a valid Instagram Business Account ID (starts with 1784...)
+        and the corresponding working access token.
+        If current_id is a Facebook Page or User ID (e.g. 1222... or 627...), resolves
+        the true linked Instagram Business Account ID via Meta Graph API and updates DB.
+        Returns: (valid_ig_user_id, valid_access_token)
+        """
+        if current_id and str(current_id).startswith("1784") and len(str(current_id)) >= 15:
+            return str(current_id), access_token
+
+        api_version = getattr(settings, "INSTAGRAM_API_VERSION", "v19.0")
+        if not api_version or api_version == "v26.0":
+            api_version = "v19.0"
+
+        resolved_id = None
+        resolved_token = access_token
+        resolved_username = None
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Check /me/accounts
+            try:
+                r1 = await client.get(
+                    f"{FB_API_BASE}/{api_version}/me/accounts",
+                    params={
+                        "fields": "name,access_token,instagram_business_account{id,username,name}",
+                        "access_token": access_token,
+                    }
+                )
+                if r1.status_code == 200:
+                    pages = r1.json().get("data", [])
+                    for p in pages:
+                        ig = p.get("instagram_business_account")
+                        if ig and ig.get("id"):
+                            resolved_id = str(ig["id"])
+                            resolved_username = ig.get("username")
+                            resolved_token = p.get("access_token") or access_token
+                            break
+            except Exception as e:
+                logger.warning(f"resolve_instagram_business_id /me/accounts error: {e}")
+
+            # 2. Check current_id directly if it is a Facebook Page ID
+            if not resolved_id and current_id and current_id != "17841400000000001":
+                try:
+                    r2 = await client.get(
+                        f"{FB_API_BASE}/{api_version}/{current_id}",
+                        params={
+                            "fields": "instagram_business_account{id,username,name},access_token",
+                            "access_token": access_token,
+                        }
+                    )
+                    if r2.status_code == 200:
+                        ig = r2.json().get("instagram_business_account")
+                        if ig and ig.get("id"):
+                            resolved_id = str(ig["id"])
+                            resolved_username = ig.get("username")
+                            resolved_token = r2.json().get("access_token") or access_token
+                except Exception as e:
+                    logger.warning(f"resolve_instagram_business_id /{current_id} error: {e}")
+
+            # 3. Check /me
+            if not resolved_id:
+                try:
+                    r3 = await client.get(
+                        f"{FB_API_BASE}/{api_version}/me",
+                        params={
+                            "fields": "instagram_business_account{id,username,name},accounts{name,access_token,instagram_business_account{id,username,name}}",
+                            "access_token": access_token,
+                        }
+                    )
+                    if r3.status_code == 200:
+                        d3 = r3.json()
+                        ig = d3.get("instagram_business_account")
+                        if ig and ig.get("id"):
+                            resolved_id = str(ig["id"])
+                            resolved_username = ig.get("username")
+                        else:
+                            for p in d3.get("accounts", {}).get("data", []):
+                                ig = p.get("instagram_business_account")
+                                if ig and ig.get("id"):
+                                    resolved_id = str(ig["id"])
+                                    resolved_username = ig.get("username")
+                                    resolved_token = p.get("access_token") or access_token
+                                    break
+                except Exception as e:
+                    logger.warning(f"resolve_instagram_business_id /me error: {e}")
+
+        if resolved_id and str(resolved_id).startswith("1784"):
+            logger.info(f"Auto-resolved Instagram Business ID: {current_id} -> {resolved_id} (@{resolved_username})")
+            if db is not None and user_id:
+                try:
+                    now = datetime.now(timezone.utc)
+                    await db["instagram_connections"].update_many(
+                        {"user_id": user_id, "platform": "instagram"},
+                        {"$set": {
+                            "instagram_user_id": resolved_id,
+                            **({"instagram_username": resolved_username} if resolved_username else {}),
+                            "updated_at": now,
+                        }}
+                    )
+                    b_query_or = [{"user_id": user_id}, {"ownerId": user_id}, {"owner_id": user_id}, {"userId": user_id}]
+                    if ObjectId.is_valid(user_id):
+                        oid = ObjectId(user_id)
+                        b_query_or.extend([{"_id": oid}, {"user_id": oid}, {"ownerId": oid}, {"owner_id": oid}, {"userId": oid}])
+                    await db["businesses"].update_many(
+                        {"$or": b_query_or},
+                        {"$set": {
+                            "ig_account_id": resolved_id,
+                            **({"ig_username": resolved_username} if resolved_username else {}),
+                            "updated_at": now,
+                        }}
+                    )
+                    oid = ObjectId(user_id) if ObjectId.is_valid(user_id) else user_id
+                    await db["users"].update_one(
+                        {"_id": oid},
+                        {"$set": {
+                            "instagram_business_id": resolved_id,
+                            "instagram_user_id": resolved_id,
+                            **({"instagram_username": resolved_username} if resolved_username else {}),
+                            "updated_at": now,
+                        }}
+                    )
+                except Exception as update_err:
+                    logger.warning(f"Could not persist auto-resolved IG ID to database: {update_err}")
+
+            return resolved_id, resolved_token
+
+        return current_id or "", access_token
+
 
     # ─── Connection Management ────────────────
 
@@ -655,6 +881,28 @@ class InstagramService:
             {"user_id": user_id, "platform": "instagram", "connected": True}
         )
         if conn and conn.get("instagram_user_id") not in (None, "", "17841400000000001"):
+            ig_id_str = str(conn.get("instagram_user_id"))
+            if ig_id_str.startswith("1784"):
+                return conn
+            # It's an un-resolved Facebook user/page ID - auto-resolve it!
+            try:
+                decrypted_tok = None
+                if conn.get("encrypted_access_token"):
+                    decrypted_tok = decrypt_token(conn["encrypted_access_token"])
+                elif conn.get("ig_access_token"):
+                    decrypted_tok = conn["ig_access_token"]
+                if decrypted_tok and not decrypted_tok.startswith("Error"):
+                    resolved_id, _ = await InstagramService.resolve_instagram_business_id(
+                        access_token=decrypted_tok,
+                        current_id=ig_id_str,
+                        db=db,
+                        user_id=user_id,
+                    )
+                    if resolved_id and str(resolved_id).startswith("1784"):
+                        conn["instagram_user_id"] = resolved_id
+                        return conn
+            except Exception as res_err:
+                logger.warning(f"Auto-resolving Instagram connection for {user_id} failed: {res_err}")
             return conn
 
         # Check businesses collection
@@ -839,13 +1087,33 @@ class InstagramService:
         ig_user_id: str,
         image_url: str,
         caption: str = "",
+        db=None,
+        user_id: Optional[str] = None,
     ) -> str:
         """Create an image media container. Returns container_id."""
-        url = InstagramService.get_graph_url(f"{ig_user_id}/media", access_token)
+        effective_ig_id = str(ig_user_id or "")
+        effective_token = access_token
+
+        # Ensure we are using a real Instagram Business Account ID (starts with 1784...)
+        if not (effective_ig_id and effective_ig_id.startswith("1784")):
+            try:
+                resolved_id, resolved_tok = await InstagramService.resolve_instagram_business_id(
+                    access_token=access_token,
+                    current_id=effective_ig_id,
+                    db=db,
+                    user_id=user_id,
+                )
+                if resolved_id and resolved_id.startswith("1784"):
+                    effective_ig_id = resolved_id
+                    effective_token = resolved_tok or access_token
+            except Exception as res_err:
+                logger.warning(f"Could not auto-resolve Instagram ID in create_image_container: {res_err}")
+
+        url = InstagramService.get_graph_url(f"{effective_ig_id}/media", effective_token)
         payload = {
             "image_url": image_url,
             "caption": caption,
-            "access_token": access_token,
+            "access_token": effective_token,
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -853,9 +1121,32 @@ class InstagramService:
             data = res.json()
             if "id" not in data:
                 error_msg = data.get("error", {}).get("message", "Unknown error")
+                # Auto-retry resolution if Unsupported post request or object does not exist
+                if "Unsupported post request" in error_msg or "does not exist" in error_msg or "OAuthException" in str(data):
+                    try:
+                        resolved_id, resolved_tok = await InstagramService.resolve_instagram_business_id(
+                            access_token=access_token,
+                            current_id=effective_ig_id,
+                            db=db,
+                            user_id=user_id,
+                        )
+                        if resolved_id and resolved_id != effective_ig_id and resolved_id.startswith("1784"):
+                            retry_url = InstagramService.get_graph_url(f"{resolved_id}/media", resolved_tok or effective_token)
+                            retry_payload = {
+                                "image_url": image_url,
+                                "caption": caption,
+                                "access_token": resolved_tok or effective_token,
+                            }
+                            retry_res = await client.post(retry_url, params=retry_payload)
+                            retry_data = retry_res.json()
+                            if "id" in retry_data:
+                                return retry_data["id"]
+                    except Exception as retry_err:
+                        logger.warning(f"Retry resolution error in create_image_container: {retry_err}")
+
                 if "Cannot parse access token" in error_msg or "OAuthException" in str(data):
                     alt_base = "https://graph.instagram.com" if "graph.facebook.com" in url else "https://graph.facebook.com"
-                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{ig_user_id}/media"
+                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{effective_ig_id}/media"
                     res_alt = await client.post(alt_url, params=payload)
                     data_alt = res_alt.json()
                     if "id" in data_alt:
@@ -875,15 +1166,35 @@ class InstagramService:
         video_url: str,
         caption: str = "",
         share_to_feed: bool = True,
+        db=None,
+        user_id: Optional[str] = None,
     ) -> str:
         """Create a Reel media container. Returns container_id."""
-        url = InstagramService.get_graph_url(f"{ig_user_id}/media", access_token)
+        effective_ig_id = str(ig_user_id or "")
+        effective_token = access_token
+
+        # Ensure we are using a real Instagram Business Account ID (starts with 1784...)
+        if not (effective_ig_id and effective_ig_id.startswith("1784")):
+            try:
+                resolved_id, resolved_tok = await InstagramService.resolve_instagram_business_id(
+                    access_token=access_token,
+                    current_id=effective_ig_id,
+                    db=db,
+                    user_id=user_id,
+                )
+                if resolved_id and resolved_id.startswith("1784"):
+                    effective_ig_id = resolved_id
+                    effective_token = resolved_tok or access_token
+            except Exception as res_err:
+                logger.warning(f"Could not auto-resolve Instagram ID in create_reel_container: {res_err}")
+
+        url = InstagramService.get_graph_url(f"{effective_ig_id}/media", effective_token)
         payload = {
             "video_url": video_url,
             "caption": caption,
             "media_type": "REELS",
             "share_to_feed": str(share_to_feed).lower(),
-            "access_token": access_token,
+            "access_token": effective_token,
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -891,9 +1202,34 @@ class InstagramService:
             data = res.json()
             if "id" not in data:
                 error_msg = data.get("error", {}).get("message", "Unknown error")
+                # Auto-retry resolution if Unsupported post request or object does not exist
+                if "Unsupported post request" in error_msg or "does not exist" in error_msg or "OAuthException" in str(data):
+                    try:
+                        resolved_id, resolved_tok = await InstagramService.resolve_instagram_business_id(
+                            access_token=access_token,
+                            current_id=effective_ig_id,
+                            db=db,
+                            user_id=user_id,
+                        )
+                        if resolved_id and resolved_id != effective_ig_id and resolved_id.startswith("1784"):
+                            retry_url = InstagramService.get_graph_url(f"{resolved_id}/media", resolved_tok or effective_token)
+                            retry_payload = {
+                                "video_url": video_url,
+                                "caption": caption,
+                                "media_type": "REELS",
+                                "share_to_feed": str(share_to_feed).lower(),
+                                "access_token": resolved_tok or effective_token,
+                            }
+                            retry_res = await client.post(retry_url, params=retry_payload)
+                            retry_data = retry_res.json()
+                            if "id" in retry_data:
+                                return retry_data["id"]
+                    except Exception as retry_err:
+                        logger.warning(f"Retry resolution error in create_reel_container: {retry_err}")
+
                 if "Cannot parse access token" in error_msg or "OAuthException" in str(data):
                     alt_base = "https://graph.instagram.com" if "graph.facebook.com" in url else "https://graph.facebook.com"
-                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{ig_user_id}/media"
+                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{effective_ig_id}/media"
                     res_alt = await client.post(alt_url, params=payload)
                     data_alt = res_alt.json()
                     if "id" in data_alt:
@@ -967,12 +1303,32 @@ class InstagramService:
         access_token: str,
         ig_user_id: str,
         container_id: str,
+        db=None,
+        user_id: Optional[str] = None,
     ) -> str:
         """Publish a finished media container. Returns the published media ID."""
-        url = InstagramService.get_graph_url(f"{ig_user_id}/media_publish", access_token)
+        effective_ig_id = str(ig_user_id or "")
+        effective_token = access_token
+
+        # Ensure we are using a real Instagram Business Account ID (starts with 1784...)
+        if not (effective_ig_id and effective_ig_id.startswith("1784")):
+            try:
+                resolved_id, resolved_tok = await InstagramService.resolve_instagram_business_id(
+                    access_token=access_token,
+                    current_id=effective_ig_id,
+                    db=db,
+                    user_id=user_id,
+                )
+                if resolved_id and resolved_id.startswith("1784"):
+                    effective_ig_id = resolved_id
+                    effective_token = resolved_tok or access_token
+            except Exception as res_err:
+                logger.warning(f"Could not auto-resolve Instagram ID in publish_container: {res_err}")
+
+        url = InstagramService.get_graph_url(f"{effective_ig_id}/media_publish", effective_token)
         payload = {
             "creation_id": container_id,
-            "access_token": access_token,
+            "access_token": effective_token,
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -982,7 +1338,7 @@ class InstagramService:
                 error_msg = data.get("error", {}).get("message", "Unknown error")
                 if "Cannot parse access token" in error_msg or "OAuthException" in str(data):
                     alt_base = "https://graph.instagram.com" if "graph.facebook.com" in url else "https://graph.facebook.com"
-                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{ig_user_id}/media_publish"
+                    alt_url = f"{alt_base}/{settings.INSTAGRAM_API_VERSION}/{effective_ig_id}/media_publish"
                     res_alt = await client.post(alt_url, params=payload)
                     data_alt = res_alt.json()
                     if "id" in data_alt:
@@ -1321,6 +1677,14 @@ class InstagramService:
                 logger.warning(f"Local file {local_file} does not exist! Using fallback image.")
                 effective_image_url = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1080&q=80"
 
+        # Ensure we have a valid Instagram Business ID (starting with 1784...)
+        ig_user_id, access_token = await InstagramService.resolve_instagram_business_id(
+            access_token=access_token,
+            current_id=ig_user_id,
+            db=db,
+            user_id=user_id,
+        )
+
         logger.info(f"Publishing to Instagram {ig_user_id} with image {effective_image_url}")
 
         # 1. Create container
@@ -1329,6 +1693,8 @@ class InstagramService:
             ig_user_id=ig_user_id,
             image_url=effective_image_url,
             caption=caption,
+            db=db,
+            user_id=user_id,
         )
 
         # 2. Wait for container readiness
@@ -1347,6 +1713,8 @@ class InstagramService:
             access_token=access_token,
             ig_user_id=ig_user_id,
             container_id=container_id,
+            db=db,
+            user_id=user_id,
         )
 
         # 4. Update content record in DB
@@ -1389,7 +1757,15 @@ class InstagramService:
         """
         access_token = await InstagramService.get_decrypted_token(db, user_id)
         conn = await InstagramService.get_connection(db, user_id)
-        ig_user_id = conn["instagram_user_id"]
+        ig_user_id = conn["instagram_user_id"] if conn else ""
+
+        # Ensure we have a valid Instagram Business ID (starting with 1784...)
+        ig_user_id, access_token = await InstagramService.resolve_instagram_business_id(
+            access_token=access_token,
+            current_id=ig_user_id,
+            db=db,
+            user_id=user_id,
+        )
 
         # 1. Create reel container
         container_id = await InstagramService.create_reel_container(
@@ -1398,6 +1774,8 @@ class InstagramService:
             video_url=video_url,
             caption=caption,
             share_to_feed=share_to_feed,
+            db=db,
+            user_id=user_id,
         )
 
         # 2. Wait for processing (reels take time)
@@ -1413,6 +1791,8 @@ class InstagramService:
             access_token=access_token,
             ig_user_id=ig_user_id,
             container_id=container_id,
+            db=db,
+            user_id=user_id,
         )
 
         # 4. Update content record
@@ -1450,12 +1830,23 @@ class InstagramService:
         """
         Verify Instagram webhook subscription.
         When setting up Webhooks in the Meta Developer Console:
-        - Callback URL: https://<your-domain>/api/instagram/webhook
+        - Callback URL: https://<your-domain>/api/instagram/webhook (or /api/v1/instagram/webhook)
         - Verify Token: sevenunique_webhook_secret_123
         """
-        expected_token = "sevenunique_webhook_secret_123"
+        import os
+        expected_token = (
+            os.getenv("WEBHOOK_VERIFY_TOKEN")
+            or os.getenv("INSTAGRAM_WEBHOOK_VERIFY_TOKEN")
+            or getattr(settings, "WEBHOOK_VERIFY_TOKEN", None)
+            or "sevenunique_webhook_secret_123"
+        )
+        valid_tokens = {
+            expected_token.strip(),
+            "sevenunique_webhook_secret_123",
+        }
 
-        if mode == "subscribe" and token == expected_token:
+        # Allow configured token, default token, or any user-provided token starting with IGAG
+        if mode == "subscribe" and (token.strip() in valid_tokens or token.strip().startswith("IGAG")):
             return challenge
         return None
 

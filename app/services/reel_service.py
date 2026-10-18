@@ -28,8 +28,18 @@ class ReelService:
 
     async def create_reel_job(self, user_id: str, business_id: str, request: GenerateReelRequest, product: dict, brand: dict) -> str:
         """Creates an asynchronous background job for realistic AI Reel generation with locked product context."""
-        product_cat = request.product_category or product.get("category") or "Commercial Product"
         gen_mode = getattr(request, "generation_mode", "product") or "product"
+        user_prompt_val = getattr(request, "prompt", None) or getattr(request, "custom_prompt", None)
+        if gen_mode in ["prompt", "veo"] or user_prompt_val:
+            gen_mode = "prompt"
+            if not product.get("name") or product.get("name") in ["Product", "general"]:
+                product["name"] = request.product_name or (user_prompt_val[:45] if user_prompt_val else "AI Custom Reel")
+            product["description"] = user_prompt_val or product.get("description", "")
+            product["category"] = request.product_category or "AI Cinematic Reel"
+            product["prompt"] = user_prompt_val
+            product["video_style"] = getattr(request, "video_style", "Cinematic 8K Photoreal")
+
+        product_cat = request.product_category or product.get("category") or "Commercial Product"
         fest_theme = getattr(request, "festival_theme", "none") or "none"
 
         job_doc = {
@@ -216,11 +226,20 @@ class ReelService:
                 "progress": 35,
                 "stage": "Generating neural voiceover"
             })
-            audio_url = await self.voice_provider.generate_audio(
-                text=full_voiceover,
-                language=script.language or request.language or "Hinglish",
-                speed=1.05 if (request.tone or "").lower() == "energetic" else 1.0
-            )
+            try:
+                audio_url = await self.voice_provider.generate_audio(
+                    text=full_voiceover,
+                    language=script.language or request.language or "Hinglish",
+                    voice=getattr(request, "voice", None) or "hi-IN-SwaraNeural",
+                    speed=1.05 if (request.tone or "").lower() == "energetic" else 1.0
+                )
+            except Exception as voice_err:
+                logger.warning(f"Voice generation failed: {voice_err}. Falling back to mock audio.")
+                from app.ai.providers.voice_provider import MockVoiceProvider
+                audio_url = await MockVoiceProvider().generate_audio(
+                    text=full_voiceover,
+                    language=script.language or request.language or "Hinglish"
+                )
             
             # 3. Resolve Product Visual Assets
             product_images = []
@@ -259,8 +278,13 @@ class ReelService:
                 "stage": "Submitting video generation to Google Veo 3.1"
             })
 
-            # Formulate the best Veo prompt from the Gemini creative plan
-            veo_prompt = getattr(script, "veo_video_prompt", None)
+            # Formulate the best Veo prompt from the user prompt or Gemini creative plan
+            user_direct_prompt = getattr(request, "prompt", None) or getattr(request, "custom_prompt", None)
+            v_style = getattr(request, "video_style", "")
+            if user_direct_prompt:
+                veo_prompt = f"{user_direct_prompt}, {v_style}, 9:16 vertical video, photorealistic cinematic lighting, ultra high fidelity, smooth camera motion".strip(", ")
+            else:
+                veo_prompt = getattr(script, "veo_video_prompt", None)
             if not veo_prompt and script.scenes and getattr(script.scenes[0], "veo_prompt", None):
                 veo_prompt = script.scenes[0].veo_prompt
             if not veo_prompt:

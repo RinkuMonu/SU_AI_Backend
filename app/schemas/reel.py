@@ -16,12 +16,16 @@ class GenerateReelRequest(BaseModel):
     offer: Optional[str] = None
     additional_instruction: Optional[str] = None
     generation_mode: Optional[str] = "product"  # "product" (default) or "creative"
-    festival_theme: Optional[str] = "none"  # "none", "diwali", "holi", "eid", "christmas", "new_year"
+    festival_theme: Optional[str] = "none"
+    prompt: Optional[str] = None
+    custom_prompt: Optional[str] = None
+    video_style: Optional[str] = None
+    aspect_ratio: Optional[str] = "9:16"  # "none", "diwali", "holi", "eid", "christmas", "new_year"
 
     @field_validator("duration")
     @classmethod
     def validate_duration(cls, v):
-        allowed_durations = [10, 15, 20, 30]
+        allowed_durations = [5, 6, 8, 10, 15, 20, 30]
         if v not in allowed_durations:
             raise ValueError(f"Duration must be one of {allowed_durations}")
         return v

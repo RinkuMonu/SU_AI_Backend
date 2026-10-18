@@ -78,7 +78,8 @@ class FacebookService:
     @classmethod
     def get_authorization_url(cls, state: str, custom_scopes: Optional[List[str]] = None) -> str:
         """
-        Generate Facebook Login authorization URL with requested Instagram permissions.
+        Generate Facebook Login authorization URL.
+        Only valid Facebook permissions are passed (never instagram_business_*).
         """
         app_id = getattr(settings, "FACEBOOK_APP_ID", None) or getattr(settings, "INSTAGRAM_APP_ID", None)
         if not app_id:
@@ -95,7 +96,20 @@ class FacebookService:
         else:
             scopes_list = FACEBOOK_LOGIN_PERMISSIONS
 
-        scopes = ",".join(scopes_list)
+        # Sanitize: Map or strip any instagram_business_* scopes so Facebook doesn't throw 'Invalid Scopes'
+        sanitized = []
+        for s in scopes_list:
+            clean = s.strip()
+            if clean == "instagram_business_basic":
+                clean = "instagram_basic"
+            elif clean == "instagram_business_content_publish":
+                clean = "instagram_content_publish"
+            elif clean.startswith("instagram_business_"):
+                continue
+            if clean and clean not in sanitized:
+                sanitized.append(clean)
+
+        scopes = ",".join(sanitized)
         return (
             f"https://www.facebook.com/{api_version}/dialog/oauth"
             f"?client_id={app_id}"
@@ -105,6 +119,7 @@ class FacebookService:
             f"&auth_type=rerequest"
             f"&state={state}"
         )
+
 
     @classmethod
     async def exchange_code_for_token(cls, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
@@ -176,7 +191,7 @@ class FacebookService:
         params = {
             "fields": (
                 "id,name,access_token,category,tasks,"
-                "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count,account_type}"
+                "instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}"
             ),
             "access_token": user_access_token,
         }
@@ -202,7 +217,7 @@ class FacebookService:
                     me_res = await client.get(
                         me_url,
                         params={
-                            "fields": "id,name,category,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count,account_type}",
+                            "fields": "id,name,category,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count}",
                             "access_token": user_access_token,
                         }
                     )

@@ -114,7 +114,18 @@ def get_reel_script_prompt(
 """
 
     # 3. Generation mode rules
-    if generation_mode == "creative":
+    if generation_mode in ["prompt", "veo"]:
+        user_p = product.get("prompt") or product.get("custom_prompt") or additional_instruction or prod_name
+        v_style = product.get("video_style", "Cinematic 8K Photoreal")
+        mode_directives = f"""
+# GENERATION MODE: AI PROMPT TO REEL (GOOGLE VEO 3.1 & GEMINI STUDIO)
+- THE CORE CREATIVE VISION: "{user_p}"
+- VISUAL STYLE: {v_style}
+- This is a custom AI-directed reel brought to life directly from the user's prompt.
+- Create dynamic, visually stunning scenes that faithfully interpret the prompt.
+- Ensure 'veo_video_prompt' is a high-fidelity Veo 3.1 generation prompt (9:16 vertical video, cinematic camera movement, realistic physics, lighting, and textures).
+"""
+    elif generation_mode == "creative":
         mode_directives = f"""
 # GENERATION MODE: CREATIVE / EXPERIMENTAL
 - The user requested creative storytelling.

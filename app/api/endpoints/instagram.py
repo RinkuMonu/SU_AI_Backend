@@ -63,9 +63,7 @@ def build_instagram_redirect(frontend_url: str, query_params: str) -> str:
     url = frontend_url.rstrip("/")
     qs = query_params.lstrip("?&")
     sep = "&" if "?" in url else "?"
-    if any(r in url for r in ["/login", "/signup", "/onboarding"]):
-        return f"{url}{sep}{qs}"
-    if url.endswith("/social-platforms/instagram"):
+    if any(r in url for r in ["/login", "/signup", "/onboarding", "/social-platforms/"]):
         return f"{url}{sep}{qs}"
     return f"{url}/social-platforms/instagram?{qs}"
 
@@ -139,6 +137,7 @@ async def instagram_connect(
 @router.get("/callback")
 @router.get("/callback/")
 async def instagram_callback(
+    request: Request,
     code: str = Query(None),
     state: str = Query(None),
     error: str = Query(None),
@@ -148,11 +147,11 @@ async def instagram_callback(
 ):
     """
     Instagram OAuth callback endpoint.
-    Exchanges authorization code for long-lived access token,
-    retrieves Instagram Professional Profile info,
-    saves connection across businesses, users, and instagram_connections,
-    and redirects user to frontend with complete connection credentials.
+    Also handles webhook verification if Meta is pointed to /callback instead of /webhook.
     """
+    # If Meta triggers webhook verification on /callback
+    if request.query_params.get("hub.mode"):
+        return await webhook_verify(request=request, db=db)
     state_doc = None
     if state:
         state_doc = await db["instagram_oauth_states"].find_one_and_delete({"state": state})
@@ -1095,6 +1094,7 @@ async def webhook_verify(
 
 
 @router.post("/webhook")
+@router.post("/callback")
 async def webhook_receive(
     request: Request,
     db=Depends(get_database),

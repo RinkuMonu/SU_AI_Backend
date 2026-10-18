@@ -1016,13 +1016,15 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
         )
 
     mode = (req.mode or "login").lower().strip()
+    redirect_uri = req.redirect_uri or req.redirectUri
+    account_type = req.accountType or req.account_type or "business"
     user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
         db=db,
         code=req.code,
         access_token=req.access_token,
         id_token=req.id_token,
-        redirect_uri=req.redirect_uri,
-        account_type=req.accountType or "business",
+        redirect_uri=redirect_uri,
+        account_type=account_type,
         mode=mode,
     )
     set_refresh_cookie(response, refresh_token_jwt)
@@ -1072,13 +1074,15 @@ async def google_signup(req: GoogleAuthLoginRequest, response: Response):
             detail="Please provide 'code', 'access_token', or 'id_token'."
         )
 
+    redirect_uri = req.redirect_uri or req.redirectUri
+    account_type = req.accountType or req.account_type or "business"
     user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
         db=db,
         code=req.code,
         access_token=req.access_token,
         id_token=req.id_token,
-        redirect_uri=req.redirect_uri,
-        account_type=req.accountType or "business",
+        redirect_uri=redirect_uri,
+        account_type=account_type,
         mode="signup",
     )
     set_refresh_cookie(response, refresh_token_jwt)

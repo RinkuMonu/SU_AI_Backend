@@ -42,6 +42,8 @@ app = FastAPI(
 import os
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+os.makedirs("media", exist_ok=True)
+app.mount("/media", StaticFiles(directory="media"), name="media")
 if os.path.exists("assets"):
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
@@ -140,4 +142,6 @@ async def global_exception_handler(request: Request, exc: Exception):
         content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
     )
 
-# reload trigger
+# reload trigger 7
+
+# reload trigger 8

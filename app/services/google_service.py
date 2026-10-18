@@ -59,16 +59,20 @@ class GoogleService:
     @staticmethod
     async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         client_id, client_secret = GoogleService.get_credentials()
-        final_redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
+        final_redirect = (redirect_uri or settings.GOOGLE_REDIRECT_URI or "").strip()
+        if final_redirect.endswith("/") and len(final_redirect) > 1:
+            final_redirect = final_redirect.rstrip("/")
+
         if not client_id or not client_secret:
             raise HTTPException(
                 status_code=500,
                 detail='Google credentials not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your server environment variables.'
             )
+        cleaned_code = (code or "").strip()
         payload = {
-            'code': code,
-            'client_id': client_id,
-            'client_secret': client_secret,
+            'code': cleaned_code,
+            'client_id': client_id.strip(),
+            'client_secret': client_secret.strip(),
             'redirect_uri': final_redirect,
             'grant_type': 'authorization_code'
         }
@@ -76,7 +80,21 @@ class GoogleService:
             resp = await client.post(GOOGLE_TOKEN_URL, data=payload)
             if resp.status_code != 200:
                 logger.error(f'Google token exchange failed ({resp.status_code}): {resp.text}')
-                raise HTTPException(status_code=400, detail=f'Failed to exchange Google code: {resp.text}')
+                error_detail = "Failed to exchange Google code: Invalid or expired authorization code."
+                try:
+                    import json
+                    err_json = resp.json()
+                    err_type = err_json.get("error", "")
+                    err_desc = err_json.get("error_description", "")
+                    if err_type == "invalid_grant":
+                        error_detail = "Failed to exchange Google code: Authorization code has expired or was already used. Please sign in again."
+                    elif err_desc:
+                        error_detail = f"Failed to exchange Google code: {err_desc}"
+                    else:
+                        error_detail = f"Failed to exchange Google code: {resp.text}"
+                except Exception:
+                    error_detail = f"Failed to exchange Google code: {resp.text}"
+                raise HTTPException(status_code=400, detail=error_detail)
             return resp.json()
 
     @staticmethod
@@ -159,6 +177,14 @@ class GoogleService:
                 user = User.from_mongo(pending_existing)
                 user.id = user_id
                 user.onboardingCompleted = False
+                p_update = {
+                    'googleId': google_id,
+                    'emailVerified': True,
+                    'email_verified': True
+                }
+                if picture_url and not pending_existing.get('profileImageUrl'):
+                    p_update['profileImageUrl'] = picture_url
+                await db['pending_users'].update_one({'_id': ObjectId(user_id)}, {'$set': p_update})
             else:
                 # Brand new user -> auto-register in pending_users for onboarding
                 random_pwd = get_password_hash(secrets.token_urlsafe(32))

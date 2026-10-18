@@ -202,7 +202,9 @@ class GoogleAuthLoginRequest(BaseModel):
     access_token: Optional[str] = None
     id_token: Optional[str] = None
     redirect_uri: Optional[str] = None
+    redirectUri: Optional[str] = None
     accountType: Optional[str] = 'business'
+    account_type: Optional[str] = 'business'
     mode: Optional[str] = 'login'
 
 
