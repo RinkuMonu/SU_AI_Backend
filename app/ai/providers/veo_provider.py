@@ -35,36 +35,46 @@ class VeoVideoProvider:
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
+        self.backup_api_key = getattr(settings, "GEMINI_BACKUP_API_KEY", None)
         self.model = model or getattr(settings, "GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-preview")
         self._client = None
+        self._active_key = self.api_key
 
-    def _get_client(self):
-        if self._client is None:
-            if not self.api_key:
-                raise VeoError("GEMINI_API_KEY is not configured in backend environment.")
-            try:
-                from google import genai
-                self._client = genai.Client(api_key=self.api_key)
-            except ImportError:
-                raise VeoError("google-genai package is not installed.")
-            except Exception as e:
-                raise VeoError(f"Failed to initialize Google GenAI client: {e}")
-        return self._client
+    def _get_client(self, key_override: Optional[str] = None):
+        use_key = key_override or self.api_key or self.backup_api_key
+        if not use_key:
+            raise VeoError("GEMINI_API_KEY is not configured in backend environment.")
+        try:
+            from google import genai
+            self._client = genai.Client(api_key=use_key)
+            self._active_key = use_key
+            return self._client
+        except ImportError:
+            raise VeoError("google-genai package is not installed.")
+        except Exception as e:
+            raise VeoError(f"Failed to initialize Google GenAI client: {e}")
 
     async def _resolve_image_to_local_file(self, image_url_or_path: str) -> Optional[str]:
         """Ensures image is accessible as a local file for the GenAI SDK."""
         if not image_url_or_path:
             return None
 
-        # Check if already local
+        # 1. Check if URL references local uploads or media folder
+        if "/uploads/" in image_url_or_path:
+            clean_sub = "uploads/" + image_url_or_path.split("/uploads/", 1)[1]
+            if os.path.exists(clean_sub):
+                return clean_sub
+        if "/media/" in image_url_or_path:
+            clean_sub = "media/" + image_url_or_path.split("/media/", 1)[1]
+            if os.path.exists(clean_sub):
+                return clean_sub
+
+        # 2. Check if already local
+        clean_rel = image_url_or_path.lstrip("/\\")
+        if os.path.exists(clean_rel):
+            return clean_rel
         if os.path.exists(image_url_or_path):
             return image_url_or_path
-
-        # If it's a relative URL to our media directory
-        if image_url_or_path.startswith("/media/") or image_url_or_path.startswith("media/"):
-            clean_rel = image_url_or_path.lstrip("/")
-            if os.path.exists(clean_rel):
-                return clean_rel
 
         # If it's a remote URL, download to temporary file
         if image_url_or_path.startswith("http://") or image_url_or_path.startswith("https://"):
@@ -109,12 +119,17 @@ class VeoVideoProvider:
         Returns:
             dict containing operation_name, model, status, and metadata.
         """
-        client = self._get_client()
         from google.genai import types
         from google.genai.errors import ClientError
 
-        # Clamp duration to Veo bounds (4-8 seconds supported)
-        dur = min(max(int(duration_seconds), 4), 8)
+        # Google Veo strictly supports 4, 6, or 8 seconds (other values cause 400 INVALID_ARGUMENT)
+        dur_raw = int(duration_seconds)
+        if dur_raw <= 4:
+            dur = 4
+        elif dur_raw <= 6:
+            dur = 6
+        else:
+            dur = 8
 
         local_img_path = None
         genai_image = None
@@ -143,61 +158,71 @@ class VeoVideoProvider:
             f"aspect_ratio={aspect_ratio}, with_reference_image={bool(genai_image)}"
         )
 
+        keys_to_try = [k for k in [self.api_key, self.backup_api_key] if k]
+        last_error = None
+
         try:
-            # Run the synchronous SDK call in executor to keep event loop free
-            loop = asyncio.get_running_loop()
-            
-            def _call_veo():
-                kwargs = {
-                    "model": self.model,
-                    "prompt": prompt,
-                    "config": config,
-                }
-                if genai_image is not None:
-                    kwargs["image"] = genai_image
-                return client.models.generate_videos(**kwargs)
+            for idx, key in enumerate(keys_to_try):
+                client = self._get_client(key_override=key)
+                try:
+                    loop = asyncio.get_running_loop()
+                    
+                    def _call_veo():
+                        kwargs = {
+                            "model": self.model,
+                            "prompt": prompt,
+                            "config": config,
+                        }
+                        if genai_image is not None:
+                            kwargs["image"] = genai_image
+                        return client.models.generate_videos(**kwargs)
 
-            operation = await loop.run_in_executor(None, _call_veo)
-            
-            op_name = getattr(operation, "name", None) or f"veo-op-{uuid.uuid4().hex[:12]}"
-            is_done = getattr(operation, "done", False)
+                    operation = await loop.run_in_executor(None, _call_veo)
+                    
+                    op_name = getattr(operation, "name", None) or f"veo-op-{uuid.uuid4().hex[:12]}"
+                    is_done = getattr(operation, "done", False)
 
-            logger.info(f"Veo operation initiated successfully: name={op_name}, done={is_done}")
-            return {
-                "success": True,
-                "operation_name": op_name,
-                "model": self.model,
-                "done": is_done,
-                "operation": operation
-            }
+                    logger.info(f"Veo operation initiated successfully with key #{idx+1}: name={op_name}, done={is_done}")
+                    return {
+                        "success": True,
+                        "operation_name": op_name,
+                        "model": self.model,
+                        "done": is_done,
+                        "operation": operation
+                    }
 
-        except ClientError as ce:
-            err_str = str(ce)
-            logger.error(f"Veo API ClientError: {err_str}")
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                except ClientError as ce:
+                    err_str = str(ce)
+                    last_error = ce
+                    if "402" in err_str:
+                        logger.info(f"Veo key #{idx+1}: Prepayment credits depleted on Google AI Studio.")
+                        continue
+                    elif "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                        logger.info(f"Veo key #{idx+1}: Google AI Studio free tier has 0 video quota for Veo.")
+                        continue
+                    elif "404" in err_str or "NOT_FOUND" in err_str:
+                        raise VeoModelError(f"Configured Veo model '{self.model}' was not found or is not enabled for this project.")
+                    elif "403" in err_str or "PERMISSION_DENIED" in err_str:
+                        raise VeoModelError(f"Permission denied for Veo model '{self.model}'. Verify API key permissions.")
+                    else:
+                        logger.warning(f"Veo attempt with key #{idx+1} returned ClientError: {err_str}")
+                        raise VeoError(f"Veo API ClientError: {err_str}")
+
+                except Exception as e:
+                    err_str = str(e)
+                    last_error = e
+                    logger.warning(f"Veo attempt with key #{idx+1} failed: {err_str}")
+                    if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "402" in err_str:
+                        continue
+                    raise VeoError(f"Veo invocation failed: {err_str}")
+
+            err_str = str(last_error) if last_error else "Quota exhausted on all available keys"
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "402" in err_str:
                 raise VeoQuotaError(
-                    f"Google Veo API Quota Exceeded (429): Your Gemini API key currently has 0 video quota. "
+                    f"Google Veo API Quota Exceeded: Your Gemini API key currently has 0 video quota on AI Studio free tier. "
                     f"A paid Google Cloud / Gemini billing account is required for live Veo rendering."
                 )
-            elif "404" in err_str or "NOT_FOUND" in err_str:
-                raise VeoModelError(
-                    f"Configured Veo model '{self.model}' was not found or is not enabled for this project."
-                )
-            elif "403" in err_str or "PERMISSION_DENIED" in err_str:
-                raise VeoModelError(
-                    f"Permission denied for Veo model '{self.model}'. Verify API key permissions."
-                )
-            else:
-                raise VeoError(f"Veo API ClientError: {err_str}")
-
-        except Exception as e:
-            err_str = str(e)
-            logger.error(f"Unexpected error calling Veo: {err_str}")
-            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                raise VeoQuotaError(
-                    f"Google Veo API Quota Exceeded (429): Your Gemini API key currently has 0 video quota."
-                )
-            raise VeoError(f"Veo invocation failed: {err_str}")
+            raise VeoError(f"Veo invocation failed on all keys: {err_str}")
 
         finally:
             # Clean up temporary downloaded file if one was created

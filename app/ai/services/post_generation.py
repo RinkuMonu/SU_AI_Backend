@@ -17,15 +17,16 @@ _log = logging.getLogger(__name__)
 
 class PostGenerationService:
 
-    def _get_gemini_client(self):
-        if not settings.GEMINI_API_KEY:
-            return None
-        try:
-            import google.genai as genai
-            return genai.Client(api_key=settings.GEMINI_API_KEY)
-        except Exception as e:
-            _log.warning(f"Could not initialize google.genai Client: {e}")
-            return None
+    def _get_gemini_clients(self):
+        clients = []
+        import google.genai as genai
+        for k in [settings.GEMINI_API_KEY, getattr(settings, "GEMINI_BACKUP_API_KEY", None)]:
+            if k and k not in [c[0] for c in clients]:
+                try:
+                    clients.append((k, genai.Client(api_key=k)))
+                except Exception as e:
+                    _log.warning(f"Could not initialize google.genai Client for key: {e}")
+        return clients
 
     async def _load_reference_images(self, reference_images: list[str]) -> list[Image.Image]:
         """Loads and prepares reference images as PIL Image objects for Gemini."""
@@ -82,16 +83,16 @@ class PostGenerationService:
         pil_refs = await self._load_reference_images(reference_images)
         has_refs = len(pil_refs) > 0
 
-        client = self._get_gemini_client()
+        clients = self._get_gemini_clients()
 
         # Priority list of models with proven Gemini API availability
         models_to_try = [
             getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
             "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
             "gemini-flash-latest",
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
             "gemini-3-flash-preview",
-            "gemini-2.5-pro",
         ]
         unique_models = []
         for m in models_to_try:
@@ -102,7 +103,7 @@ class PostGenerationService:
         extracted_traits = None
 
         # Step 1: Accurate Subject & Trait Extraction via Gemini Multimodal Vision
-        if client and has_refs:
+        if clients and has_refs:
             vision_prompt = (
                 "Examine this reference image with extreme visual precision.\n"
                 "Identify:\n"
@@ -110,24 +111,27 @@ class PostGenerationService:
                 "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
                 "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
             )
-            for model_name in unique_models:
-                try:
-                    v_res = client.models.generate_content(
-                        model=model_name,
-                        contents=[*pil_refs, vision_prompt]
-                    )
-                    if v_res and v_res.text:
-                        v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
-                        v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
-                        if v_match:
-                            v_json = json.loads(v_match.group(0))
-                            extracted_subject = v_json.get("subject_name")
-                            extracted_traits = v_json.get("key_traits")
-                            _log.info(f"Gemini identified reference subject: '{extracted_subject}'")
-                            break
-                except Exception as e:
-                    _log.warning(f"Vision extraction note on {model_name}: {e}")
-                    continue
+            for _, client in clients:
+                for model_name in unique_models:
+                    try:
+                        v_res = client.models.generate_content(
+                            model=model_name,
+                            contents=[*pil_refs, vision_prompt]
+                        )
+                        if v_res and v_res.text:
+                            v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
+                            v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
+                            if v_match:
+                                v_json = json.loads(v_match.group(0))
+                                extracted_subject = v_json.get("subject_name")
+                                extracted_traits = v_json.get("key_traits")
+                                _log.info(f"Gemini identified reference subject: '{extracted_subject}'")
+                                break
+                    except Exception as e:
+                        _log.warning(f"Vision extraction note on {model_name}: {e}")
+                        continue
+                if extracted_subject:
+                    break
 
         # Step 2: Build Post Prompt with the identified subject anchored
         prompt = build_post_prompt(
@@ -145,22 +149,25 @@ class PostGenerationService:
 
         raw_text = ""
 
-        if client:
+        if clients:
             contents = [*pil_refs, prompt] if has_refs else [prompt]
-            for model_name in unique_models:
-                try:
-                    _log.info(f"Calling Gemini ({model_name}) for post content...")
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents
-                    )
-                    if response and response.text:
-                        raw_text = response.text.strip()
-                        _log.info(f"Gemini post generation succeeded with model: {model_name}")
-                        break
-                except Exception as e:
-                    _log.warning(f"Gemini model {model_name} failed: {e}")
-                    continue
+            for _, client in clients:
+                for model_name in unique_models:
+                    try:
+                        _log.info(f"Calling Gemini ({model_name}) for post content...")
+                        response = client.models.generate_content(
+                            model=model_name,
+                            contents=contents
+                        )
+                        if response and response.text:
+                            raw_text = response.text.strip()
+                            _log.info(f"Gemini post generation succeeded with model: {model_name}")
+                            break
+                    except Exception as e:
+                        _log.warning(f"Gemini model {model_name} failed: {e}")
+                        continue
+                if raw_text:
+                    break
 
         # Fallback to AIProviderFactory if client loop didn't yield text
         if not raw_text:

@@ -17,8 +17,8 @@ class UpgradeRequest(BaseModel):
 
 @router.get("/plans")
 async def get_plans():
-    # Return active public plans in order: FREE, STARTER, GROWTH, BUSINESS, INFLUENCER
-    public_keys = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER"]
+    # Return active public plans in order: FREE, STARTER, GROWTH, BUSINESS
+    public_keys = ["FREE", "STARTER", "GROWTH", "BUSINESS"]
     filtered_plans = {k: PLANS[k] for k in public_keys if k in PLANS}
     return {"success": True, "data": filtered_plans}
 

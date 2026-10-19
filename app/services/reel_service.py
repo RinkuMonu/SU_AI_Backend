@@ -154,7 +154,18 @@ class ReelService:
                     hook_headline = " ".join(words[:2])
                     hook_highlight = " ".join(words[2:])
                 else:
-                    hook_headline = "Meet the new..."
+                    if domain == "food_dining":
+                        hook_headline = "Craving this? 🤤"
+                    elif domain == "festive_cultural":
+                        hook_headline = "Happy Diwali! ✨"
+                    elif domain in ["saree_ethnic", "lehenga_ethnic"]:
+                        hook_headline = "Style drop! ✨"
+                    elif domain in ["skincare_beauty", "cosmetics_fragrance"]:
+                        hook_headline = "Glow up! ✨"
+                    elif domain in ["laptop_computer", "electronics_tech"]:
+                        hook_headline = "Next-gen tech! ⚡"
+                    else:
+                        hook_headline = "Stop scrolling! 🛑"
                     hook_highlight = f"{prod_name} 🔥"
                 script.hook_headline = hook_headline
                 script.hook_highlight = hook_highlight
@@ -172,6 +183,10 @@ class ReelService:
                     script.trending_audio = "Rangi Re (Trending)"
                     script.creator_name = script.creator_name or f"{business_name} Couture"
                     script.follower_count = script.follower_count or "24.5K followers"
+                elif domain == "festive_cultural":
+                    script.trending_audio = "Festive Dhun • Trending"
+                    script.creator_name = script.creator_name or f"{business_name} Festive"
+                    script.follower_count = script.follower_count or "68.4K followers"
                 elif domain in ["skincare_beauty", "cosmetics_fragrance"]:
                     script.trending_audio = "Bridal Sparkle • Trending"
                     script.creator_name = script.creator_name or f"{business_name} Glow"
@@ -370,7 +385,7 @@ class ReelService:
                 audio_url=audio_url,
                 brand_colors={"primary": brand.get("primary_color", "#7928CA")},
                 script=script,
-                product_name=product_name
+                product_name=f"{product_name} {product_category} {product_desc}".strip()
             )
 
             if not final_video_url:

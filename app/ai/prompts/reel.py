@@ -4,28 +4,80 @@ from typing import Optional, Dict, Any
 def detect_product_domain(product_name: str, category: str = "", description: str = "") -> str:
     combined = f"{product_name} {category} {description}".lower()
     
-    if any(k in combined for k in ["laptop", "macbook", "computer", "notebook", "pc", "desktop", "monitor", "keyboard", "mouse", "gpu", "processor"]):
-        return "laptop_computer"
-    if any(k in combined for k in ["earbuds", "headphone", "smartwatch", "watch", "tablet", "ipad", "gadget", "charger", "audio", "drone", "camera"]):
-        return "electronics_tech"
-    if any(k in combined for k in ["saree", "sari", "banarasi", "kanjivaram", "chanderi", "paithani", "silk"]):
+    # 1. Food, Gourmet & Dining
+    if any(k in combined for k in [
+        "burger", "smash", "patty", "cheddar", "bacon", "pizza", "biryani", "food", "dining",
+        "snack", "dish", "cuisine", "restaurant", "cafe", "beverage", "drink", "coffee", "tea",
+        "cake", "bakery", "dessert", "sandwich", "fries", "tacos", "pasta", "meal", "delicious",
+        "artisanal", "flavor", "crispy", "juicy", "sauce", "bun", "culinary", "chocolate", "sweet"
+    ]):
+        return "food_dining"
+
+    # 2. Automotive & High-Performance Cars
+    if any(k in combined for k in [
+        "hypercar", "supercar", "car", "automobile", "vehicle", "sports car", "race car",
+        "porsche", "ferrari", "lamborghini", "bmw", "mercedes", "tesla", "motorcycle", "bike", "drifting",
+        "highway drive", "speedometer", "exhaust"
+    ]):
+        return "automotive_cars"
+
+    # 3. Sports & Athletics
+    if any(k in combined for k in [
+        "sprinter", "runner", "running", "athlete", "athletic", "marathon", "track and field",
+        "olympic", "stadium", "sprint", "pushing off starting blocks"
+    ]):
+        return "sports_fitness"
+
+    # 4. Indian Festivals & Cultural Celebrations
+    if any(k in combined for k in [
+        "diwali", "deepavali", "sparkler", "phuljhadi", "diya", "diyas", "firecracker", "fireworks",
+        "holi", "gulal", "navratri", "garba", "dandiya", "eid", "christmas", "new year",
+        "festival", "festive", "celebration", "puja", "pooja", "raksha bandhan"
+    ]):
+        return "festive_cultural"
+
+    # 5. Ethnic Fashion (Sarees, Lehengas, Kurtas)
+    if any(k in combined for k in ["saree", "sari", "banarasi", "kanjivaram", "chanderi", "paithani", "silk saree", "zari"]):
         return "saree_ethnic"
-    if any(k in combined for k in ["lehenga", "choli", "anarkali", "sherwani", "kurta", "ethnic wear", "bridal wear"]):
+    if any(k in combined for k in ["lehenga", "choli", "anarkali", "sherwani", "kurta", "ethnic wear", "bridal wear", "garment", "dupatta"]):
         return "lehenga_ethnic"
-    if any(k in combined for k in ["hoodie", "tshirt", "t-shirt", "jacket", "jeans", "streetwear", "sneaker", "shoes", "pants", "suit", "blazer", "dress", "clothing"]):
-        return "fashion_streetwear"
+
+    # 6. Skincare & Beauty
     if any(k in combined for k in ["serum", "cream", "lotion", "moisturizer", "skincare", "skin care", "sunscreen", "cleanser", "toner", "face wash"]):
         return "skincare_beauty"
     if any(k in combined for k in ["lipstick", "foundation", "eyeliner", "mascara", "makeup", "cosmetic", "blush", "perfume", "fragrance", "cologne"]):
         return "cosmetics_fragrance"
-    if any(k in combined for k in ["jewelry", "jewellery", "necklace", "choker", "earring", "ring", "bangle", "bracelet", "gold", "diamond", "polki"]):
+
+    # 7. Luxury Jewellery (STRICT full terms - NEVER raw 'gold' or 'ring' substring)
+    if any(k in combined for k in [
+        "jewelry", "jewellery", "necklace", "choker", "earrings", "jhumka",
+        "diamond ring", "gold ring", "wedding ring", "finger ring", "bangles", "bracelet",
+        "diamond jewelry", "gold jewelry", "polki", "kundan", "precious gems", "diamond facet"
+    ]):
         return "jewellery_luxury"
-    if any(k in combined for k in ["coffee", "tea", "biryani", "burger", "pizza", "restaurant", "cafe", "food", "snack", "beverage", "bakery", "cake", "dining"]):
-        return "food_dining"
+
+    # 8. High Fashion, Runway & Streetwear
+    if any(k in combined for k in [
+        "runway", "gown", "haute couture", "fashion show", "couture", "model walking",
+        "hoodie", "tshirt", "t-shirt", "jacket", "jeans", "streetwear", "sneaker", "shoes", "pants", "suit", "blazer", "dress", "clothing", "apparel"
+    ]):
+        return "fashion_streetwear"
+
+    # 9. Fitness & Gym
     if any(k in combined for k in ["fitness", "gym", "workout", "protein", "supplement", "yoga", "training"]):
-        return "fitness_health"
+        return "sports_fitness"
+
+    # 10. Travel & Real Estate
     if any(k in combined for k in ["hotel", "resort", "travel", "tour", "vacation", "villa", "property", "real estate"]):
         return "travel_realestate"
+
+    # 11. Laptops & Computers
+    if any(k in combined for k in ["laptop", "macbook", "notebook", "desktop pc", "monitor", "mechanical keyboard", "gpu", "processor"]):
+        return "laptop_computer"
+
+    # 12. Consumer Electronics & Gadgets
+    if any(k in combined for k in ["earbuds", "earphone", "headphone", "smartwatch", "smart watch", "fitness band", "tablet", "ipad", "power bank", "charger", "gadget", "drone", "bluetooth speaker", "dslr camera", "action camera", "webcam"]):
+        return "electronics_tech"
     
     return "general_product"
 
@@ -50,8 +102,16 @@ def get_reel_script_prompt(
     business_name = brand.get("business_name") or brand.get("name") or "SevenUnique Partner"
     primary_color = brand.get("primary_color", "#7928CA")
 
+    # Auto-detect festival from all inputs if not set
+    all_text = f"{prod_name} {prod_category} {prod_desc} {additional_instruction or ''} {festival_theme or ''}".lower()
+    if not festival_theme or festival_theme.lower() in ["none", "null", "false", ""]:
+        for f_name in ["diwali", "deepavali", "holi", "navratri", "eid", "christmas", "new year", "raksha bandhan"]:
+            if f_name in all_text:
+                festival_theme = "diwali" if ("diwali" in f_name or "deepavali" in f_name) else f_name
+                break
+
     domain = detect_product_domain(prod_name, prod_category, prod_desc)
-    is_festival_explicit = bool(festival_theme and festival_theme.lower() not in ["none", "null", "false", ""])
+    is_festival_explicit = bool(festival_theme and festival_theme.lower() not in ["none", "null", "false", ""]) or domain == "festive_cultural"
 
     # 1. Domain-specific guidance tailored strictly to this product
     if domain in ["laptop_computer", "electronics_tech"]:
@@ -59,7 +119,21 @@ def get_reel_script_prompt(
 # DOMAIN FOCUS: ELECTRONICS & TECH HARDWARE
 - The hero product is strictly '{prod_name}'.
 - ALLOWED VISUALS: Sleek metallic/matte chassis, keyboard typing close-up, vivid high-refresh screen display, port details, ergonomic usage at a modern desk or professional creative workspace, precision hinge movement, ambient tech studio lighting.
-- FORBIDDEN VISUALS: Strictly DO NOT show sarees, lehengas, bridal clothing, lipstick, cosmetic creams, jewellery, food, or traditional wedding rituals. The product must look like a high-end tech commercial.
+- FORBIDDEN VISUALS: Strictly DO NOT show sarees, lehengas, bridal clothing, women with jewelry necklaces, laptops, food, or traditional wedding rituals. The product must look like a high-end tech commercial.
+"""
+    elif domain == "automotive_cars":
+        domain_directives = f"""
+# DOMAIN FOCUS: AUTOMOTIVE & HIGH-PERFORMANCE SUPERCARS
+- The hero subject is strictly the vehicle/car: '{prod_name}'.
+- ALLOWED VISUALS: Sleek metallic bodywork reflections, aerodynamic lines, glowing LED headlights/taillights, alloy wheel spin, exhaust flame/heat distortion, dynamic drone tracking shot along scenic highways or racetrack, ocean waves or urban neon in background, high-speed camera motion blur, golden hour or cinematic night lighting.
+- FORBIDDEN VISUALS: Strictly DO NOT show sarees, lehengas, bridal clothing, women with jewelry necklaces, laptops, food, or cosmetics. The commercial must look like an official Top Gear / Porsche / Ferrari supercar commercial.
+"""
+    elif domain == "sports_fitness":
+        domain_directives = f"""
+# DOMAIN FOCUS: ATHLETICS, SPORTS & FITNESS
+- The hero subject is strictly '{prod_name}'.
+- ALLOWED VISUALS: Athletic explosive power, sprinter starting blocks, sweat droplets flying in slow-motion, intense focused eyes, running track at dawn, stadium lighting, golden sunrise rim lighting, muscle definition, inspiring athletic motivation.
+- FORBIDDEN VISUALS: Strictly DO NOT show sarees, bridal jewelry necklaces, laptops, burgers, or office tech.
 """
     elif domain in ["saree_ethnic", "lehenga_ethnic"]:
         domain_directives = f"""
@@ -77,10 +151,18 @@ def get_reel_script_prompt(
 """
     elif domain == "food_dining":
         domain_directives = f"""
-# DOMAIN FOCUS: FOOD, BEVERAGE & DINING
+# DOMAIN FOCUS: GOURMET FOOD, BEVERAGE & DINING
 - The hero product is strictly '{prod_name}'.
-- ALLOWED VISUALS: Appetizing fresh steam, garnish drizzle, rich sauce texture, fresh ingredients, sizzling preparation, appetizing plating, warm ambient cafe/restaurant lighting.
-- FORBIDDEN VISUALS: Strictly DO NOT show laptops, clothing fashion, sarees, cosmetics, or electronics.
+- ALLOWED VISUALS: Sizzling culinary close-ups, steam gently rising, dripping rich sauce or melted cheddar cheese, golden toasted brioche bun, crispy smoked bacon texture, mouthwatering plating, warm restaurant or studio commercial lighting, dynamic macro push-in.
+- FORBIDDEN VISUALS: Strictly DO NOT show laptops, computers, high-refresh screens, metallic chassis, keyboards, smartwatches, office desks, clothing fashion, sarees, cosmetics, or unrelated tech. Every scene must be 100% appetizing gourmet food.
+"""
+    elif domain == "festive_cultural" or is_festival_explicit:
+        fest_label = festival_theme.upper() if festival_theme and festival_theme.lower() not in ["none", "null"] else "INDIAN FESTIVE"
+        domain_directives = f"""
+# DOMAIN FOCUS: {fest_label} CELEBRATION
+- The commercial focus is strictly celebrating '{prod_name}' or {fest_label} festival.
+- ALLOWED VISUALS: Joyful Indian couple/people in authentic festive ethnic attire (mustard yellow silk saree, festive embroidered kurta), lit golden sizzling sparklers (phuljhadi), warm glowing clay diyas, sparkling bokeh fairy lights, authentic festive celebration, happy smiles, warm night ambient lighting.
+- FORBIDDEN VISUALS: Strictly DO NOT show laptops, modern office tech, cold corporate desks, metallic computer chassis, unrelated gadgets, or Western corporate settings.
 """
     elif domain == "jewellery_luxury":
         domain_directives = f"""
@@ -94,23 +176,22 @@ def get_reel_script_prompt(
 # DOMAIN FOCUS: {prod_category.upper()}
 - The hero product is strictly '{prod_name}'.
 - ALLOWED VISUALS: Authentic showcase of '{prod_name}' highlighting {prod_desc or 'its premium quality and design'}, realistic usage in an appropriate modern setting.
-- FORBIDDEN VISUALS: Strictly DO NOT mix unrelated products from other categories. Every scene must feature '{prod_name}'.
+- FORBIDDEN VISUALS: Strictly DO NOT mix unrelated products from other categories. Never mention laptops, computer chassis, or tech screens unless this product is actually a computer. Every scene must feature '{prod_name}'.
 """
 
     # 2. Festival theme guidance
     if is_festival_explicit:
+        active_fest = festival_theme if festival_theme and festival_theme.lower() not in ["none", "null"] else "Diwali"
         festival_directives = f"""
-# FESTIVAL CAMPAIGN: {festival_theme.upper()} (EXPLICITLY REQUESTED)
-- This is a dedicated {festival_theme.title()} promotional campaign for '{prod_name}'.
-- Complement the product with tasteful {festival_theme.title()} atmosphere (e.g., warm festive celebratory lights, festive greeting or festive offer '{offer or 'Special Festive Offer'}').
-- CRITICAL: '{prod_name}' MUST remain the primary commercial hero product. Do NOT replace the product with festival clipart.
+# FESTIVAL CAMPAIGN: {active_fest.upper()} (CELEBRATORY ATMOSPHERE)
+- This is a dedicated {active_fest.title()} celebratory commercial.
+- Complement the visuals with radiant {active_fest.title()} atmosphere (warm festive lights, glowing sparklers/diyas, festive greeting or festive offer '{offer or 'Special Festive Offer'}').
+- Visual tone: Warm, celebratory, joyful, authentic Indian cultural elegance.
 """
     else:
         festival_directives = """
-# STRICT FESTIVAL & SEASONAL EXCLUSION
-- The user has NOT requested a festival theme.
-- ABSOLUTELY FORBIDDEN: Do NOT add Diwali diyas, rangoli, firecrackers, Holi colors, Eid crescents, Christmas decor, or wedding rituals.
-- The environment MUST be a clean, modern, professional commercial setting appropriate for the product.
+# COMMERCIAL CONTEXT
+- Maintain a clean, professional, premium commercial atmosphere tailored 100% to this product domain.
 """
 
     # 3. Generation mode rules
@@ -156,8 +237,8 @@ Generate a structured, photorealistic 9:16 Instagram Reel plan strictly focused 
 {domain_directives}
 {festival_directives}
 
-# HOOK & ON-SCREEN TEXT GUIDELINES (TAILORED TO {prod_name.upper()})
-- "hook_headline": 2-3 word curiosity callout (e.g. "Meet the new...", "Upgrade your...", "Experience ultimate...", "Stop scrolling! 🛑")
+# HOOK & ON-SCREEN TEXT GUIDELINES (TAILORED TO {prod_name.upper()} AND {domain.upper()})
+- "hook_headline": 2-3 word high-converting curiosity callout matching {domain} (e.g., for automotive: "Feel the power! 🏎️" or "Pure adrenaline! ⚡"; for sports: "Push limits! 🏆" or "Unstoppable! 🔥"; for food: "Craving this? 🤤" or "Taste perfection! ✨"; for festive: "Happy Diwali! 🪔"; for fashion: "Style drop! ✨"; for tech: "Next-gen tech! ⚡"; or universal: "Stop scrolling! 🛑")
 - "hook_highlight": High-impact payoff focused strictly on {prod_name} (2-4 words, e.g. "{prod_name} 🔥", "Limited Drop ✨")
 - "hook": Full combined hook text.
 - "on_screen_text": SHORT and PUNCHY (2 to 4 words max per scene).

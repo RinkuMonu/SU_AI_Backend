@@ -158,27 +158,52 @@ class VideoComposer:
         from app.ai.image.generator import CURATED_CATEGORY_IMAGES, ImageGenerator
         cat = ImageGenerator()._detect_category(fallback_name)
         curated_list = CURATED_CATEGORY_IMAGES.get(cat, CURATED_CATEGORY_IMAGES["general"])
+        
+        # 1. First prioritize valid local files
+        for item in curated_list:
+            clean = item.lstrip("/\\")
+            if os.path.exists(clean) and os.path.getsize(clean) > 5000:
+                return clean
+            if os.path.exists(item) and os.path.getsize(item) > 5000:
+                return item
+
+        # 2. Check if cached downloaded fallback exists
         local_target = os.path.join(self.temp_dir, f"curated_fb_{cat}.jpg")
         if os.path.exists(local_target) and os.path.getsize(local_target) > 5000:
             return local_target
-        try:
-            import urllib.request
-            req = urllib.request.Request(curated_list[0], headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=12) as r:
-                content = r.read()
-                if len(content) > 5000:
-                    with open(local_target, "wb") as f:
-                        f.write(content)
-                    return local_target
-        except Exception as e:
-            logger.warning(f"Could not download fallback image: {e}")
+
+        # 3. Download from remote URL if needed
+        for item in curated_list:
+            if item.startswith("http"):
+                try:
+                    import urllib.request
+                    req = urllib.request.Request(item, headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=12) as r:
+                        content = r.read()
+                        if len(content) > 5000:
+                            with open(local_target, "wb") as f:
+                                f.write(content)
+                            return local_target
+                except Exception as e:
+                    logger.warning(f"Could not download fallback image: {e}")
+                    continue
         return None
 
     async def _resolve_image_path(self, image_url_or_path: str, temp_prefix: str, product_name: str = "general") -> str:
         if not image_url_or_path:
             return self._find_fallback_image(product_name)
         
-        # Check if local file exists directly
+        # 1. Check if URL references local uploads or media folder
+        if "/uploads/" in image_url_or_path:
+            clean_sub = "uploads/" + image_url_or_path.split("/uploads/", 1)[1]
+            if os.path.exists(clean_sub):
+                return clean_sub
+        if "/media/" in image_url_or_path:
+            clean_sub = "media/" + image_url_or_path.split("/media/", 1)[1]
+            if os.path.exists(clean_sub):
+                return clean_sub
+
+        # 2. Check if local file exists directly
         clean_path = image_url_or_path.lstrip("/\\")
         if os.path.exists(clean_path):
             return clean_path
