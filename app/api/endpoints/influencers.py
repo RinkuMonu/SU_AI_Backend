@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from app.core.security import get_current_user
 from app.core.database import get_database
 from app.services.influencer_service import InfluencerService
+from app.services.marketplace_service import MarketplaceService
 from app.schemas.influencer import (
     InfluencerProfileUpdate,
     InfluencerProfileResponse,
@@ -167,3 +168,37 @@ async def get_my_collaborations(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load collaborations: {str(e)}"
         )
+
+@router.get("/discover", response_model=dict)
+async def discover_influencers(
+    search: Optional[str] = Query(None),
+    platform: Optional[str] = Query(None),
+    min_followers: Optional[int] = Query(None),
+    max_followers: Optional[int] = Query(None),
+    location: Optional[str] = Query(None),
+    niche: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    min_engagement: Optional[float] = Query(None),
+    is_verified: Optional[bool] = Query(None),
+    sort_by: Optional[str] = Query("followers_desc"),
+    page: int = Query(1, ge=1),
+    limit: int = Query(12, ge=1, le=50),
+    db=Depends(get_database)
+):
+    """Retrieve verified influencer directory from real database."""
+    effective_niche = niche or category
+    data = await MarketplaceService.discover_influencers(
+        db=db,
+        search=search,
+        platform=platform,
+        min_followers=min_followers,
+        max_followers=max_followers,
+        location=location,
+        niche=effective_niche,
+        min_engagement=min_engagement,
+        is_verified=is_verified,
+        sort_by=sort_by,
+        page=page,
+        limit=limit
+    )
+    return {"success": True, "data": data.get("items", []), "pagination": data.get("pagination")}

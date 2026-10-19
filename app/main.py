@@ -16,6 +16,7 @@ from app.api.endpoints.fashion import router as fashion_router
 from app.api.endpoints.instagram import router as instagram_router
 from app.api.endpoints.facebook import router as facebook_router
 from app.api.endpoints.influencers import router as influencers_router
+from app.api.endpoints.marketplace import router as marketplace_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -78,6 +79,8 @@ app.include_router(facebook_router, prefix="/api/facebook")
 app.include_router(facebook_router, prefix="/api/v1/facebook")
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencers_router, prefix="/api")
+app.include_router(marketplace_router, prefix="/api/v1")
+app.include_router(marketplace_router, prefix="/api")
 @app.get("/")
 async def root():
     return {"message": "Welcome to Dhanda Grow API"}
