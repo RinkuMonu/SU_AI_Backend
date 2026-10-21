@@ -656,7 +656,8 @@ class MarketplaceService:
         signer_name: str,
         declaration_accepted: bool,
         signer_title: Optional[str] = "Authorized Signatory",
-        ip_address: Optional[str] = "127.0.0.1"
+        ip_address: Optional[str] = "127.0.0.1",
+        signature_image: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Record legally enforceable electronic signature.
