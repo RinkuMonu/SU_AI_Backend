@@ -6,11 +6,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from bson import ObjectId
 from fastapi import HTTPException, status
+from app.utils.response import serialize_mongo
 
 logger = logging.getLogger(__name__)
 
 # Default platform fee in INR
-DEFAULT_PLATFORM_FEE = 199.0
+DEFAULT_PLATFORM_FEE = 200.0
 GST_RATE = 0.18
 
 class MarketplaceService:
@@ -369,7 +370,7 @@ class MarketplaceService:
         if not business_doc:
             business_doc = await db["businesses"].find_one({"userId": hirer_id})
 
-        business_id = str(business_doc["_id"]) if business_doc else hirer_id
+        business_id = str(business_doc.get("_id") or business_doc.get("id") or hirer_id) if business_doc else hirer_id
         business_name = (
             (business_doc.get("businessName") or business_doc.get("name")) if business_doc else None
         ) or getattr(current_user, "fullName", None) or getattr(current_user, "name", None) or "Brand Partner"
@@ -422,8 +423,9 @@ class MarketplaceService:
 
         res = await db["hiring_requests"].insert_one(hiring_doc)
         hiring_doc["id"] = str(res.inserted_id)
+        hiring_doc["_id"] = str(res.inserted_id)
 
-        return hiring_doc
+        return serialize_mongo(hiring_doc)
 
     @staticmethod
     async def get_hiring_requests(
@@ -446,11 +448,7 @@ class MarketplaceService:
         cursor = db["hiring_requests"].find(query).sort("created_at", -1)
         requests = await cursor.to_list(length=200)
 
-        for r in requests:
-            r["id"] = str(r["_id"])
-            del r["_id"]
-
-        return requests
+        return [serialize_mongo(r) for r in requests]
 
     @staticmethod
     async def get_hiring_request_by_id(
@@ -478,9 +476,7 @@ class MarketplaceService:
         if not is_participant and not is_admin:
             raise HTTPException(status_code=403, detail="Unauthorized to access this hiring request")
 
-        req["id"] = str(req["_id"])
-        del req["_id"]
-        return req
+        return serialize_mongo(req)
 
     @staticmethod
     async def respond_to_hiring_request(
@@ -631,7 +627,7 @@ class MarketplaceService:
             {"$set": agreement},
             upsert=True
         )
-        return agreement
+        return serialize_mongo(agreement)
 
     @staticmethod
     async def get_agreement(db, request_id: str, user_id: str, is_admin: bool = False) -> Dict[str, Any]:
@@ -643,9 +639,7 @@ class MarketplaceService:
         if not agreement:
             raise HTTPException(status_code=404, detail="Agreement not generated yet")
 
-        agreement["id"] = str(agreement["_id"])
-        del agreement["_id"]
-        return agreement
+        return serialize_mongo(agreement)
 
     @staticmethod
     async def sign_agreement(
@@ -900,10 +894,11 @@ class MarketplaceService:
         req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
 
         allowed_statuses = ["in_progress", "work_submitted", "under_review", "revision_requested", "completed", "disputed"]
-        if req["status"] not in allowed_statuses:
+        fee_paid = req.get("fee_paid") or req.get("hire_fee_paid") or req.get("chat_active")
+        if req["status"] not in allowed_statuses and not fee_paid:
             raise HTTPException(
                 status_code=403,
-                detail=f"Private Chat room is locked. It unlocks after agreement is signed and payment is verified. Current status: {req['status']}"
+                detail=f"Private Chat room is locked. It unlocks after Zaakpay hire fee payment is verified. Current status: {req['status']}"
             )
 
         chat = await db["marketplace_chats"].find_one({"hiring_request_id": request_id})
@@ -1020,7 +1015,10 @@ class MarketplaceService:
             "submitted_at": now
         }
 
-        await db["marketplace_deliverables"].insert_one(submission)
+        res = await db["marketplace_deliverables"].insert_one(submission)
+        submission["id"] = str(res.inserted_id)
+        submission["_id"] = str(res.inserted_id)
+        clean_submission = serialize_mongo(submission)
 
         audit_entry = {
             "status": "work_submitted",
@@ -1035,7 +1033,7 @@ class MarketplaceService:
             {
                 "$set": {
                     "status": "work_submitted",
-                    "submitted_deliverables": submission,
+                    "submitted_deliverables": clean_submission,
                     "updated_at": now
                 },
                 "$push": {"audit_trail": audit_entry}
@@ -1150,8 +1148,10 @@ class MarketplaceService:
             "settled_at": now
         }
 
-        await db["marketplace_payouts"].insert_one(payout_doc)
-        return payout_doc
+        res = await db["marketplace_payouts"].insert_one(payout_doc)
+        payout_doc["id"] = str(res.inserted_id)
+        payout_doc["_id"] = str(res.inserted_id)
+        return serialize_mongo(payout_doc)
 
     @staticmethod
     async def get_influencer_earnings_ledger(db, user_id: str) -> Dict[str, Any]:
@@ -1162,15 +1162,11 @@ class MarketplaceService:
         total_gross = sum(float(p.get("gross_amount", 0)) for p in payouts)
         total_net = sum(float(p.get("net_payout_amount", 0)) for p in payouts)
 
-        for p in payouts:
-            p["id"] = str(p["_id"])
-            del p["_id"]
-
         return {
             "total_gross_earnings": round(total_gross, 2),
             "total_net_payouts": round(total_net, 2),
             "payouts_count": len(payouts),
-            "payouts": payouts
+            "payouts": [serialize_mongo(p) for p in payouts]
         }
 
     # -------------------------------------------------------------
@@ -1210,10 +1206,7 @@ class MarketplaceService:
 
         cursor = db["hiring_requests"].find(query).sort("created_at", -1)
         reqs = await cursor.to_list(length=300)
-        for r in reqs:
-            r["id"] = str(r["_id"])
-            del r["_id"]
-        return reqs
+        return [serialize_mongo(r) for r in reqs]
 
     @staticmethod
     async def admin_resolve_dispute(

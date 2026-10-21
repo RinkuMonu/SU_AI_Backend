@@ -5,12 +5,17 @@ from app.core.security import get_current_user
 from app.core.database import get_database
 from app.services.influencer_service import InfluencerService
 from app.services.marketplace_service import MarketplaceService
+from app.utils.response import serialize_mongo
 from app.schemas.influencer import (
     InfluencerProfileUpdate,
     InfluencerProfileResponse,
     OpportunitiesResponse,
     DashboardSummaryResponse,
     ApplyOpportunityRequest,
+    GeneratePitchRequest,
+    PayoutAccountRequest,
+    CRMCampaignCreateRequest,
+    ApplicationStatusUpdateRequest
 )
 
 router = APIRouter(
@@ -202,3 +207,212 @@ async def discover_influencers(
         limit=limit
     )
     return {"success": True, "data": data.get("items", []), "pagination": data.get("pagination")}
+
+# -------------------------------------------------------------
+# AI PITCH GENERATOR
+# -------------------------------------------------------------
+@router.post("/{influencer_id}/generate-pitch", response_model=dict)
+async def generate_ai_pitch(
+    influencer_id: str,
+    payload: Optional[GeneratePitchRequest] = None,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Generate an AI-powered personalized pitch using Gemini for collaborating with this creator."""
+    try:
+        style = payload.style if payload else "professional"
+        result = await InfluencerService.generate_ai_pitch(
+            db=db,
+            influencer_id=influencer_id,
+            user_id=str(current_user.id),
+            style=style
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate pitch: {str(e)}"
+        )
+
+# -------------------------------------------------------------
+# SHORTLIST MANAGEMENT
+# -------------------------------------------------------------
+@router.post("/{influencer_id}/shortlist", response_model=dict)
+async def toggle_shortlist(
+    influencer_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Toggle bookmark / shortlist status for an influencer."""
+    try:
+        res = await InfluencerService.toggle_shortlist(db, str(current_user.id), influencer_id)
+        return res
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update shortlist: {str(e)}"
+        )
+
+@router.get("/shortlist", response_model=dict)
+async def get_my_shortlist(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve all shortlisted influencers for authenticated brand user."""
+    try:
+        data = await InfluencerService.get_shortlist(db, str(current_user.id))
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load shortlist: {str(e)}"
+        )
+
+# -------------------------------------------------------------
+# INFLUENCER CRM CAMPAIGNS
+# -------------------------------------------------------------
+@router.post("/campaigns", response_model=dict)
+async def create_crm_campaign(
+    payload: CRMCampaignCreateRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Create an influencer CRM outreach campaign."""
+    try:
+        created = await InfluencerService.create_crm_campaign(
+            db=db,
+            user_id=str(current_user.id),
+            data=payload.model_dump()
+        )
+        return {"success": True, "data": serialize_mongo(created), "message": "Campaign outreach created"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create CRM campaign: {str(e)}"
+        )
+
+@router.get("/campaigns", response_model=dict)
+async def get_crm_campaigns(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve all influencer CRM outreach campaigns for brand."""
+    try:
+        items = await InfluencerService.get_crm_campaigns(db, str(current_user.id))
+        return {"success": True, "data": items}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load CRM campaigns: {str(e)}"
+        )
+
+@router.get("/campaigns/{campaign_id}/dashboard", response_model=dict)
+async def get_crm_campaign_dashboard(
+    campaign_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve performance dashboard for a specific CRM collaboration."""
+    try:
+        data = await InfluencerService.get_crm_dashboard(db, campaign_id, str(current_user.id))
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load campaign dashboard: {str(e)}"
+        )
+
+@router.get("/campaigns/{campaign_id}/insights", response_model=dict)
+async def get_crm_campaign_insights(
+    campaign_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve AI-powered recommendations and insights for collaboration."""
+    try:
+        data = await InfluencerService.get_crm_insights(db, campaign_id, str(current_user.id))
+        return {"success": True, "data": data}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load campaign insights: {str(e)}"
+        )
+
+# -------------------------------------------------------------
+# BUSINESS COLLABORATION APPLICATIONS
+# -------------------------------------------------------------
+@router.get("/business/collaborations/applications", response_model=dict)
+async def get_business_applications(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Fetch all proposals submitted by creators to this business."""
+    try:
+        apps = await InfluencerService.get_business_applications(db, str(current_user.id))
+        return {"success": True, "data": apps}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load applications: {str(e)}"
+        )
+
+@router.put("/business/collaborations/applications/{app_id}/status", response_model=dict)
+async def update_business_application_status(
+    app_id: str,
+    payload: ApplicationStatusUpdateRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Brand approves or rejects an influencer's campaign application."""
+    try:
+        res = await InfluencerService.update_application_status(
+            db=db,
+            business_user_id=str(current_user.id),
+            app_id=app_id,
+            new_status=payload.status
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update application status: {str(e)}"
+        )
+
+# -------------------------------------------------------------
+# INFLUENCER PAYOUT ACCOUNT (BANK & UPI)
+# -------------------------------------------------------------
+@router.get("/me/payout-account", response_model=dict)
+async def get_my_payout_account(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve current influencer payout account details."""
+    try:
+        res = await InfluencerService.get_payout_account(db, str(current_user.id))
+        return res
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch payout account: {str(e)}"
+        )
+
+@router.post("/me/payout-account", response_model=dict)
+async def save_my_payout_account(
+    payload: PayoutAccountRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Save or update verified bank account and UPI VPA for creator payouts."""
+    try:
+        res = await InfluencerService.save_payout_account(
+            db=db,
+            user_id=str(current_user.id),
+            payout_data=payload.model_dump()
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save payout account: {str(e)}"
+        )
+

@@ -3,6 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from app.core.security import get_current_user, require_admin
 from app.core.database import get_database
 from app.services.marketplace_service import MarketplaceService
+from app.services.payin_service import PayinService
+from app.utils.response import serialize_mongo
 from app.schemas.marketplace import (
     HiringRequestCreate,
     HiringRequestRespond,
@@ -100,7 +102,7 @@ async def create_hiring_request(
         return {
             "success": True,
             "message": "Hiring request sent successfully to the influencer",
-            "data": created
+            "data": serialize_mongo(created)
         }
     except HTTPException:
         raise
@@ -280,6 +282,58 @@ async def verify_hiring_payment_order(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to verify payment: {str(e)}"
+        )
+
+# -------------------------------------------------------------
+# ZAAKPAY INFLUENCER HIRING FEE (₹200)
+# -------------------------------------------------------------
+@router.post("/hiring/{request_id}/pay-hire-fee", response_model=dict)
+async def pay_influencer_hire_fee(
+    request_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Initiate ₹200 Influencer Hiring Platform Fee via Zaakpay / Finunique Payment Gateway.
+    Cuts ₹200 fee upon clicking 'Hire Influencer'.
+    """
+    try:
+        user_email = getattr(current_user, "email", "user@example.com")
+        res = await PayinService.create_hire_influencer_payment(
+            db=db,
+            user_id=str(current_user.id),
+            user_email=user_email,
+            hiring_request_id=request_id,
+            amount=200.0
+        )
+        return res
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initiate ₹200 Zaakpay payment: {str(e)}"
+        )
+
+@router.post("/hiring/{request_id}/verify-hire-fee", response_model=dict)
+async def verify_influencer_hire_fee(
+    request_id: str,
+    payload: PaymentVerifyRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Verify ₹200 payment and officially activate hiring request to creator."""
+    try:
+        res = await PayinService.verify_hire_payment(
+            db=db,
+            order_id=payload.order_id,
+            payment_id=payload.payment_id
+        )
+        return res
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify hire payment: {str(e)}"
         )
 
 # -------------------------------------------------------------

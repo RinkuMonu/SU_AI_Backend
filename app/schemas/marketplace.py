@@ -71,12 +71,12 @@ class AgreementSignRequest(BaseModel):
 
 # --- PAYMENT SCHEMAS ---
 class PlatformFeeConfig(BaseModel):
-    service_fee: float = 199.0
+    service_fee: float = 200.0
     currency: str = "INR"
-    tax_percentage: float = 18.0
-    tax_amount: float = 35.82
-    total_fee: float = 234.82
-    fee_description: str = "Platform Escrow & Verified Collaboration Fee"
+    tax_percentage: float = 0.0
+    tax_amount: float = 0.0
+    total_fee: float = 200.0
+    fee_description: str = "Influencer Hiring Platform Fee (₹200 via Zaakpay)"
 
 class PaymentCreateOrderRequest(BaseModel):
     notes: Optional[str] = None

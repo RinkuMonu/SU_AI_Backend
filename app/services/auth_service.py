@@ -197,7 +197,8 @@ class AuthService:
             phone=req.phone or req.contactNumber,
             contactNumber=req.contactNumber or req.phone,
             hashed_password=get_password_hash(req.password),
-            accountType=req.accountType or "business",
+            accountType="influencer" if (getattr(req, "role", None) == "influencer" or req.accountType == "influencer") else (req.accountType or "business"),
+            role="influencer" if (getattr(req, "role", None) == "influencer" or req.accountType == "influencer") else "user",
             termsAcceptedAt=datetime.now(timezone.utc) if req.termsAccepted else None,
             emailVerified=email_is_verified,
             email_verified=email_is_verified,
@@ -206,6 +207,8 @@ class AuthService:
             onboarding_step=1
         )
         doc = user.model_dump(by_alias=True, exclude={"id"})
+        doc["role"] = "influencer" if (getattr(req, "role", None) == "influencer" or req.accountType == "influencer") else "user"
+        doc["accountType"] = "influencer" if (getattr(req, "role", None) == "influencer" or req.accountType == "influencer") else (req.accountType or "business")
         doc["onboardingCompleted"] = False
         doc["onboarding_step"] = 1
 
@@ -296,6 +299,28 @@ class AuthService:
                 if final_doc.get("brand_color"):
                     biz_doc["brandColor"] = final_doc.get("brand_color")
                 await db["businesses"].insert_one(biz_doc)
+
+        # Handle influencer profile creation if influencer persona
+        if account_type == "influencer" or final_doc.get("role") == "influencer":
+            existing_inf = await db["influencer_profiles"].find_one({"user_id": str(user_id)})
+            if not existing_inf:
+                inf_full_name = final_doc.get("fullName") or final_doc.get("name") or "Creator"
+                inf_username = final_doc.get("username") or final_doc.get("email", "").split("@")[0] or "creator"
+                await db["influencer_profiles"].insert_one({
+                    "user_id": str(user_id),
+                    "fullName": inf_full_name,
+                    "username": inf_username if inf_username.startswith("@") else f"@{inf_username}",
+                    "email": final_doc.get("email", ""),
+                    "phone": final_doc.get("phone") or final_doc.get("contactNumber") or "",
+                    "category": final_doc.get("category") or "Lifestyle & Fashion",
+                    "location": f"{final_doc.get('city', '')}, {final_doc.get('state', '')}".strip(" ,") or "India",
+                    "follower_count": 0,
+                    "engagement_rate": 0.0,
+                    "expectedPricePerPost": 5000.0,
+                    "created_at": now,
+                    "updated_at": now
+                })
+
 
         # Provision subscription / credits
         try:

@@ -81,6 +81,34 @@ app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencers_router, prefix="/api")
 app.include_router(marketplace_router, prefix="/api/v1")
 app.include_router(marketplace_router, prefix="/api")
+
+# Business Collaborations Compatibility Router
+from fastapi import APIRouter, Depends
+from app.services.influencer_service import InfluencerService
+from app.core.security import get_current_user
+from app.core.database import get_database
+from app.utils.response import serialize_mongo
+business_collab_router = APIRouter(prefix="/business/collaborations", tags=["Business Collaborations"])
+
+@business_collab_router.get("/applications")
+async def get_biz_apps(current_user=Depends(get_current_user), db=Depends(get_database)):
+    apps = await InfluencerService.get_business_applications(db, str(current_user.id))
+    return {"success": True, "data": serialize_mongo(apps)}
+
+@business_collab_router.put("/applications/{app_id}/status")
+async def update_biz_app_status(app_id: str, payload: dict, current_user=Depends(get_current_user), db=Depends(get_database)):
+    res = await InfluencerService.update_application_status(db, str(current_user.id), app_id, payload.get("status", "accepted"))
+    return res
+
+@business_collab_router.get("")
+async def get_biz_collabs(current_user=Depends(get_current_user), db=Depends(get_database)):
+    cursor = db["hiring_requests"].find({"$or": [{"hirer_id": str(current_user.id)}, {"business_id": str(current_user.id)}]}).sort("created_at", -1)
+    collabs = await cursor.to_list(length=100)
+    return {"success": True, "data": [serialize_mongo(c) for c in collabs]}
+
+app.include_router(business_collab_router, prefix="/api/v1")
+app.include_router(business_collab_router, prefix="/api")
+
 @app.get("/")
 async def root():
     return {"message": "Welcome to Dhanda Grow API"}

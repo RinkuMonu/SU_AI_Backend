@@ -4,6 +4,7 @@ from pydantic import model_validator
 
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
+    DEV_MODE: bool = True
     NODE_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"

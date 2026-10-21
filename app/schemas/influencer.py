@@ -94,3 +94,24 @@ class ApplyOpportunityRequest(BaseModel):
     pitch_message: str = Field(..., min_length=5)
     proposed_budget: Optional[float] = None
     deliverables: Optional[List[str]] = None
+
+class GeneratePitchRequest(BaseModel):
+    style: Optional[str] = "professional"  # professional, casual, energetic, direct
+
+class PayoutAccountRequest(BaseModel):
+    account_holder_name: str = Field(..., min_length=2)
+    bank_name: str = Field(..., min_length=2)
+    account_number: str = Field(..., min_length=6)
+    ifsc_code: str = Field(..., min_length=4)
+    upi_id: Optional[str] = None
+
+class CRMCampaignCreateRequest(BaseModel):
+    influencer_id: str
+    message: str = Field(..., min_length=5)
+    budget: float = Field(default=0.0, ge=0)
+    deliverables: Optional[List[str]] = Field(default_factory=list)
+
+class ApplicationStatusUpdateRequest(BaseModel):
+    status: str = Field(..., pattern="^(accepted|rejected|shortlisted|pending)$")
+    notes: Optional[str] = None
+
