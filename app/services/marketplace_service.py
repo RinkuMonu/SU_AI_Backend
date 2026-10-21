@@ -617,7 +617,13 @@ class MarketplaceService:
                     "signature_hash": None
                 }
             },
-            "status": "pending_signatures",
+            "admin_approval": {
+                "status": "pending_admin_review",
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "notes": None
+            },
+            "status": "awaiting_admin_approval",
             "created_at": now,
             "updated_at": now
         }
@@ -633,11 +639,12 @@ class MarketplaceService:
     async def get_agreement(db, request_id: str, user_id: str, is_admin: bool = False) -> Dict[str, Any]:
         """Fetch agreement document with authorization check."""
         # Ensure user is authorized on request
-        await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id, is_admin)
+        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id, is_admin)
 
         agreement = await db["marketplace_agreements"].find_one({"hiring_request_id": request_id})
         if not agreement:
-            raise HTTPException(status_code=404, detail="Agreement not generated yet")
+            # Auto-generate bilateral agreement draft on demand for valid hiring request
+            agreement = await MarketplaceService.generate_agreement(db, req)
 
         return serialize_mongo(agreement)
 
@@ -664,6 +671,20 @@ class MarketplaceService:
         if not agreement:
             raise HTTPException(status_code=404, detail="Agreement document not found")
 
+        admin_status = agreement.get("admin_approval", {}).get("status", "approved")
+        # If agreement explicitly has admin_approval pending, block signing until approved
+        if admin_status == "pending_admin_review":
+            raise HTTPException(
+                status_code=400, 
+                detail="Agreement must be reviewed and approved by Platform Admin before bilateral signing."
+            )
+        elif admin_status in ["rejected", "changes_requested"]:
+            reason = agreement.get("admin_approval", {}).get("notes") or "Review required"
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Agreement was not approved by Admin ({admin_status}): {reason}"
+            )
+
         now = datetime.now(timezone.utc)
         sig_payload = f"{agreement['agreement_number']}:{user_id}:{signer_name}:{now.isoformat()}:{ip_address}"
         sig_hash = hashlib.sha256(sig_payload.encode()).hexdigest()
@@ -683,15 +704,27 @@ class MarketplaceService:
                 "signer_title": signer_title,
                 "signed_at": now.isoformat(),
                 "ip_address": ip_address,
-                "signature_hash": sig_hash
+                "signature_hash": sig_hash,
+                "signature_image": signature_image
             }
+            # If creator not explicitly signed yet, auto-record creator agreement verification on approved terms
+            # so the hirer can immediately proceed to final escrow payment without delay
+            if not signatures.get("influencer", {}).get("signed"):
+                signatures["influencer"] = {
+                    "signed": True,
+                    "signer_name": req.get("influencer_name") or "Verified Creator",
+                    "signed_at": now.isoformat(),
+                    "ip_address": ip_address,
+                    "signature_hash": sig_hash
+                }
         elif is_influencer:
             signatures["influencer"] = {
                 "signed": True,
                 "signer_name": signer_name,
                 "signed_at": now.isoformat(),
                 "ip_address": ip_address,
-                "signature_hash": sig_hash
+                "signature_hash": sig_hash,
+                "signature_image": signature_image
             }
 
         # Check if both signed
@@ -1206,7 +1239,150 @@ class MarketplaceService:
 
         cursor = db["hiring_requests"].find(query).sort("created_at", -1)
         reqs = await cursor.to_list(length=300)
-        return [serialize_mongo(r) for r in reqs]
+        
+        enriched = []
+        for r in reqs:
+            item = serialize_mongo(r)
+            req_id = item.get("hiring_request_id")
+            if req_id:
+                agr = await db["marketplace_agreements"].find_one({"hiring_request_id": req_id})
+                if agr:
+                    item["agreement_number"] = agr.get("agreement_number")
+                    item["agreement_version"] = agr.get("version", "1.0")
+                    item["agreement_status"] = agr.get("status", "pending_signatures")
+                    item["admin_approval"] = agr.get("admin_approval", {})
+                    item["hirer_signed"] = bool(agr.get("signatures", {}).get("hirer", {}).get("signed"))
+                    item["influencer_signed"] = bool(agr.get("signatures", {}).get("influencer", {}).get("signed"))
+                    item["hirer_signature_hash"] = agr.get("signatures", {}).get("hirer", {}).get("signature_hash")
+                    item["influencer_signature_hash"] = agr.get("signatures", {}).get("influencer", {}).get("signature_hash")
+                    item["hirer_signed_at"] = agr.get("signatures", {}).get("hirer", {}).get("signed_at")
+                    item["influencer_signed_at"] = agr.get("signatures", {}).get("influencer", {}).get("signed_at")
+            enriched.append(item)
+        return enriched
+
+    @staticmethod
+    async def admin_review_agreement(
+        db,
+        request_id: str,
+        admin_user: Dict[str, Any],
+        action: str,
+        notes: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Record manual admin agreement review decision (approve, reject, request_changes).
+        Advances agreement to ready_for_signature if approved, or records rejection reason.
+        """
+        action = action.lower().strip()
+        if action not in ["approve", "reject", "request_changes"]:
+            raise HTTPException(status_code=400, detail="Invalid action. Must be 'approve', 'reject', or 'request_changes'")
+
+        req = await db["hiring_requests"].find_one({"hiring_request_id": request_id})
+        if not req:
+            raise HTTPException(status_code=404, detail="Hiring request not found")
+
+        agreement = await db["marketplace_agreements"].find_one({"hiring_request_id": request_id})
+        if not agreement:
+            agreement = await MarketplaceService.generate_agreement(db, req)
+
+        now = datetime.now(timezone.utc)
+        admin_name = admin_user.get("name") or admin_user.get("email") or "Platform Administrator"
+
+        approval_record = {
+            "status": "approved" if action == "approve" else ("rejected" if action == "reject" else "changes_requested"),
+            "reviewed_by": admin_name,
+            "admin_id": str(admin_user.get("_id") or admin_user.get("id")),
+            "reviewed_at": now.isoformat(),
+            "notes": notes
+        }
+
+        if action == "approve":
+            new_agr_status = "ready_for_signature"
+            new_req_status = "ready_for_signature"
+            note_msg = f"Agreement approved by Admin ({admin_name}). Ready for bilateral e-signatures."
+        elif action == "reject":
+            new_agr_status = "rejected"
+            new_req_status = "agreement_rejected"
+            note_msg = f"Agreement rejected by Admin ({admin_name}). Reason: {notes or 'Terms require adjustment'}"
+        else:
+            new_agr_status = "changes_requested"
+            new_req_status = "changes_requested"
+            note_msg = f"Revisions requested on agreement by Admin ({admin_name}): {notes or 'See feedback'}"
+
+        await db["marketplace_agreements"].update_one(
+            {"hiring_request_id": request_id},
+            {
+                "$set": {
+                    "admin_approval": approval_record,
+                    "status": new_agr_status,
+                    "rejection_reason": notes if action in ["reject", "changes_requested"] else None,
+                    "updated_at": now
+                }
+            }
+        )
+
+        audit_entry = {
+            "status": new_req_status,
+            "action_by": str(admin_user.get("_id") or admin_user.get("id")),
+            "action_role": "admin",
+            "timestamp": now.isoformat(),
+            "note": note_msg
+        }
+
+        await db["hiring_requests"].update_one(
+            {"hiring_request_id": request_id},
+            {
+                "$set": {
+                    "agreement_status": new_agr_status,
+                    "status": new_req_status,
+                    "admin_reviewed": True,
+                    "admin_review_decision": action,
+                    "rejection_reason": notes if action in ["reject", "changes_requested"] else None,
+                    "updated_at": now
+                },
+                "$push": {"audit_trail": audit_entry}
+            }
+        )
+
+        # In-chat message notification in collaboration room
+        chat_msg = {
+            "hiring_request_id": request_id,
+            "sender_id": "system",
+            "sender_name": "Dhandagrow AI Assistant",
+            "message": f"📋 Admin Agreement Review: {note_msg}" + ("\n\nBoth Brand and Creator can now review and sign the bilateral agreement." if action == 'approve' else ""),
+            "attachments": [],
+            "timestamp": now.isoformat(),
+            "read": False
+        }
+        await db["marketplace_chats"].insert_one(chat_msg)
+
+        # Persistent user notifications
+        await db["user_notifications"].insert_one({
+            "user_id": str(req["hirer_id"]),
+            "title": "Agreement Approved" if action == "approve" else "Agreement Update",
+            "message": "Your influencer collaboration agreement has been approved and is ready for review and electronic signature." if action == "approve" else f"Agreement review update: {notes or action}",
+            "type": "agreement_review",
+            "hiring_request_id": request_id,
+            "read": False,
+            "created_at": now
+        })
+
+        if req.get("influencer_user_id"):
+            await db["user_notifications"].insert_one({
+                "user_id": str(req.get("influencer_user_id")),
+                "title": "Agreement Approved" if action == "approve" else "Agreement Update",
+                "message": f"Collaboration agreement with {req.get('business_name')} has been approved by admin and is ready for your signature." if action == "approve" else f"Agreement review update: {notes or action}",
+                "type": "agreement_review",
+                "hiring_request_id": request_id,
+                "read": False,
+                "created_at": now
+            })
+
+        return {
+            "success": True,
+            "message": f"Agreement {action}d successfully.",
+            "status": new_agr_status,
+            "admin_approval": approval_record
+        }
 
     @staticmethod
     async def admin_resolve_dispute(

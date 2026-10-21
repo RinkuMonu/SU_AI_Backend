@@ -14,7 +14,8 @@ from app.schemas.marketplace import (
     MarketplaceMessageCreate,
     DeliverablesSubmitRequest,
     DeliverablesReviewRequest,
-    AdminDisputeResolveRequest
+    AdminDisputeResolveRequest,
+    AdminAgreementReviewRequest
 )
 
 router = APIRouter(
@@ -190,10 +191,12 @@ async def get_hiring_agreement(
 ):
     """Fetch legal bilateral agreement document for this campaign."""
     try:
+        is_admin = getattr(current_user, "role", "") in ["admin", "superadmin"] or getattr(current_user, "is_superuser", False)
         agreement = await MarketplaceService.get_agreement(
             db=db,
             request_id=request_id,
-            user_id=str(current_user.id)
+            user_id=str(current_user.id),
+            is_admin=is_admin
         )
         return {"success": True, "data": agreement}
     except HTTPException:
@@ -222,7 +225,8 @@ async def sign_hiring_agreement(
             signer_name=payload.signer_name,
             declaration_accepted=payload.declaration_accepted,
             signer_title=payload.signer_title,
-            ip_address=client_ip
+            ip_address=client_ip,
+            signature_image=payload.signature_image
         )
         return result
     except HTTPException:
@@ -523,6 +527,7 @@ async def get_admin_all_hiring_requests(
 async def admin_resolve_dispute(
     request_id: str,
     payload: AdminDisputeResolveRequest,
+    AdminAgreementReviewRequest,
     admin=Depends(require_admin),
     db=Depends(get_database)
 ):
@@ -543,3 +548,36 @@ async def admin_resolve_dispute(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to resolve dispute: {str(e)}"
         )
+
+
+@router.post("/admin/hiring-requests/{request_id}/review-agreement", response_model=dict)
+async def admin_review_agreement(
+    request_id: str,
+    payload: AdminAgreementReviewRequest,
+    admin=Depends(require_admin),
+    db=Depends(get_database)
+):
+    """Admin reviews, approves, rejects, or requests changes on an agreement draft."""
+    try:
+        admin_dict = {
+            "_id": str(getattr(admin, "id", "") or getattr(admin, "_id", "")),
+            "id": str(getattr(admin, "id", "") or getattr(admin, "_id", "")),
+            "name": getattr(admin, "name", "") or getattr(admin, "email", "Administrator"),
+            "email": getattr(admin, "email", "")
+        }
+        result = await MarketplaceService.admin_review_agreement(
+            db=db,
+            request_id=request_id,
+            admin_user=admin_dict,
+            action=payload.action,
+            notes=payload.notes
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to review agreement: {str(e)}"
+        )
+

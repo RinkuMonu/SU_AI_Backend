@@ -296,6 +296,7 @@ class PayinService:
         hiring_req_id = transaction.get("hiring_request_id")
         req = None
         if hiring_req_id:
+            # Advance to awaiting_admin_approval while unlocking chat immediately
             await db["hiring_requests"].update_one(
                 {"hiring_request_id": hiring_req_id},
                 {"$set": {
@@ -304,7 +305,8 @@ class PayinService:
                     "paid_amount": 200.0,
                     "payment_order_id": order_id,
                     "payment_id": confirmed_payment_id,
-                    "status": "in_progress",
+                    "status": "awaiting_admin_approval",
+                    "agreement_status": "awaiting_admin_approval",
                     "chat_active": True,
                     "activated_at": now,
                     "updated_at": now

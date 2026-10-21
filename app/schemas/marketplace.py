@@ -68,6 +68,7 @@ class AgreementSignRequest(BaseModel):
     signer_name: str = Field(..., min_length=2, description="Signer full legal name")
     declaration_accepted: bool = Field(..., description="Must confirm agreement terms acceptance")
     signer_title: Optional[str] = "Authorized Signatory"
+    signature_image: Optional[str] = None
 
 # --- PAYMENT SCHEMAS ---
 class PlatformFeeConfig(BaseModel):
@@ -106,3 +107,8 @@ class DeliverablesReviewRequest(BaseModel):
 class AdminDisputeResolveRequest(BaseModel):
     action: str = Field(..., pattern="^(favor_hirer|favor_influencer|mutual_cancel)$")
     resolution_notes: str
+
+class AdminAgreementReviewRequest(BaseModel):
+    action: str = Field(..., pattern="^(approve|reject|request_changes)$", description="'approve', 'reject', or 'request_changes'")
+    notes: Optional[str] = Field(None, description="Admin review notes or rejection reason")
+
