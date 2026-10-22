@@ -132,7 +132,14 @@ async def signup(request: Request, response: Response):
             logger.warning(f"Fallback to UserCreate for signup: {e}")
 
     # Phone signup flow
-    user_in = UserCreate(**body)
+    from pydantic import ValidationError
+    try:
+        user_in = UserCreate(**body)
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=ve.errors()
+        )
     result = await AuthService.handle_signup(user_in)
     return result
 
@@ -192,7 +199,15 @@ async def login(request: Request, response: Response):
     if not password:
         raise HTTPException(status_code=400, detail="Password is required.")
 
-    user_in = UserLogin(phone_number=phone, email=email, password=password)
+    from pydantic import ValidationError
+    try:
+        user_in = UserLogin(phone_number=phone, email=email, password=password)
+    except ValidationError as ve:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=ve.errors()
+        )
+
     try:
         user = await AuthService.authenticate_user(user_in)
     except PhoneNotVerifiedException as e:
@@ -200,35 +215,40 @@ async def login(request: Request, response: Response):
             status_code=status.HTTP_403_FORBIDDEN,
             content={"detail": str(e), "code": "PHONE_NOT_VERIFIED"}
         )
-    except HTTPException:
-        from app.schemas.auth import LoginRequest
-        login_req = LoginRequest(email=email or phone, password=password)
-        user, access_token, refresh_token = await AuthService.login(login_req)
-        set_refresh_cookie(response, refresh_token)
-        user_dict = {
-            "id": str(user.id),
-            "fullName": getattr(user, "fullName", None) or getattr(user, "name", None) or "User",
-            "name": getattr(user, "name", None) or getattr(user, "fullName", None) or "User",
-            "email": getattr(user, "email", None),
-            "phone": getattr(user, "phone", None) or getattr(user, "phone_number", None),
-            "role": getattr(user, "role", "user"),
-            "email_verified": getattr(user, "email_verified", True),
-            "phone_verified": getattr(user, "phone_verified", False),
-        }
-        return {
-            "success": True,
-            "message": "Logged in successfully",
-            "access_token": access_token,
-            "accessToken": access_token,
-            "token": access_token,
-            "user": user_dict,
-            "data": {
-                "access_token": access_token,
-                "accessToken": access_token,
-                "token": access_token,
-                "user": user_dict
-            }
-        }
+    except HTTPException as auth_exc:
+        if email and "@" in str(email):
+            try:
+                from app.schemas.auth import LoginRequest
+                login_req = LoginRequest(email=email, password=password)
+                user, access_token, refresh_token = await AuthService.login(login_req)
+                set_refresh_cookie(response, refresh_token)
+                user_dict = {
+                    "id": str(user.id),
+                    "fullName": getattr(user, "fullName", None) or getattr(user, "name", None) or "User",
+                    "name": getattr(user, "name", None) or getattr(user, "fullName", None) or "User",
+                    "email": getattr(user, "email", None),
+                    "phone": getattr(user, "phone", None) or getattr(user, "phone_number", None),
+                    "role": getattr(user, "role", "user"),
+                    "email_verified": getattr(user, "email_verified", True),
+                    "phone_verified": getattr(user, "phone_verified", False),
+                }
+                return {
+                    "success": True,
+                    "message": "Logged in successfully",
+                    "access_token": access_token,
+                    "accessToken": access_token,
+                    "token": access_token,
+                    "user": user_dict,
+                    "data": {
+                        "access_token": access_token,
+                        "accessToken": access_token,
+                        "token": access_token,
+                        "user": user_dict
+                    }
+                }
+            except Exception:
+                raise auth_exc
+        raise auth_exc
 
     access_token = create_access_token(subject=str(user.id))
     user_dict = {
