@@ -1,12 +1,22 @@
 from pydantic import BaseModel, EmailStr, field_validator, model_validator
 from typing import Optional
+from enum import Enum
 import re
+
+class UserRole(str, Enum):
+    BUSINESSMAN = "businessman"
+    INFLUENCER = "influencer"
+    ADMIN = "admin"
+
 
 class UserCreate(BaseModel):
     name: str | None = None
     fullName: str | None = None
     full_name: str | None = None
-    email: EmailStr
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    email: EmailStr | str
     password: str
     confirmPassword: str | None = None
 
@@ -26,22 +36,33 @@ class UserCreate(BaseModel):
         return v
 
     @model_validator(mode='after')
-    def check_passwords_match(self) -> 'UserCreate':
+    def validate_registration_fields(self) -> 'UserCreate':
         if self.confirmPassword is not None and self.password != self.confirmPassword:
             raise ValueError('Passwords do not match')
+        if not (self.phone_number or self.phone or self.mobile):
+            raise ValueError('Mobile phone number is required for registration')
+        if not self.email or not str(self.email).strip():
+            raise ValueError('Email address is required for registration')
         return self
 
 class UserLogin(BaseModel):
-    email: EmailStr | None = None
-    Email: EmailStr | None = None
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    username: str | None = None
+    email: EmailStr | str | None = None
+    Email: EmailStr | str | None = None
     password: str | None = None
     Password: str | None = None
+    otp: str | None = None
 
 class UserResponse(BaseModel):
     id: str
     name: str
-    email: EmailStr
-    role: str = "user"
+    phone_number: Optional[str] = None
+    phone_verified: bool = False
+    email: Optional[EmailStr] = None
+    role: Optional[str] = None
     email_verified: bool = True
 
 class TokenResponse(BaseModel):
@@ -50,8 +71,29 @@ class TokenResponse(BaseModel):
     user: UserResponse
 
 class OTPVerifyRequest(BaseModel):
-    email: EmailStr
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    email: EmailStr | str | None = None
     otp: str
 
 class OTPResendRequest(BaseModel):
-    email: EmailStr
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    email: EmailStr | str | None = None
+
+class RoleSelectRequest(BaseModel):
+    role: str
+    user_id: Optional[str] = None
+
+class RoleSelectResponse(UserResponse):
+    success: bool = True
+    message: str = "Role selected successfully."
+    user: Optional[UserResponse] = None
+
+class DashboardRouteResponse(BaseModel):
+    role: Optional[str] = None
+    dashboard_route: str
+    dashboard_name: str
+

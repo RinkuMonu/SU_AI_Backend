@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     FACEBOOK_APP_SECRET: str | None = None
     FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
 
+    # LinkedIn API
+    LINKEDIN_CLIENT_ID: str | None = None
+    LINKEDIN_CLIENT_SECRET: str | None = None
+    LINKEDIN_REDIRECT_URI: str = "http://localhost:8000/api/linkedin/callback"
+
     
     # SMTP Configuration
     SMTP_HOST: str | None = None
@@ -69,6 +74,13 @@ class Settings(BaseSettings):
     PAYIN_URL: str = ""
     PAYIN_TOKEN: str = ""
     
+    # SMS / MSG91 Configuration
+    SMS_PROVIDER: str = "msg91"
+    MSG91_AUTH_KEY: str | None = None
+    MSG91_TEMPLATE_ID_N_REG: str | None = None
+    MSG91_TEMPLATE_ID_FOR_LOG: str | None = None
+    MSG91_TEMPLATE_ID_FOR_FORGET_PASWORD: str | None = None
+    MSG91_TEMPLATE_ID_FOR_RESET_MPIN: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

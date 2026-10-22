@@ -23,6 +23,7 @@ from app.core.security import get_current_user
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.instagram_service import InstagramService
+from app.services.social_connectivity_service import sync_business_social_status
 
 from app.schemas.instagram import (
     InstagramConnectResponse,
@@ -141,6 +142,7 @@ async def instagram_callback(
             {"$set": demo_connection},
             upsert=True,
         )
+        await sync_business_social_status(db, demo_user_id)
         return RedirectResponse(
             url=f"{frontend_url}/social-platforms/instagram?instagram_connected=true"
         )
@@ -170,6 +172,7 @@ async def instagram_callback(
         token_data = await InstagramService.exchange_code_for_token(code)
         profile = await InstagramService.get_instagram_profile(token_data["access_token"])
         await InstagramService.save_connection(db, user_id, token_data, profile)
+        await sync_business_social_status(db, user_id)
 
         logger.info(f"Instagram connected for user {user_id}: @{profile.get('username', 'unknown')}")
 
@@ -219,6 +222,7 @@ async def instagram_disconnect(
     """Disconnect Instagram for the current user."""
     user_id = str(current_user.get("id") or current_user.get("_id"))
     success = await InstagramService.disconnect(db, user_id)
+    await sync_business_social_status(db, user_id)
 
     return InstagramDisconnectResponse(
         success=True,
@@ -883,3 +887,16 @@ async def webhook_receive(
 
     result = await InstagramService.process_webhook_event(db, body)
     return result
+
+
+@router.get("/signup-url")
+@router.get("/create-account-url")
+async def instagram_signup_url():
+    """Returns official Instagram account signup URL."""
+    return {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/accounts/emailsignup/",
+        "official_signup_url": "https://www.instagram.com/accounts/emailsignup/",
+        "instructions": "Create your Instagram account on the official website, then return and connect it."
+    }
+

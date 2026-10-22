@@ -91,8 +91,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     return CurrentUser({
         "id": str(user_doc["_id"]),
         "name": user_doc.get("name", "Unknown"),
+        "phone_number": user_doc.get("phone_number"),
+        "phone_verified": user_doc.get("phone_verified", False),
         "email": user_doc.get("email", ""),
-        "role": user_doc.get("role", "user"),
+        "role": user_doc.get("role"),
         "email_verified": user_doc.get("email_verified", True),
         "business_id": str(business["_id"]) if business else None
     })
@@ -104,3 +106,30 @@ async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -
             detail="Not enough permissions"
         )
     return current_user
+
+def require_role(*allowed_roles: str):
+    async def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        user_role = current_user.get("role")
+        if not user_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role selection required before accessing this resource."
+            )
+        if user_role == "admin" or user_role in allowed_roles:
+            return current_user
+
+        detail_msg = f"Access denied. Required role: {', '.join(allowed_roles)}."
+        if "businessman" in allowed_roles and "influencer" not in allowed_roles:
+            detail_msg = "Access denied. Businessman role required."
+        elif "influencer" in allowed_roles and "businessman" not in allowed_roles:
+            detail_msg = "Access denied. Influencer/Creator role required."
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail_msg
+        )
+    return dependency
+
+require_businessman = require_role("businessman")
+require_influencer = require_role("influencer")
+
