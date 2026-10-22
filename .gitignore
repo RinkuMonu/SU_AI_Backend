@@ -27,6 +27,8 @@ uploads/videos/
 uploads/audio/
 uploads/reels/
 uploads/fashion/
+uploads/enhanced/
+uploads/test/
 uploads/post_*.jpg
 
 # ── Scratch / temporary files dropped in backend ───────────────

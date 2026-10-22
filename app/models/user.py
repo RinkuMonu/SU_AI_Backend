@@ -1,16 +1,18 @@
-from pydantic import EmailStr, Field, model_validator
-from app.models.base import MongoBaseModel
 from typing import Optional, List, Any
 from datetime import datetime
+from pydantic import EmailStr, Field, model_validator
+from app.models.base import MongoBaseModel
 
 class User(MongoBaseModel):
     fullName: Optional[str] = None
     name: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
     phone: Optional[str] = None
     contactNumber: Optional[str] = None
+    phone_verified: bool = False
     hashed_password: str
     accountType: str = "business"
     authProviders: List[str] = Field(default_factory=lambda: ["email"])
@@ -25,74 +27,8 @@ class User(MongoBaseModel):
     image: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
-    role: str = "user"
+    role: Optional[str] = None
     onboarding_step: Optional[int] = 1
-
-    @model_validator(mode="before")
-    @classmethod
-    def populate_names_and_compatibility(cls, data: Any) -> Any:
-        if isinstance(data, dict):
-            # Resolve name and fullName
-            full_name = data.get("fullName") or data.get("name") or data.get("full_name")
-            if full_name:
-                data["fullName"] = full_name
-                if not data.get("name"):
-                    data["name"] = full_name
-            elif "email" in data:
-                derived = str(data["email"]).split("@")[0]
-                data["fullName"] = derived
-                data["name"] = derived
-
-            # Resolve email verification flags
-            verified = data.get("emailVerified", data.get("email_verified", False))
-            data["emailVerified"] = verified
-            data["email_verified"] = verified
-
-        return data
-
-
-    @model_validator(mode="before")
-    def resolve_compatibility(cls, data: Any):
-        if isinstance(data, dict):
-            # Resolve fullName & name
-            full_name = data.get("fullName") or data.get("name")
-            if not full_name:
-                first = data.get("firstName") or ""
-                last = data.get("lastName") or ""
-                full_name = f"{first} {last}".strip()
-            if not full_name and data.get("email"):
-                full_name = str(data["email"]).split("@")[0]
-            if not full_name:
-                full_name = "User"
-
-            data["fullName"] = full_name
-            if not data.get("name"):
-                data["name"] = full_name
-
-            # Compatibility for phone / contactNumber
-            if "phone" in data and not data.get("contactNumber"):
-                data["contactNumber"] = data["phone"]
-            if "contactNumber" in data and not data.get("phone"):
-                data["phone"] = data["contactNumber"]
-
-            # Compatibility for image / profileImageUrl
-            if "profileImageUrl" in data and not data.get("image"):
-                data["image"] = data["profileImageUrl"]
-            if "image" in data and not data.get("profileImageUrl"):
-                data["profileImageUrl"] = data["image"]
-
-            # Compatibility for email_verified / emailVerified
-            if "email_verified" in data and not data.get("emailVerified"):
-                data["emailVerified"] = data["email_verified"]
-            if "emailVerified" in data and not data.get("email_verified"):
-                data["email_verified"] = data["emailVerified"]
-
-            # Compatibility for role
-            if not data.get("role"):
-                data["role"] = "user"
-
-        return data
-
 
     # Business Registration Fields
     business_logo: Optional[str] = None
@@ -121,3 +57,43 @@ class User(MongoBaseModel):
     target_location: Optional[str] = None
     customer_type: Optional[str] = None
 
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_user_data(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Resolve name and fullName
+            full_name = data.get("fullName") or data.get("name") or data.get("full_name")
+            if not full_name:
+                first = data.get("firstName") or ""
+                last = data.get("lastName") or ""
+                full_name = f"{first} {last}".strip()
+            if not full_name and data.get("email"):
+                full_name = str(data["email"]).split("@")[0]
+            if not full_name:
+                full_name = "User"
+
+            data["fullName"] = full_name
+            data["name"] = full_name
+
+            # Compatibility for phone_number / phone / contactNumber
+            pn = data.get("phone_number") or data.get("phone") or data.get("contactNumber")
+            if pn:
+                data["phone_number"] = pn
+                data["phone"] = pn
+                data["contactNumber"] = pn
+
+            # Compatibility for image / profileImageUrl
+            img = data.get("profileImageUrl") or data.get("image")
+            if img:
+                data["profileImageUrl"] = img
+                data["image"] = img
+
+            # Resolve email verification flags
+            verified = data.get("emailVerified", data.get("email_verified", False))
+            data["emailVerified"] = verified
+            data["email_verified"] = verified
+
+        return data

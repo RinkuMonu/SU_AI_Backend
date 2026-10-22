@@ -10,39 +10,53 @@ from app.services.subscription_service import SubscriptionService
 
 class PayinService:
     @staticmethod
-    async def create_payment(db, user_id: str, user_email: str, plan_id: str) -> Dict[str, Any]:
-        plan_id = (plan_id or "").strip().upper()
-        if plan_id not in PLANS:
+    async def create_payment(db, user_id: str, user_email: str, plan_id: str, billing_cycle: str = "monthly") -> Dict[str, Any]:
+        normalized_plan_id = (plan_id or "").upper().strip()
+        if normalized_plan_id not in PLANS:
             raise HTTPException(status_code=400, detail="Invalid plan")
         
-        plan = PLANS[plan_id]
+        plan = PLANS[normalized_plan_id]
         if plan["price"] == 0:
             raise HTTPException(status_code=400, detail="Cannot create payment for FREE plan")
+            
+        cycle = (billing_cycle or "monthly").lower().strip()
+        if cycle not in ["monthly", "quarterly", "yearly"]:
+            raise HTTPException(status_code=400, detail="Invalid billing cycle. Must be monthly, quarterly, or yearly")
+
+        cycle_pricing = plan.get("billing_cycles", {}).get(cycle)
+        if cycle_pricing and "price" in cycle_pricing:
+            base_amount = float(cycle_pricing["price"])
+        else:
+            base_amount = float(plan.get("base_price", plan["price"]))
             
         if not settings.PAYIN_URL or not settings.PAYIN_TOKEN:
             raise HTTPException(status_code=500, detail="Finunique Payin configuration missing")
 
         order_id = f"ORDER_{uuid.uuid4().hex[:12].upper()}"
-        base_amount = float(plan.get("base_price", plan["price"]))
-        if plan_id == "HIRE_INFLUENCER":
+        if normalized_plan_id == "HIRE_INFLUENCER":
             gst_rate = 0.0
             gst_amount = 0.0
             total_amount = base_amount
+        elif plan.get("gst_applicable"):
+            gst_rate = float(plan.get("gst_rate", 0.18))
+            gst_amount = float(round(base_amount * gst_rate, 2))
+            total_amount = float(round(base_amount + gst_amount, 2))
         else:
-            gst_rate = float(plan.get("gst_rate", 0.18 if base_amount > 0 else 0.0))
-            gst_amount = float(plan.get("gst_amount", round(base_amount * gst_rate, 2)))
-            total_amount = float(plan.get("total_price", round(base_amount + gst_amount, 2)))
+            gst_rate = 0.0
+            gst_amount = 0.0
+            total_amount = base_amount
         
         now = datetime.now(timezone.utc)
         transaction = {
             "user_id": user_id,
-            "plan_id": plan_id,
+            "plan_id": normalized_plan_id,
             "plan_name": plan["name"],
             "base_amount": base_amount,
             "gst_rate": gst_rate,
             "gst_amount": gst_amount,
+            "billing_cycle": cycle,
             "amount": total_amount,
-            "currency": plan["currency"],
+            "currency": plan.get("currency", "INR"),
             "order_id": order_id,
             "status": "pending",
             "created_at": now,
@@ -101,7 +115,8 @@ class PayinService:
                     "success": True,
                     "order_id": order_id,
                     "payment_url": payment_url,
-                    "status": "pending"
+                    "status": "pending",
+                    "billing_cycle": cycle
                 }
         except httpx.RequestError:
             await db["payment_transactions"].update_one(
@@ -111,8 +126,8 @@ class PayinService:
             raise HTTPException(status_code=504, detail="Payment Gateway timeout")
 
     @staticmethod
-    async def process_callback(db, payload: Dict[str, Any], headers: Dict[str, str]) -> Dict[str, Any]:
-        order_id = payload.get("orderId")
+    async def process_callback(db, payload: Dict[str, Any], headers: Dict[str, str] = None) -> Dict[str, Any]:
+        order_id = payload.get("orderId") or payload.get("reference")
         if not order_id:
             return {"success": False, "status": "failed", "message": "Missing orderId"}
             
@@ -120,27 +135,29 @@ class PayinService:
         if not transaction:
             return {"success": False, "status": "failed", "message": "Unknown order"}
             
-        if transaction["status"] == "success":
+        if transaction.get("status") == "success":
             return {"success": True, "status": "success", "message": "Already processed"}
             
-        response_code = str(payload.get("responseCode", ""))
-        is_success = (response_code == "100")
+        response_code = str(payload.get("responseCode", "")).strip().upper()
+        payload_status = str(payload.get("status", "")).strip().upper()
+        now = datetime.now(timezone.utc)
         
-        # Payin callback amount might be in paise from gateway, or INR.
-        # We verify if we can, but since the gateway/Finunique exact multiplier is tricky,
-        # we check if it matches in either INR or paise.
-        payload_amount = float(payload.get("amount", 0))
-        transaction_amount = float(transaction["amount"])
+        is_success = (response_code == "100" or payload_status in ["SUCCESS", "PAID"])
         
-        amount_matches = False
-        if payload_amount == transaction_amount or payload_amount == transaction_amount * 100 or payload_amount / 100 == transaction_amount:
-            amount_matches = True
-            
         if is_success:
+            payload_amount = float(payload.get("amount", 0))
+            transaction_amount = float(transaction["amount"])
+            
+            amount_matches = False
+            if abs(payload_amount - transaction_amount) < 0.01 or \
+               abs(payload_amount - transaction_amount * 100) < 0.01 or \
+               abs(payload_amount / 100 - transaction_amount) < 0.01:
+                amount_matches = True
+                
             if not amount_matches:
                 await db["payment_transactions"].update_one(
                     {"order_id": order_id},
-                    {"$set": {"status": "failed", "failure_reason": "Amount mismatch", "updated_at": datetime.now(timezone.utc)}}
+                    {"$set": {"status": "failed", "failure_reason": f"Amount mismatch: received {payload_amount}, expected {transaction_amount}", "updated_at": now}}
                 )
                 return {"success": False, "status": "failed", "message": "Amount mismatch"}
                 
@@ -148,19 +165,54 @@ class PayinService:
                 {"order_id": order_id},
                 {"$set": {
                     "status": "success", 
-                    "external_transaction_id": payload.get("pgTransId"),
-                    "verified_at": datetime.now(timezone.utc),
-                    "updated_at": datetime.now(timezone.utc)
+                    "external_transaction_id": payload.get("pgTransId") or payload.get("txnId"),
+                    "verified_at": now,
+                    "updated_at": now
                 }}
             )
             
             if transaction["plan_id"] != "HIRE_INFLUENCER":
-                await SubscriptionService.upgrade_plan(db, transaction["user_id"], transaction["plan_id"])
-            return {"success": True, "status": "success", "message": "Payment verified"}
-        
+                cycle = transaction.get("billing_cycle", "monthly")
+                await SubscriptionService.upgrade_plan(
+                    db, 
+                    transaction["user_id"], 
+                    transaction["plan_id"],
+                    billing_cycle=cycle
+                )
+
+                # Mark plan activation onboarding completed
+                from app.services.plan_onboarding_service import PlanOnboardingService
+                await PlanOnboardingService.sync_business_plan_status(
+                    db,
+                    user_id=transaction["user_id"],
+                    plan_id=transaction["plan_id"],
+                    billing_cycle=cycle
+                )
+            return {"success": True, "status": "success", "message": "Payment verified and plan activated"}
+            
+        elif response_code in ["101", "PENDING"] or payload_status in ["PENDING"]:
+            await db["payment_transactions"].update_one(
+                {"order_id": order_id},
+                {"$set": {"status": "pending", "failure_reason": payload.get("responseDescription", "Payment pending"), "updated_at": now}}
+            )
+            return {"success": False, "status": "pending", "message": "Payment pending"}
+            
+        elif response_code in ["103", "CANCELLED", "CANCELED"] or payload_status in ["CANCELLED", "CANCELED"]:
+            await db["payment_transactions"].update_one(
+                {"order_id": order_id},
+                {"$set": {"status": "cancelled", "failure_reason": payload.get("responseDescription", "Payment cancelled by user"), "updated_at": now}}
+            )
+            return {"success": False, "status": "cancelled", "message": "Payment cancelled"}
+            
+        elif response_code in ["104", "EXPIRED"] or payload_status in ["EXPIRED"]:
+            await db["payment_transactions"].update_one(
+                {"order_id": order_id},
+                {"$set": {"status": "expired", "failure_reason": payload.get("responseDescription", "Payment expired"), "updated_at": now}}
+            )
+            return {"success": False, "status": "expired", "message": "Payment expired"}
         else:
             await db["payment_transactions"].update_one(
                 {"order_id": order_id},
-                {"$set": {"status": "failed", "failure_reason": payload.get("responseDescription", "Failed"), "updated_at": datetime.now(timezone.utc)}}
+                {"$set": {"status": "failed", "failure_reason": payload.get("responseDescription", "Payment failed"), "updated_at": now}}
             )
             return {"success": False, "status": "failed", "message": "Payment failed"}

@@ -8,7 +8,7 @@ from app.core.database import connect_to_mongo, close_mongo_connection
 from app.services.scheduler_service import scheduler_service
 from app.api.api_router import api_router
 from app.api.endpoints import content, insights, messages, reviews, social
-from app.api.endpoints.reel import router as reel_router
+from app.api.endpoints.reel import router as reel_router, reels_router
 from app.api.endpoints.credits import router as credits_router
 from app.api.endpoints.subscription import router as subscription_router
 from app.api.endpoints.festivals import router as festivals_router
@@ -17,6 +17,7 @@ from app.api.endpoints.fashion import router as fashion_router
 from app.api.endpoints.instagram import router as instagram_router
 from app.api.endpoints.facebook import router as facebook_router
 from app.api.endpoints.linkedin import router as linkedin_router
+from app.api.endpoints.brand import router as brand_router
 from app.api.endpoints.influencers import router as influencers_router
 from app.api.endpoints.influencer_profile import router as influencer_profile_router
 from app.api.endpoints.business_collaborations import router as business_collaborations_router
@@ -60,6 +61,7 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
 app.include_router(social.router)
+app.include_router(social.api_social_router, include_in_schema=False)
 app.include_router(
     insights.router,
     prefix="/api/v1/insights",
@@ -76,6 +78,7 @@ app.include_router(
     tags=["Reviews"]
 )
 app.include_router(reel_router)
+app.include_router(reels_router)
 app.include_router(credits_router)
 app.include_router(subscription_router)
 app.include_router(festivals_router, prefix="/api/v1")
@@ -83,46 +86,18 @@ app.include_router(agent_router, prefix="/api/v1")
 app.include_router(fashion_router)
 app.include_router(instagram_router, prefix="/api/instagram")
 app.include_router(instagram_router, prefix="/api/v1/instagram")
+app.include_router(instagram_router)
 app.include_router(facebook_router, prefix="/api/facebook")
 app.include_router(facebook_router, prefix="/api/v1/facebook")
-app.include_router(linkedin_router, prefix="/api/linkedin")
-app.include_router(linkedin_router, prefix="/api/v1/linkedin")
+app.include_router(facebook_router)
+app.include_router(linkedin_router, prefix="/api/linkedin", include_in_schema=False)
+app.include_router(brand_router, prefix="/api/brands", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
 app.include_router(influencer_content_router, prefix="/api/v1")
 app.include_router(influencer_earnings_router, prefix="/api/v1")
 app.include_router(influencer_marketplace_router, prefix="/api/v1")
-
-@app.get("/api/linkedin/callback", tags=["LinkedIn OAuth"])
-@app.get("/api/v1/linkedin/callback", tags=["LinkedIn OAuth"])
-async def linkedin_callback_alias(
-    request: Request,
-    response: Response,
-    code: Optional[str] = None,
-    state: Optional[str] = None,
-    error: Optional[str] = None,
-    error_description: Optional[str] = None,
-):
-    from app.api.endpoints.auth import linkedin_callback
-    return await linkedin_callback(
-        request=request,
-        response=response,
-        code=code,
-        state=state,
-        error=error,
-        error_description=error_description,
-    )
-
-@app.get("/api/linkedin/connect", tags=["LinkedIn OAuth"])
-@app.get("/api/v1/linkedin/connect", tags=["LinkedIn OAuth"])
-async def linkedin_connect_alias(
-    redirect_uri: Optional[str] = None,
-    mode: str = "login"
-):
-    from app.api.endpoints.auth import linkedin_connect
-    return await linkedin_connect(redirect_uri=redirect_uri, mode=mode)
-
 @app.get("/")
 async def root():
     return {"message": "Welcome to Dhanda Grow API"}

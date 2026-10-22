@@ -3,12 +3,14 @@ from typing import Optional
 
 class PaymentCreateRequest(BaseModel):
     plan_id: str
+    billing_cycle: Optional[str] = "monthly"
 
 class PaymentCreateResponse(BaseModel):
     success: bool
     order_id: str
     payment_url: str
     status: str
+    billing_cycle: Optional[str] = "monthly"
 
 class PaymentCallbackResponse(BaseModel):
     success: bool
