@@ -133,13 +133,11 @@ async def signup(request: Request, response: Response):
 
     # Phone signup flow
     from pydantic import ValidationError
+    from fastapi.exceptions import RequestValidationError
     try:
         user_in = UserCreate(**body)
     except ValidationError as ve:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=ve.errors()
-        )
+        raise RequestValidationError(ve.errors())
     result = await AuthService.handle_signup(user_in)
     return result
 
@@ -200,13 +198,11 @@ async def login(request: Request, response: Response):
         raise HTTPException(status_code=400, detail="Password is required.")
 
     from pydantic import ValidationError
+    from fastapi.exceptions import RequestValidationError
     try:
         user_in = UserLogin(phone_number=phone, email=email, password=password)
     except ValidationError as ve:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=ve.errors()
-        )
+        raise RequestValidationError(ve.errors())
 
     try:
         user = await AuthService.authenticate_user(user_in)

@@ -59,7 +59,7 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
 app.include_router(social.router)
-app.include_router(social.api_social_router)
+app.include_router(social.api_social_router, include_in_schema=False)
 app.include_router(
     insights.router,
     prefix="/api/v1/insights",
@@ -88,11 +88,8 @@ app.include_router(instagram_router)
 app.include_router(facebook_router, prefix="/api/facebook")
 app.include_router(facebook_router, prefix="/api/v1/facebook")
 app.include_router(facebook_router)
-app.include_router(linkedin_router, prefix="/api/linkedin")
-app.include_router(linkedin_router, prefix="/api/v1/linkedin")
-app.include_router(linkedin_router)
-app.include_router(brand_router, prefix="/api/brands", tags=["Brand Kit"])
-app.include_router(brand_router, prefix="/api/v1/brands", tags=["Brand Kit"])
+app.include_router(linkedin_router, prefix="/api/linkedin", include_in_schema=False)
+app.include_router(brand_router, prefix="/api/brands", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")

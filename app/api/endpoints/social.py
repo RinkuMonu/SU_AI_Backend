@@ -24,8 +24,8 @@ router = APIRouter(
 # Social Media Connectivity Onboarding Endpoints
 # ─────────────────────────────────────────────────────────────
 
-@router.get("/onboarding-status", response_model=SocialOnboardingStatusResponse)
-@router.get("/status", response_model=SocialOnboardingStatusResponse)
+@router.get("/onboarding-status", response_model=SocialOnboardingStatusResponse, operation_id="social_get_onboarding_status")
+@router.get("/status", response_model=SocialOnboardingStatusResponse, operation_id="social_get_status_alias")
 async def get_social_media_onboarding_status(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
@@ -41,7 +41,7 @@ async def get_social_media_onboarding_status(
     return await get_social_onboarding_status(db, current_user)
 
 
-@router.get("/platforms")
+@router.get("/platforms", operation_id="social_get_platforms_status")
 async def get_platforms_status(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
@@ -59,10 +59,10 @@ async def get_platforms_status(
     }
 
 
-@router.get("/create-account-urls", response_model=CreateAccountUrlsResponse)
-@router.get("/create-account", response_model=CreateAccountUrlsResponse)
-@router.get("/signup-urls", response_model=CreateAccountUrlsResponse)
-@router.get("/register-urls", response_model=CreateAccountUrlsResponse)
+@router.get("/create-account-urls", response_model=CreateAccountUrlsResponse, operation_id="social_create_account_urls")
+@router.get("/create-account", response_model=CreateAccountUrlsResponse, operation_id="social_create_account_alias")
+@router.get("/signup-urls", response_model=CreateAccountUrlsResponse, operation_id="social_signup_urls_alias")
+@router.get("/register-urls", response_model=CreateAccountUrlsResponse, operation_id="social_register_urls_alias")
 async def get_create_account_urls():
     """
     Returns official signup URLs for supported platforms and guidance instructions.
@@ -71,7 +71,7 @@ async def get_create_account_urls():
     return CreateAccountUrlsResponse()
 
 
-@router.post("/disconnect/{platform}", response_model=SocialDisconnectResponse)
+@router.post("/disconnect/{platform}", response_model=SocialDisconnectResponse, operation_id="social_disconnect_platform")
 async def disconnect_platform(
     platform: str,
     current_user=Depends(get_current_user),

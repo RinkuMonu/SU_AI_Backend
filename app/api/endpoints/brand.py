@@ -29,8 +29,8 @@ router = APIRouter(
 )
 
 
-@router.get("/onboarding-status", response_model=BrandKitStatusResponse)
-@router.get("/status", response_model=BrandKitStatusResponse)
+@router.get("/onboarding-status", response_model=BrandKitStatusResponse, operation_id="brand_get_onboarding_status")
+@router.get("/status", response_model=BrandKitStatusResponse, operation_id="brand_get_status_alias")
 async def get_brand_onboarding_status(
     current_user: CurrentUser = Depends(get_current_user),
     db=Depends(get_database)
@@ -44,7 +44,7 @@ async def get_brand_onboarding_status(
     return await get_onboarding_status(db, current_user)
 
 
-@router.post("/draft", response_model=BrandKitActionResponse)
+@router.post("/draft", response_model=BrandKitActionResponse, operation_id="brand_save_draft")
 async def save_draft(
     data: BrandKitSubmission,
     current_user: CurrentUser = Depends(require_businessman),
@@ -66,7 +66,8 @@ async def save_draft(
     )
 
 
-@router.post("/complete", response_model=BrandKitActionResponse)
+@router.post("/submit-kit", response_model=BrandKitActionResponse, operation_id="brand_submit_kit")
+@router.post("/complete", response_model=BrandKitActionResponse, operation_id="brand_complete_kit")
 async def complete_brand_kit(
     data: BrandKitSubmission,
     current_user: CurrentUser = Depends(require_businessman),
@@ -88,7 +89,7 @@ async def complete_brand_kit(
     )
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", status_code=status.HTTP_201_CREATED, operation_id="brand_create_or_save")
 async def create_or_save_brand(
     data: BrandKitSubmission,
     current_user: CurrentUser = Depends(require_businessman),
@@ -111,8 +112,8 @@ async def create_or_save_brand(
     }
 
 
-@router.get("")
-@router.get("/me")
+@router.get("", operation_id="brand_get_my_kit_root")
+@router.get("/me", operation_id="brand_get_my_kit_me")
 async def get_my_brand_kit(
     current_user: CurrentUser = Depends(get_current_user),
     db=Depends(get_database)
@@ -129,7 +130,7 @@ async def get_my_brand_kit(
     }
 
 
-@router.put("")
+@router.put("", operation_id="brand_update_my_kit")
 async def update_my_brand(
     data: BrandUpdate,
     current_user: CurrentUser = Depends(require_businessman),
@@ -155,7 +156,7 @@ async def update_my_brand(
     }
 
 
-@router.post("/upload-logo")
+@router.post("/upload-logo", operation_id="brand_upload_logo")
 async def upload_brand_logo(
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(require_businessman)
@@ -181,7 +182,7 @@ async def upload_brand_logo(
     }
 
 
-@router.post("/generate-logo")
+@router.post("/generate-logo", operation_id="brand_generate_logo")
 async def generate_ai_logo(
     request: AILogoGenerateRequest,
     current_user: CurrentUser = Depends(require_businessman),

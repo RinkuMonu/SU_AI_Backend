@@ -19,10 +19,11 @@ from app.services.instagram_service import encrypt_token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/linkedin", tags=["LinkedIn"])
+router = APIRouter(tags=["LinkedIn"])
 
 
-@router.get("/connect")
+@router.get("/auth-url", operation_id="linkedin_auth_url")
+@router.get("/connect", operation_id="linkedin_connect")
 async def linkedin_connect(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
@@ -50,7 +51,7 @@ async def linkedin_connect(
     return {"authorization_url": auth_url}
 
 
-@router.get("/callback")
+@router.get("/callback", operation_id="linkedin_callback")
 async def linkedin_callback(
     code: str = Query(None),
     state: str = Query(None),
@@ -149,7 +150,7 @@ async def linkedin_callback(
         )
 
 
-@router.get("/status")
+@router.get("/status", operation_id="linkedin_get_status")
 async def linkedin_status(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
@@ -179,7 +180,7 @@ async def linkedin_status(
     }
 
 
-@router.post("/disconnect")
+@router.post("/disconnect", operation_id="linkedin_disconnect_account")
 async def linkedin_disconnect(
     current_user=Depends(get_current_user),
     db=Depends(get_database),
@@ -199,8 +200,8 @@ async def linkedin_disconnect(
     }
 
 
-@router.get("/signup-url")
-@router.get("/create-account-url")
+@router.get("/signup-url", operation_id="linkedin_get_signup_url")
+@router.get("/create-account-url", operation_id="linkedin_get_create_account_url")
 async def linkedin_signup_url():
     """Returns official LinkedIn member signup URL."""
     return {
@@ -225,9 +226,9 @@ class LinkedInPublishResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-@router.post("/publish-image", response_model=LinkedInPublishResponse)
-@router.post("/publish", response_model=LinkedInPublishResponse)
-@router.post("/post", response_model=LinkedInPublishResponse)
+@router.post("/publish-image", response_model=LinkedInPublishResponse, operation_id="linkedin_publish_image_post")
+@router.post("/publish", response_model=LinkedInPublishResponse, operation_id="linkedin_publish_general_post")
+@router.post("/post", response_model=LinkedInPublishResponse, operation_id="linkedin_publish_text_post")
 async def linkedin_publish_post(
     request: LinkedInPublishRequest,
     current_user=Depends(get_current_user),
