@@ -11,284 +11,276 @@ FEATURE_PRICING = {
     "website_builder": 10,
 }
 
-
-# 18% GST Rate applied to paid subscriptions
-GST_RATE = 0.18
-
-def calculate_plan_pricing(base_price: int):
-    if base_price <= 0:
-        return {
-            "price": 0,
-            "base_price": 0,
-            "gst_rate": 0.0,
-            "gst_percent": 18,
-            "gst_amount": 0.0,
-            "total_price": 0.0,
-            "gst_applicable": False,
-        }
-    gst_amount = round(base_price * GST_RATE, 2)
-    total_price = round(base_price + gst_amount, 2)
-    return {
-        "price": base_price,
-        "base_price": base_price,
-        "gst_rate": GST_RATE,
-        "gst_percent": 18,
-        "gst_amount": gst_amount,
-        "total_price": total_price,
-        "gst_applicable": True,
-    }
-
 PLANS = {
     "FREE": {
-        "name": "FREE",
-        "tagline": "Explore AI",
-        "description": "For students, beginners and first-time users.",
-        **calculate_plan_pricing(0),
+        "name": "Free",
+        "plan_tier": "PLAN 1",
+        "price": 0,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 500,
-        "post_limit": -1,
-        "reel_limit": -1,
+        "credits": 5,
+        "credits_badge": "5 Credits",
+        "post_limit": 5,
+        "reel_limit": 1,
         "team_members": 1,
-        "brand_profiles": 1,
-        "bullet_points": [
-            "500 AI credits/month",
-            "Unlimited AI social media posts",
-            "Unlimited AI reels",
-            "Basic caption generation",
-            "1 brand profile",
-            "Explore AI tools before upgrading"
+        "description": "For students, beginners and first timers.",
+        "period_label": "/ forever",
+        "highlights": [
+            "5 AI social media posts/month",
+            "1 AI reel/month",
+            "5 AI credits/month"
         ],
-        "features": [
-            "ai_assistant", "ai_reel", "ai_caption", "website_builder", 
-            "ai_post", "ai_photoshoot", "ai_avatar", "ai_actor", 
-            "ads", "whatsapp_ai", "instagram_ai", "analytics", 
-            "brand_profile", "explore_tools"
-        ],
+        "features": ["ai_assistant"],
         "watermark": True,
         "multiple_businesses": False,
         "api_access": False,
-        "white_label": False
-    },
-    "BASIC": {
-        "name": "BASIC",
-        "tagline": "Create",
-        "description": "For shopkeepers, freelancers and small businesses starting online marketing.",
-        **calculate_plan_pricing(799),
-        "currency": "INR",
-        "billing_cycle": "monthly",
-        "credits": 100,
-        "post_limit": 30,
-        "reel_limit": 10,
-        "team_members": 1,
-        "brand_profiles": 1,
-        "bullet_points": [
-            "100 monthly credits",
-            "30 AI posts/month",
-            "10 AI reels/month",
-            "30 AI captions/month",
-            "Basic hashtag suggestions",
-            "1 brand and 1 user",
-            "Brand-ready social media creatives"
-        ],
-        "features": ["ai_caption", "ai_photoshoot", "content_calendar", "ai_reel", "ai_post", "website_builder", "hashtags", "brand_profile", "brand_ready_creatives"],
-        "watermark": False,
-        "multiple_businesses": False,
-        "api_access": False,
-        "white_label": False
+        "white_label": False,
+        "billing_cycles": {
+            "monthly": {
+                "price": 0,
+                "formatted_price": "₹0",
+                "period_label": "/ forever",
+                "duration_days": 30
+            },
+            "quarterly": {
+                "price": 0,
+                "formatted_price": "₹0",
+                "period_label": "/ forever",
+                "duration_days": 90
+            },
+            "yearly": {
+                "price": 0,
+                "formatted_price": "₹0",
+                "period_label": "/ forever",
+                "duration_days": 365
+            }
+        }
     },
     "STARTER": {
-        "name": "STARTER",
-        "tagline": "Create",
-        "description": "For shopkeepers, freelancers and small businesses starting online marketing.",
-        **calculate_plan_pricing(799),
+        "name": "Starter",
+        "plan_tier": "PLAN 2",
+        "price": 799,
         "currency": "INR",
         "billing_cycle": "monthly",
         "credits": 100,
+        "credits_badge": "100 Credits",
         "post_limit": 30,
         "reel_limit": 10,
         "team_members": 1,
-        "brand_profiles": 1,
-        "bullet_points": [
+        "description": "For shopkeepers, freelancers and small businesses.",
+        "period_label": "/ month + GST",
+        "highlights": [
             "100 monthly credits",
             "30 AI posts/month",
-            "10 AI reels/month",
-            "30 AI captions/month",
-            "Basic hashtag suggestions",
-            "1 brand and 1 user",
-            "Brand-ready social media creatives"
+            "10 AI reels/month"
         ],
-        "features": ["ai_caption", "ai_photoshoot", "content_calendar", "ai_reel", "ai_post", "website_builder", "hashtags", "brand_profile", "brand_ready_creatives"],
+        "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar"],
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
-        "white_label": False
+        "white_label": False,
+        "billing_cycles": {
+            "monthly": {
+                "price": 799,
+                "formatted_price": "₹799",
+                "period_label": "/ month + GST",
+                "duration_days": 30
+            },
+            "quarterly": {
+                "price": 2157,
+                "formatted_price": "₹2,157",
+                "period_label": "/ quarter + GST",
+                "duration_days": 90
+            },
+            "yearly": {
+                "price": 7670,
+                "formatted_price": "₹7,670",
+                "period_label": "/ year + GST",
+                "duration_days": 365
+            }
+        }
     },
     "GROWTH": {
-        "name": "GROWTH",
-        "tagline": "Market",
-        "description": "For creators, D2C brands and growing businesses that want consistent marketing.",
-        **calculate_plan_pricing(2999),
+        "name": "Growth",
+        "plan_tier": "PLAN 3",
+        "price": 2999,
         "currency": "INR",
         "billing_cycle": "monthly",
         "credits": 400,
+        "credits_badge": "400 Credits",
         "post_limit": 100,
         "reel_limit": 30,
-        "team_members": 2,
-        "brand_profiles": 1,
-        "bullet_points": [
+        "team_members": 1,
+        "description": "For creator, D2C brands and growing businesses.",
+        "period_label": "/ month + GST",
+        "highlights": [
             "400 monthly credits",
             "100 AI posts/month",
-            "30 AI reels/month",
-            "100 AI captions/month",
-            "AI Photoshoot, Fashion AI and Avatar tools",
-            "Advanced brand customization",
-            "Social media content calendar",
-            "Post scheduling tools",
-            "2 users"
+            "30 AI reels/month"
         ],
         "features": [
-            "ai_avatar", "ai_actor", "ai_photoshoot", "ads", "website_builder", 
-            "whatsapp_ai", "instagram_ai", "analytics", "ai_reel", "ai_caption", 
-            "ai_post", "fashion_ai", "brand_customization", "content_calendar", "post_scheduling"
+            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
+            "ads", "website_builder", "whatsapp_ai", "instagram_ai", "analytics"
         ],
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
-        "white_label": False
+        "white_label": False,
+        "billing_cycles": {
+            "monthly": {
+                "price": 2999,
+                "formatted_price": "₹2,999",
+                "period_label": "/ month + GST",
+                "duration_days": 30
+            },
+            "quarterly": {
+                "price": 8097,
+                "formatted_price": "₹8,097",
+                "period_label": "/ quarter + GST",
+                "duration_days": 90
+            },
+            "yearly": {
+                "price": 28790,
+                "formatted_price": "₹28,790",
+                "period_label": "/ year + GST",
+                "duration_days": 365
+            }
+        }
     },
     "BUSINESS": {
-        "name": "BUSINESS",
-        "tagline": "Automate",
-        "description": "For established businesses, marketing teams and agencies.",
-        **calculate_plan_pricing(4999),
+        "name": "Business",
+        "plan_tier": "PLAN 4",
+        "price": 4999,
         "currency": "INR",
         "billing_cycle": "monthly",
         "credits": 1000,
+        "credits_badge": "1000 Credits",
         "post_limit": 200,
         "reel_limit": 60,
         "team_members": 5,
-        "brand_profiles": 5,
-        "bullet_points": [
-            "1,000 monthly credits",
+        "description": "For established businesses",
+        "period_label": "/ month + GST",
+        "highlights": [
+            "1000 monthly credits",
             "200 AI posts/month",
-            "60 AI reels/month",
-            "200 AI captions/month",
-            "5 team members",
-            "Multiple brand profiles",
-            "Advanced scheduling and campaign management",
-            "Business analytics",
-            "AI Marketing Agent",
-            "WhatsApp AI and Instagram DM AI, where integrations are supported",
-            "Leads CRM and product catalogue tools"
+            "60 AI reels/month"
         ],
         "features": [
-            "ai_avatar", "ai_actor", "ai_photoshoot", "ads", "website_builder", 
-            "whatsapp_ai", "instagram_ai", "advanced_analytics", "crm", "ai_reel", 
-            "ai_caption", "ai_post", "fashion_ai", "brand_customization", 
-            "content_calendar", "post_scheduling", "campaign_management", 
-            "business_analytics", "marketing_agent", "leads_crm", "product_catalogue"
+            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
+            "ads", "website_builder", "whatsapp_ai", "instagram_ai",
+            "advanced_analytics", "crm"
         ],
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
-        "white_label": True
+        "white_label": True,
+        "billing_cycles": {
+            "monthly": {
+                "price": 4999,
+                "formatted_price": "₹4,999",
+                "period_label": "/ month + GST",
+                "duration_days": 30
+            },
+            "quarterly": {
+                "price": 13497,
+                "formatted_price": "₹13,497",
+                "period_label": "/ quarter + GST",
+                "duration_days": 90
+            },
+            "yearly": {
+                "price": 47990,
+                "formatted_price": "₹47,990",
+                "period_label": "/ year + GST",
+                "duration_days": 365
+            }
+        }
     },
     "INFLUENCER": {
-        "name": "INFLUENCER",
-        "tagline": "Collaborate",
-        "description": "For brands that want creator partnerships and influencer-led campaigns.",
-        **calculate_plan_pricing(9999),
+        "name": "Influencer",
+        "plan_tier": "PLAN 5",
+        "price": 9999,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 2000,
+        "credits": 2500,
+        "credits_badge": "Influencer...",
         "post_limit": -1,
         "reel_limit": -1,
         "team_members": 10,
-        "brand_profiles": 10,
-        "bullet_points": [
-            "Influencer discovery and shortlisting",
-            "Creator audience and engagement review",
-            "Brand-influencer collaboration coordination",
-            "Campaign briefs and content planning",
-            "Influencer outreach assistance",
-            "Campaign tracking and reporting",
-            "AI-generated promotional creatives and captions",
-            "Performance analytics, where data is available",
-            "Custom campaign packages for larger brands"
+        "description": "For brands that want creator partnerships",
+        "period_label": "/ month + GST",
+        "highlights": [
+            "Influencer discovery & shortlisting",
+            "Creator audience",
+            "Brand collaboration"
         ],
         "features": [
-            "influencer_discovery", "creator_review", "collaboration_coordination",
-            "campaign_briefs", "outreach_assistance", "campaign_tracking",
-            "ai_promotional_creatives", "performance_analytics", "custom_packages",
-            "ai_avatar", "ai_actor", "ai_photoshoot", "ads", "website_builder", 
-            "whatsapp_ai", "instagram_ai", "advanced_analytics", "crm", "ai_reel", 
-            "ai_caption", "ai_post", "fashion_ai", "brand_customization", 
-            "content_calendar", "post_scheduling", "campaign_management", 
-            "business_analytics", "marketing_agent", "leads_crm", "product_catalogue"
+            "influencer_discovery", "creator_audience", "brand_collaboration",
+            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
+            "ads", "website_builder", "whatsapp_ai", "instagram_ai",
+            "advanced_analytics", "crm"
         ],
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
-        "white_label": True
-    },
-
-    # Backwards-compatibility alias for legacy PRO users
-    "PRO": {
-        "name": "PRO",
-        "tagline": "Market",
-        "description": "For creators, D2C brands and growing businesses that want consistent marketing.",
-        **calculate_plan_pricing(2999),
-        "currency": "INR",
-        "billing_cycle": "monthly",
-        "credits": 400,
-        "post_limit": 100,
-        "reel_limit": 30,
-        "team_members": 2,
-        "brand_profiles": 1,
-        "bullet_points": [
-            "400 monthly credits",
-            "100 AI posts/month",
-            "30 AI reels/month",
-            "100 AI captions/month",
-            "AI Photoshoot, Fashion AI and Avatar tools",
-            "Advanced brand customization",
-            "Social media content calendar",
-            "Post scheduling tools",
-            "2 users"
-        ],
-        "features": [
-            "ai_avatar", "ai_actor", "ai_photoshoot", "ads", "website_builder", 
-            "whatsapp_ai", "instagram_ai", "analytics", "ai_reel", "ai_caption", 
-            "ai_post", "fashion_ai", "brand_customization", "content_calendar", "post_scheduling"
-        ],
-        "watermark": False,
-        "multiple_businesses": False,
-        "api_access": False,
-        "white_label": False,
-        "is_legacy": True
-    },
-    "HIRE_INFLUENCER": {
-        "name": "Hire Influencer",
-        "price": 100,
-        "base_price": 100,
-        "gst_rate": 0.0,
-        "gst_percent": 0,
-        "gst_amount": 0.0,
-        "total_price": 100.0,
-        "currency": "INR",
-        "billing_cycle": "one-time",
-        "credits": 0,
-        "post_limit": 0,
-        "reel_limit": 0,
-        "team_members": 0,
-        "features": [],
-        "bullet_points": [],
-        "watermark": False,
-        "multiple_businesses": False,
-        "api_access": False,
-        "white_label": False,
-        "gst_applicable": False,
-        "is_legacy": True
+        "white_label": True,
+        "billing_cycles": {
+            "monthly": {
+                "price": 9999,
+                "formatted_price": "₹9,999",
+                "period_label": "/ month + GST",
+                "duration_days": 30
+            },
+            "quarterly": {
+                "price": 26997,
+                "formatted_price": "₹26,997",
+                "period_label": "/ quarter + GST",
+                "duration_days": 90
+            },
+            "yearly": {
+                "price": 95990,
+                "formatted_price": "₹95,990",
+                "period_label": "/ year + GST",
+                "duration_days": 365
+            }
+        }
     }
 }
+
+# Maintain "PRO" as backward-compatible alias for "GROWTH"
+PLANS["PRO"] = PLANS["GROWTH"]
+
+BILLING_CYCLES = ["monthly", "quarterly", "yearly"]
+
+DISPLAY_PLAN_ORDER = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER"]
+
+
+def get_formatted_plans(active_plan_id: str | None = None) -> list:
+    """Returns a list of structured plan dictionaries ordered for frontend display."""
+    result = []
+    normalized_active = (active_plan_id or "").upper().strip()
+    if normalized_active == "PRO":
+        normalized_active = "GROWTH"
+
+    for key in DISPLAY_PLAN_ORDER:
+        plan_data = PLANS[key]
+        item = {
+            "id": key,
+            "name": plan_data["name"],
+            "plan_tier": plan_data.get("plan_tier", f"PLAN {len(result)+1}"),
+            "price": plan_data["price"],
+            "currency": plan_data.get("currency", "INR"),
+            "display_price": plan_data.get("billing_cycles", {}).get("monthly", {}).get("formatted_price", f"₹{plan_data['price']:,}"),
+            "period_label": plan_data.get("period_label", "/ month + GST"),
+            "credits": plan_data.get("credits", 0),
+            "credits_badge": plan_data.get("credits_badge", f"{plan_data.get('credits', 0)} Credits"),
+            "description": plan_data.get("description", ""),
+            "post_limit": plan_data.get("post_limit", -1),
+            "reel_limit": plan_data.get("reel_limit", -1),
+            "highlights": plan_data.get("highlights", []),
+            "features": plan_data.get("features", []),
+            "billing_cycles": plan_data.get("billing_cycles", {}),
+            "is_current": (key == normalized_active)
+        }
+        result.append(item)
+    return result
+

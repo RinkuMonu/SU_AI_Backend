@@ -11,6 +11,7 @@ from app.core.security import get_current_user, get_current_user_optional
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.facebook_service import FacebookService, FACEBOOK_LOGIN_PERMISSIONS
+from app.services.social_connectivity_service import sync_business_social_status
 from app.schemas.facebook import (
     FacebookSaveTokenRequest,
     FacebookConnectResponse,
@@ -232,6 +233,26 @@ async def facebook_callback(
             token_data={"access_token": demo_token, "expires_in": 5184000},
             pages_data=demo_pages,
         )
+        now_demo = datetime.now(timezone.utc)
+        demo_conn = {
+            "user_id": demo_user_id,
+            "platform": "facebook",
+            "fb_page_id": "100000000000001",
+            "account_id": "100000000000001",
+            "fb_page_name": "Demo Business Page",
+            "account_name": "Demo Business Page",
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(demo_token),
+            "connected": True,
+            "created_at": now_demo,
+            "updated_at": now_demo,
+        }
+        await db["facebook_connections"].update_one(
+            {"user_id": demo_user_id, "platform": "facebook"},
+            {"$set": demo_conn},
+            upsert=True
+        )
+        await sync_business_social_status(db, demo_user_id)
 
         return RedirectResponse(
             url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001")
@@ -269,6 +290,29 @@ async def facebook_callback(
 
         # 3. Save connection into database
         await FacebookService.save_connection(db, user_id, token_data, pages_data)
+        now_cb = datetime.now(timezone.utc)
+        first_p = (pages_data.get("pages") or [{}])[0]
+        p_id = first_p.get("page_id", "100000000000001")
+        p_name = first_p.get("page_name", "Demo Business Page")
+        conn_doc = {
+            "user_id": user_id,
+            "platform": "facebook",
+            "fb_page_id": p_id,
+            "account_id": p_id,
+            "fb_page_name": p_name,
+            "account_name": p_name,
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(access_token),
+            "connected": True,
+            "created_at": now_cb,
+            "updated_at": now_cb,
+        }
+        await db["facebook_connections"].update_one(
+            {"user_id": user_id, "platform": "facebook"},
+            {"$set": conn_doc},
+            upsert=True
+        )
+        await sync_business_social_status(db, user_id)
 
         pages = pages_data.get("pages") or []
         first_page = pages[0] if pages else {}
@@ -446,6 +490,18 @@ async def facebook_disconnect(
         },
     )
 
+    # 3. Update facebook_connections and sync onboarding status
+    now_dis = datetime.now(timezone.utc)
+    await db["facebook_connections"].update_one(
+        {"user_id": user_id, "platform": "facebook"},
+        {"$set": {
+            "connected": False,
+            "encrypted_access_token": None,
+            "updated_at": now_dis,
+        }}
+    )
+    await sync_business_social_status(db, user_id)
+
     return FacebookDisconnectResponse(
         success=True,
         message="Facebook connection disconnected successfully",
@@ -549,6 +605,25 @@ async def facebook_quick_connect(
         token_data={"access_token": demo_token, "expires_in": 5184000},
         pages_data=demo_pages,
     )
+    now_qc = datetime.now(timezone.utc)
+    await db["facebook_connections"].update_one(
+        {"user_id": user_id, "platform": "facebook"},
+        {"$set": {
+            "user_id": user_id,
+            "platform": "facebook",
+            "fb_page_id": "104928371902834",
+            "account_id": "104928371902834",
+            "fb_page_name": "SevenUnique AI Official Page",
+            "account_name": "SevenUnique AI Official Page",
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(demo_token),
+            "connected": True,
+            "created_at": now_qc,
+            "updated_at": now_qc,
+        }},
+        upsert=True
+    )
+    await sync_business_social_status(db, user_id)
 
     return FacebookTokenResponse(
         success=True,
@@ -598,3 +673,14 @@ async def facebook_verify_token(
     result = await FacebookService.verify_page_token_permissions(db, user_id)
     return FacebookVerifyTokenResponse(**result)
 
+
+@router.get("/signup-url")
+@router.get("/create-account-url")
+async def facebook_signup_url():
+    """Returns official Facebook account/page signup URL."""
+    return {
+        "platform": "facebook",
+        "url": "https://www.facebook.com/r.php",
+        "official_signup_url": "https://www.facebook.com/r.php",
+        "instructions": "Create your Facebook account or Page on the official website, then return and connect it."
+    }

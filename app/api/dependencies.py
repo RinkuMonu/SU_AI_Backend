@@ -1,16 +1,18 @@
 from fastapi import Depends, HTTPException, status
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_role, require_businessman, require_influencer
 from app.core.database import get_database
 from app.services.subscription_service import SubscriptionService
 from app.services.credit_service import CreditService
 from app.core.billing_config import FEATURE_PRICING
 
 def _extract_user_id(current_user) -> str:
+    if isinstance(current_user, dict):
+        return str(current_user.get("id") or current_user.get("_id") or "")
     if hasattr(current_user, "id"):
         return str(current_user.id)
-    if isinstance(current_user, dict):
-        return str(current_user.get("id") or current_user.get("_id"))
-    return str(current_user)
+    return str(current_user or "")
+
+_get_user_id = _extract_user_id
 
 def require_feature(feature_name: str):
     async def dependency(current_user=Depends(get_current_user), db=Depends(get_database)):

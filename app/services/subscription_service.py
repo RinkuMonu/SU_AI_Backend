@@ -20,6 +20,7 @@ class SubscriptionService:
             "user_id": user_id,
             "plan_id": default_plan_id,
             "plan": default_plan_id, # for backwards compatibility
+            "billing_cycle": "monthly",
             "credits_total": plan_config["credits"],
             "credits_remaining": plan_config["credits"],
             "status": "active",
@@ -99,28 +100,50 @@ class SubscriptionService:
         )
 
     @staticmethod
-    async def upgrade_plan(db, user_id: str, new_plan_id: str):
-        new_plan_id = (new_plan_id or "").strip().upper()
-        if new_plan_id not in PLANS:
+    async def upgrade_plan(db, user_id: str, new_plan_id: str, billing_cycle: str = "monthly"):
+        normalized_plan_id = (new_plan_id or "").upper().strip()
+        if normalized_plan_id not in PLANS:
             raise HTTPException(status_code=400, detail="Invalid plan")
             
-        plan_config = PLANS[new_plan_id]
+        plan_config = PLANS[normalized_plan_id]
         collection = db["subscriptions"]
+
+        # Ensure base subscription record exists
+        await SubscriptionService.get_or_create_subscription(db, user_id)
         
-        # We assume immediate activation for this mock
+        from datetime import timedelta
         now = datetime.now(timezone.utc)
-        
+        cycle = (billing_cycle or "monthly").lower().strip()
+        if cycle == "quarterly":
+            days = 90
+            multiplier = 3
+        elif cycle == "yearly":
+            days = 365
+            multiplier = 12
+        else:
+            days = 30
+            multiplier = 1
+            cycle = "monthly"
+
+        expires_at = now + timedelta(days=days)
+        credits_to_add = plan_config.get("credits", 0) * multiplier
+
         updated = await collection.find_one_and_update(
             {"user_id": user_id},
             {
                 "$set": {
-                    "plan_id": new_plan_id,
-                    "plan": new_plan_id,
+                    "plan_id": normalized_plan_id,
+                    "plan": normalized_plan_id,
+                    "billing_cycle": cycle,
+                    "status": "active",
+                    "features": plan_config.get("features", []),
+                    "activated_at": now,
+                    "expires_at": expires_at,
                     "updated_at": now
                 },
                 "$inc": {
-                    "credits_remaining": plan_config["credits"],
-                    "credits_total": plan_config["credits"]
+                    "credits_remaining": credits_to_add,
+                    "credits_total": credits_to_add
                 }
             },
             return_document=ReturnDocument.AFTER

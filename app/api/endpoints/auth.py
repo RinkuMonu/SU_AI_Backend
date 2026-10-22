@@ -1,29 +1,55 @@
 import logging
 import urllib.parse
 from typing import Optional, List, Dict, Any
+from datetime import datetime, timedelta, timezone
+from bson import ObjectId
 from fastapi import APIRouter, Depends, status, Request, Response, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import EmailStr
+import jwt
+
+from app.core.config import settings
+from app.core.database import get_database
+from app.core.security import (
+    create_access_token,
+    get_current_user,
+    get_current_user_optional,
+    CurrentUser,
+    require_businessman,
+    require_influencer,
+)
 from app.schemas.auth import (
-    LinkedInAuthLoginRequest,
     SignupRequest,
+    LoginRequest,
     SendOTPRequest,
     VerifyOTPRequest,
-    LoginRequest,
     VerifyEmailRequest,
     ResendVerificationRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
-    FacebookAuthLoginRequest, InstagramAuthLoginRequest,
+    FacebookAuthLoginRequest,
+    InstagramAuthLoginRequest,
+    LinkedInAuthLoginRequest,
+)
+from app.schemas.user import (
+    UserCreate,
+    UserLogin,
+    UserResponse,
+    TokenResponse,
+    OTPVerifyRequest,
+    OTPResendRequest,
+    RoleSelectRequest,
+    RoleSelectResponse,
+    DashboardRouteResponse,
+)
+from app.services.auth_service import (
+    AuthService,
+    PhoneNotVerifiedException,
+    EmailNotVerifiedException,
 )
 from app.services.facebook_service import FacebookService
-from app.schemas.user import UserResponse
-from app.services.auth_service import AuthService
-from app.core.config import settings
-from app.core.database import get_database
-from app.core.security import get_current_user, CurrentUser
-from bson import ObjectId
-from pydantic import EmailStr
-import jwt
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,82 +69,191 @@ def set_refresh_cookie(response: Response, refresh_token: str):
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
     )
 
-@router.post("/send-otp")
-@router.post("/resend-otp")
-async def send_otp(req: SendOTPRequest):
-    """Send 6-digit verification code to user's email via SMTP."""
-    return await AuthService.send_otp(req.email, req.name)
+
+@router.post("/signup", status_code=status.HTTP_201_CREATED)
+async def signup(request: Request, response: Response):
+    body = await request.json()
+    
+    raw_phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("contactNumber")
+    raw_email = (body.get("email") or "").lower().strip()
+    raw_otp = body.get("otp")
+    
+    db = get_database()
+    
+    # Check duplicate email
+    if raw_email:
+        existing = await db["users"].find_one({"email": raw_email})
+        if existing and (existing.get("emailVerified") or existing.get("email_verified") or existing.get("phone_verified") or existing.get("hashed_password")):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email is already registered. Please log in."
+            )
+            
+    # If raw_otp is provided or firstName+lastName without phone OTP requirement
+    if raw_otp or (body.get("firstName") and body.get("lastName")) or (body.get("fullName") and not raw_phone):
+        from app.schemas.auth import SignupRequest
+        try:
+            req = SignupRequest(**body)
+            user, access_token, refresh_token = await AuthService.signup(req)
+            set_refresh_cookie(response, refresh_token)
+            user_dict = {
+                "id": str(user.id),
+                "fullName": user.fullName or user.name or "User",
+                "name": user.fullName or user.name or "User",
+                "firstName": user.firstName,
+                "lastName": user.lastName,
+                "email": user.email,
+                "phone": user.phone or user.contactNumber,
+                "contactNumber": user.contactNumber or user.phone,
+                "accountType": user.accountType,
+                "role": getattr(user, "role", "user") or "user",
+                "emailVerified": bool(user.emailVerified),
+                "email_verified": bool(user.emailVerified),
+                "isVerified": bool(user.emailVerified)
+            }
+            response.status_code = status.HTTP_200_OK
+            return {
+                "success": True,
+                "message": "User registered successfully.",
+                "access_token": access_token,
+                "accessToken": access_token,
+                "token": access_token,
+                "user": user_dict,
+                "data": {
+                    "access_token": access_token,
+                    "accessToken": access_token,
+                    "token": access_token,
+                    "user": user_dict
+                }
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning(f"Fallback to UserCreate for signup: {e}")
+
+    # Phone signup flow
+    user_in = UserCreate(**body)
+    result = await AuthService.handle_signup(user_in)
+    return result
+
 
 @router.post("/verify-otp")
-async def verify_otp(req: VerifyOTPRequest):
-    """Verify 6-digit email OTP code."""
-    return await AuthService.verify_otp(req.email, req.otp)
+async def verify_otp(request: OTPVerifyRequest):
+    identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
+    if not identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phone number or identifier is required for OTP verification."
+        )
 
-@router.post(
-    "/signup",
-    summary="Register New User Account",
-    description="Registers a new user account with first name, last name, contact number, email, password, and optional email verification OTP."
-)
-async def signup(req: SignupRequest, response: Response):
-    user, access_token, refresh_token = await AuthService.signup(req)
-    set_refresh_cookie(response, refresh_token)
-    msg = "User registered successfully." if user.emailVerified else "User registered successfully. A verification link has also been sent to your email inbox."
-    user_dict = {
-        "id": str(user.id),
-        "fullName": user.fullName or getattr(user, "name", None) or "User",
-        "name": user.fullName or getattr(user, "name", None) or "User",
-        "firstName": user.firstName,
-        "lastName": user.lastName,
-        "email": user.email,
-        "phone": user.phone or user.contactNumber,
-        "contactNumber": user.contactNumber or user.phone,
-        "accountType": user.accountType,
-        "role": getattr(user, "role", "user") or "user",
-        "emailVerified": bool(user.emailVerified),
-        "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified)
-    }
-    return {
-        "success": True,
-        "message": msg,
-        "access_token": access_token,
-        "accessToken": access_token,
-        "token": access_token,
-        "user": user_dict,
-        "data": {
-            "access_token": access_token,
-            "accessToken": access_token,
-            "token": access_token,
-            "user": user_dict
-        }
-    }
+    result = await AuthService.verify_otp(identifier, request.otp)
+    if isinstance(result, dict) and not isinstance(result, User):
+        return result
+        
+    user = result
+    access_token = create_access_token(subject=str(user.id))
+
+    user_resp = UserResponse(
+        id=str(user.id),
+        name=user.name,
+        phone_number=getattr(user, "phone_number", None),
+        phone_verified=getattr(user, "phone_verified", False),
+        email=getattr(user, "email", None),
+        role=getattr(user, "role", None),
+        email_verified=getattr(user, "email_verified", True)
+    )
+    return TokenResponse(
+        access_token=access_token,
+        user=user_resp
+    )
+
+
+@router.post("/send-otp")
+@router.post("/resend-otp")
+async def resend_otp(request: OTPResendRequest):
+    identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
+    if not identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phone number or identifier is required to resend OTP."
+        )
+
+    result = await AuthService.resend_otp(identifier)
+    return result
 
 
 @router.post("/login")
-async def login(req: LoginRequest, response: Response):
-    user, access_token, refresh_token = await AuthService.login(req)
-    set_refresh_cookie(response, refresh_token)
+async def login(request: Request, response: Response):
+    body = await request.json()
+    email = body.get("email")
+    phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("username")
+    password = body.get("password")
+    
+    if not password:
+        raise HTTPException(status_code=400, detail="Password is required.")
+
+    user_in = UserLogin(phone_number=phone, email=email, password=password)
+    try:
+        user = await AuthService.authenticate_user(user_in)
+    except PhoneNotVerifiedException as e:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": str(e), "code": "PHONE_NOT_VERIFIED"}
+        )
+    except HTTPException:
+        from app.schemas.auth import LoginRequest
+        login_req = LoginRequest(email=email or phone, password=password)
+        user, access_token, refresh_token = await AuthService.login(login_req)
+        set_refresh_cookie(response, refresh_token)
+        user_dict = {
+            "id": str(user.id),
+            "fullName": getattr(user, "fullName", None) or getattr(user, "name", None) or "User",
+            "name": getattr(user, "name", None) or getattr(user, "fullName", None) or "User",
+            "email": getattr(user, "email", None),
+            "phone": getattr(user, "phone", None) or getattr(user, "phone_number", None),
+            "role": getattr(user, "role", "user"),
+            "email_verified": getattr(user, "email_verified", True),
+            "phone_verified": getattr(user, "phone_verified", False),
+        }
+        return {
+            "success": True,
+            "message": "Logged in successfully",
+            "access_token": access_token,
+            "accessToken": access_token,
+            "token": access_token,
+            "user": user_dict,
+            "data": {
+                "access_token": access_token,
+                "accessToken": access_token,
+                "token": access_token,
+                "user": user_dict
+            }
+        }
+
+    access_token = create_access_token(subject=str(user.id))
     user_dict = {
         "id": str(user.id),
-        "fullName": user.fullName or getattr(user, "name", None) or "User",
-        "name": user.fullName or getattr(user, "name", None) or "User",
-        "firstName": user.firstName,
-        "lastName": user.lastName,
-        "email": user.email,
-        "phone": user.phone or user.contactNumber,
-        "contactNumber": user.contactNumber or user.phone,
-        "accountType": user.accountType,
-        "role": getattr(user, "role", "user") or "user",
-        "emailVerified": bool(user.emailVerified),
-        "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified)
+        "name": user.name,
+        "fullName": getattr(user, "fullName", None) or user.name,
+        "email": getattr(user, "email", None),
+        "phone_number": getattr(user, "phone_number", None),
+        "phone": getattr(user, "phone_number", None),
+        "role": getattr(user, "role", None),
+        "phone_verified": getattr(user, "phone_verified", False),
+        "email_verified": getattr(user, "email_verified", True),
     }
+    
+    try:
+        refresh_token = AuthService.create_token(str(user.id), expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        set_refresh_cookie(response, refresh_token)
+    except Exception:
+        pass
+        
     return {
         "success": True,
-        "message": "Logged in successfully",
         "access_token": access_token,
         "accessToken": access_token,
-        "token": access_token,
+        "token_type": "bearer",
         "user": user_dict,
         "data": {
             "access_token": access_token,
@@ -128,106 +263,126 @@ async def login(req: LoginRequest, response: Response):
         }
     }
 
-@router.post("/facebook/login")
-async def facebook_login(req: FacebookAuthLoginRequest, response: Response):
-    """
-    Authenticate or sign up user using Facebook Login.
-    Accepts either an access_token from the Facebook SDK / OAuth flow or an authorization code.
-    Returns standard access token, refresh token cookie, and user profile data.
-    """
-    db = get_database()
-    access_token = req.access_token
 
-    if not access_token and req.code:
-        token_data = await FacebookService.exchange_code_for_token(req.code)
-        access_token = token_data.get("access_token")
-
-    if not access_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please provide either 'access_token' or 'code'."
+@router.post("/token")
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    user_in = UserLogin(username=form_data.username, password=form_data.password)
+    try:
+        user = await AuthService.authenticate_user(user_in)
+    except PhoneNotVerifiedException as e:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content={"detail": str(e), "code": "PHONE_NOT_VERIFIED"}
         )
 
-    user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
-        db=db,
-        access_token=access_token,
-        account_type=req.accountType or "user",
+    access_token = create_access_token(subject=str(user.id))
+    return {"access_token": access_token, "token_type": "bearer"}
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: CurrentUser = Depends(get_current_user)):
+    return UserResponse(
+        id=current_user["id"],
+        name=current_user["name"],
+        phone_number=current_user.get("phone_number"),
+        phone_verified=current_user.get("phone_verified", False),
+        email=current_user.get("email") or None,
+        role=current_user.get("role"),
+        email_verified=current_user.get("email_verified", True)
     )
-    set_refresh_cookie(response, refresh_token_jwt)
 
-    user_payload = {
-        "id": str(user.id),
-        "fullName": user.fullName,
-        "firstName": user.firstName,
-        "lastName": user.lastName,
-        "email": user.email,
-        "phone": user.phone,
-        "contactNumber": user.contactNumber,
-        "accountType": getattr(user, "accountType", "user") or "user",
-        "role": getattr(user, "role", "user") or "user",
-        "name": getattr(user, "name", user.fullName) or user.fullName,
-        "emailVerified": bool(user.emailVerified),
-        "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified),
-        "profileImageUrl": user.profileImageUrl,
-        "onboardingCompleted": True,
-        "onboarding_completed": True,
-        "onboarding_step": getattr(user, "onboarding_step", 3) or 3,
-    }
 
+@router.post("/select-role", response_model=RoleSelectResponse)
+@router.post("/role", response_model=RoleSelectResponse)
+async def select_role(
+    request: RoleSelectRequest,
+    current_user: CurrentUser = Depends(get_current_user)
+):
+    user_id = str(current_user["id"])
+    updated_user = await AuthService.select_role(
+        user_id=user_id,
+        requested_role=request.role,
+        client_user_id=request.user_id
+    )
+
+    user_resp = UserResponse(
+        id=str(updated_user.id),
+        name=updated_user.name,
+        phone_number=getattr(updated_user, "phone_number", None),
+        phone_verified=getattr(updated_user, "phone_verified", False),
+        email=getattr(updated_user, "email", None),
+        role=getattr(updated_user, "role", None),
+        email_verified=getattr(updated_user, "email_verified", True)
+    )
+
+    return RoleSelectResponse(
+        id=user_resp.id,
+        name=user_resp.name,
+        phone_number=user_resp.phone_number,
+        phone_verified=user_resp.phone_verified,
+        email=user_resp.email,
+        role=user_resp.role,
+        email_verified=user_resp.email_verified,
+        success=True,
+        message="Role selected successfully.",
+        user=user_resp
+    )
+
+
+@router.get("/dashboard-route", response_model=DashboardRouteResponse)
+@router.get("/dashboard")
+async def get_dashboard_route(current_user: CurrentUser = Depends(get_current_user)):
+    role = current_user.get("role")
+    if not role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Role selection required before accessing dashboard."
+        )
+    if role == "businessman":
+        return DashboardRouteResponse(
+            role="businessman",
+            dashboard_route="/dashboard/business",
+            dashboard_name="Business Dashboard"
+        )
+    elif role == "influencer":
+        return DashboardRouteResponse(
+            role="influencer",
+            dashboard_route="/dashboard/creator",
+            dashboard_name="Influencer/Creator Dashboard"
+        )
+    elif role == "admin":
+        return DashboardRouteResponse(
+            role="admin",
+            dashboard_route="/admin/dashboard",
+            dashboard_name="Admin Dashboard"
+        )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported or unrecognized user role: '{role}'."
+        )
+
+
+@router.get("/dashboard/businessman")
+async def get_businessman_dashboard(current_user: CurrentUser = Depends(require_businessman)):
     return {
         "success": True,
-        "message": "Facebook login successful",
-        "access_token": access_token_jwt,
-        "accessToken": access_token_jwt,
-        "token": access_token_jwt,
-        "user": user_payload,
-        "data": {
-            "access_token": access_token_jwt,
-            "accessToken": access_token_jwt,
-            "token": access_token_jwt,
-            "user": user_payload
-        }
+        "role": current_user.get("role"),
+        "dashboard": "businessman",
+        "message": "Welcome to the Businessman Dashboard",
+        "user_id": current_user["id"]
     }
 
-@router.get("/me")
-async def get_auth_me(current_user=Depends(get_current_user)):
-    db = get_database()
-    user_id = current_user.get("id") or current_user.get("_id")
-    doc = None
-    try:
-        doc = await db["users"].find_one({"_id": ObjectId(str(user_id))})
-    except Exception:
-        pass
-    if not doc and current_user.get("email"):
-        doc = await db["users"].find_one({"email": current_user.get("email")})
-        
-    res = dict(doc or current_user)
-    res["id"] = str(res.get("_id", user_id))
-    if "_id" in res:
-        del res["_id"]
-    if "hashed_password" in res:
-        del res["hashed_password"]
-    if not res.get("role"):
-        res["role"] = "user"
-    if not res.get("fullName") and res.get("name"):
-        res["fullName"] = res["name"]
-    if not res.get("name") and res.get("fullName"):
-        res["name"] = res["fullName"]
-    if not res.get("firstName") and res.get("name"):
-        res["firstName"] = res["name"].split(" ")[0]
-    if not res.get("lastName") and res.get("name") and len(res["name"].split(" ")) > 1:
-        res["lastName"] = " ".join(res["name"].split(" ")[1:])
-    if not res.get("image") and res.get("profileImageUrl"):
-        res["image"] = res["profileImageUrl"]
-    if not res.get("profileImageUrl") and res.get("image"):
-        res["profileImageUrl"] = res["image"]
-    if not res.get("contactNumber") and res.get("phone"):
-        res["contactNumber"] = res["phone"]
-    if not res.get("phone") and res.get("contactNumber"):
-        res["phone"] = res["contactNumber"]
-    res["email_verified"] = res.get("email_verified", res.get("emailVerified", True))
-    return res
+
+@router.get("/dashboard/influencer")
+async def get_influencer_dashboard(current_user: CurrentUser = Depends(require_influencer)):
+    return {
+        "success": True,
+        "role": current_user.get("role"),
+        "dashboard": "influencer",
+        "message": "Welcome to the Influencer/Creator Dashboard",
+        "user_id": current_user["id"]
+    }
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):
@@ -443,11 +598,11 @@ async def verify_email_get(request: Request, token: str = Query(None), link: str
 <body>
   <div class="card">
     <img src="/assets/images/dhandagrow.png" alt="Dhanda Grow AI" class="logo" onerror="this.style.display='none'" />
-    <div class="badge">✓</div>
+    <div class="badge">âœ“</div>
     <h1>{status_text}</h1>
     <p>{msg_text}</p>
     <a href="{settings.FRONTEND_URL}/login" class="btn">Proceed to Login</a>
-    <div class="footer">Dhanda Grow AI • Apne Business Ko Banao Smart &amp; Digital</div>
+    <div class="footer">Dhanda Grow AI â€¢ Apne Business Ko Banao Smart &amp; Digital</div>
   </div>
 </body>
 </html>"""
@@ -555,11 +710,11 @@ async def verify_email_get(request: Request, token: str = Query(None), link: str
 <body>
   <div class="card">
     <img src="/assets/images/dhandagrow.png" alt="Dhanda Grow AI" class="logo" onerror="this.style.display='none'" />
-    <div class="badge">✕</div>
+    <div class="badge">âœ•</div>
     <h1>Verification Failed</h1>
     <p>{e.detail}</p>
     <a href="{settings.FRONTEND_URL}/login" class="btn">Return to Dhanda Grow</a>
-    <div class="footer">Dhanda Grow AI • Apne Business Ko Banao Smart &amp; Digital</div>
+    <div class="footer">Dhanda Grow AI â€¢ Apne Business Ko Banao Smart &amp; Digital</div>
   </div>
 </body>
 </html>"""
@@ -725,11 +880,11 @@ async def reset_password_get(request: Request, token: str = Query(None), link: s
 <body>
   <div class="card">
     <img src="/assets/images/dhandagrow.png" alt="Dhanda Grow AI" class="logo" onerror="this.style.display='none'" />
-    <div class="badge">✕</div>
+    <div class="badge">âœ•</div>
     <h1>Link Expired or Invalid</h1>
     <p>{error_detail}</p>
     <a href="{settings.FRONTEND_URL}/login" class="btn">Return to Dhanda Grow</a>
-    <div class="footer">Dhanda Grow AI • Apne Business Ko Banao Smart &amp; Digital</div>
+    <div class="footer">Dhanda Grow AI â€¢ Apne Business Ko Banao Smart &amp; Digital</div>
   </div>
 </body>
 </html>"""
@@ -908,7 +1063,7 @@ async def reset_password_get(request: Request, token: str = Query(None), link: s
     </div>
 
     <div id="successSection" class="success-container">
-      <div class="badge">✓</div>
+      <div class="badge">âœ“</div>
       <h1>Password Reset Successful!</h1>
       <p style="color: #94a3b8; font-size: 15px; line-height: 1.6; margin-top: 10px;">
         Your password has been updated successfully. You can now log in to Dhanda Grow using your new credentials.
@@ -916,7 +1071,7 @@ async def reset_password_get(request: Request, token: str = Query(None), link: s
       <a href="{settings.FRONTEND_URL}/login" class="login-btn">Proceed to Login</a>
     </div>
 
-    <div class="footer">Dhanda Grow AI • Apne Business Ko Banao Smart &amp; Digital</div>
+    <div class="footer">Dhanda Grow AI â€¢ Apne Business Ko Banao Smart &amp; Digital</div>
   </div>
 
   <script>

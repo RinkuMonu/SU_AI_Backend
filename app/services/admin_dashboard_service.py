@@ -5,8 +5,8 @@ class AdminDashboardService:
     @staticmethod
     async def get_total_users() -> int:
         db = get_database()
-        # Count only normal users as per requirement
-        return await db["users"].count_documents({"role": "user"})
+        # Count non-admin platform users
+        return await db["users"].count_documents({"role": {"$ne": "admin"}})
 
     @staticmethod
     async def get_total_businesses() -> int:
@@ -16,17 +16,18 @@ class AdminDashboardService:
     @staticmethod
     async def get_recent_users(limit: int = 5) -> List[Dict[str, Any]]:
         db = get_database()
-        cursor = db["users"].find({"role": "user"}).sort("_id", -1).limit(limit)
+        cursor = db["users"].find({"role": {"$ne": "admin"}}).sort("_id", -1).limit(limit)
         users = []
         async for doc in cursor:
             users.append({
                 "id": str(doc["_id"]),
                 "name": doc.get("name", "Unknown"),
                 "email": doc.get("email", ""),
-                "role": doc.get("role", "user"),
+                "role": doc.get("role"),
                 "created_at": doc.get("created_at")
             })
         return users
+
 
     @staticmethod
     async def get_recent_businesses(limit: int = 5) -> List[Dict[str, Any]]:

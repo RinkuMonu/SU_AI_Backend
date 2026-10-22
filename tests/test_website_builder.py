@@ -1,31 +1,46 @@
-﻿import pytest
+import pytest
 from httpx import AsyncClient, ASGITransport
 from app.main import app
 from app.services.website_builder_service import WebsiteBuilderService
 from bson import ObjectId
 
-@pytest.fixture(autouse=True)
-async def setup_db():
-    from app.core.database import connect_to_mongo, close_mongo_connection
-    connect_to_mongo()
-    yield
-    close_mongo_connection()
-
 test_user_id = str(ObjectId())
 
-async def override_get_current_user():
-    from app.models.user import User
-    return User(
-        id=test_user_id,
-        name="Test User",
-        email="test@example.com",
-        hashed_password="hashed_password",
-        role="user",
-        email_verified=True
+@pytest.fixture(autouse=True)
+async def setup_db():
+    from app.core.database import connect_to_mongo, close_mongo_connection, get_database
+    from app.core.security import get_current_user, CurrentUser
+    from app.core.billing_config import PLANS
+    connect_to_mongo()
+    db = get_database()
+    await db["subscriptions"].update_one(
+        {"user_id": test_user_id},
+        {"$set": {
+            "user_id": test_user_id,
+            "plan_id": "PRO",
+            "status": "active",
+            "credits_total": 400,
+            "credits_remaining": 400,
+            "credits_used": 0,
+            "features": PLANS["PRO"]["features"]
+        }},
+        upsert=True
     )
 
-from app.core.security import get_current_user
-app.dependency_overrides[get_current_user] = override_get_current_user
+    async def override_get_current_user():
+        return CurrentUser({
+            "id": test_user_id,
+            "name": "Test User",
+            "email": "test@example.com",
+            "role": "user",
+            "email_verified": True,
+            "business_id": None
+        })
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    yield
+    app.dependency_overrides.pop(get_current_user, None)
+    close_mongo_connection()
 
 @pytest.mark.asyncio
 async def test_session_creation():

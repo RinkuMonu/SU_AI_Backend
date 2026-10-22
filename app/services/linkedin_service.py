@@ -1,403 +1,201 @@
-import hashlib
 import logging
-import secrets
-import urllib.parse
-from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, Any, Tuple
-
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict, Any
 import httpx
 from bson import ObjectId
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.models.user import User
-from app.models.refresh_session import RefreshSession
-from app.core.security import get_password_hash
-from app.services.auth_service import AuthService
+from app.services.instagram_service import encrypt_token, decrypt_token
 
 logger = logging.getLogger(__name__)
 
-LINKEDIN_AUTH_URL = "https://www.linkedin.com/oauth/v2/authorization"
-LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
-LINKEDIN_USERINFO_URL = "https://api.linkedin.com/v2/userinfo"
+LINKEDIN_AUTH_BASE = "https://www.linkedin.com/oauth/v2"
+LINKEDIN_API_BASE = "https://api.linkedin.com/v2"
+
+# Demo mode constants
+DEMO_LI_AUTHOR_ID = "urn:li:person:demo_author_li_123"
+DEMO_LI_DISPLAY_NAME = "Demo Business LinkedIn"
 
 
 class LinkedInService:
     @staticmethod
-    def is_configured() -> bool:
-        client_id = settings.LINKEDIN_CLIENT_ID or getattr(settings, "Linkedin_client_id", None)
-        client_secret = settings.LINKEDIN_CLIENT_SECRET or getattr(settings, "Linkedin_client_secret", None)
-        return bool(client_id and client_secret)
-
-    @staticmethod
     def is_demo_mode() -> bool:
-        """Returns True if LinkedIn App credentials are not configured."""
-        return not LinkedInService.is_configured()
+        """Check if LinkedIn API credentials are not configured."""
+        return not settings.LINKEDIN_CLIENT_ID or not settings.LINKEDIN_CLIENT_SECRET
 
     @staticmethod
-    def get_authorization_url(
-        redirect_uri: Optional[str] = None,
-        state: Optional[str] = None,
-        mode: str = "login"
-    ) -> str:
-        """Construct LinkedIn OAuth 2.0 authorization URL."""
-        client_id = settings.LINKEDIN_CLIENT_ID or getattr(settings, "Linkedin_client_id", None)
-        if not client_id:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="LinkedIn Client ID not configured in server settings."
-            )
+    def get_authorization_url(state: str) -> str:
+        """Generate official LinkedIn OAuth 2.0 authorization URL."""
+        client_id = settings.LINKEDIN_CLIENT_ID
+        redirect_uri = settings.LINKEDIN_REDIRECT_URI
+        scope = "openid profile email w_member_social"
 
-        default_redirect = f"{settings.FRONTEND_URL.rstrip('/')}/login/user" if settings.FRONTEND_URL else "http://localhost:3000/login/user"
-        configured_redirect = settings.LINKEDIN_REDIRECT_URI
-        if configured_redirect and settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://") and "localhost" in configured_redirect:
-            configured_redirect = default_redirect
-
-        final_redirect = redirect_uri or configured_redirect or default_redirect
-        effective_state = state or f"{mode}_linkedin_{secrets.token_urlsafe(16)}"
-        scopes = settings.LINKEDIN_SCOPES or "openid profile email w_member_social"
-
-        params = {
-            "response_type": "code",
-            "client_id": client_id,
-            "redirect_uri": final_redirect,
-            "state": effective_state,
-            "scope": scopes,
-        }
-        return f"{LINKEDIN_AUTH_URL}?{urllib.parse.urlencode(params)}"
+        return (
+            f"{LINKEDIN_AUTH_BASE}/authorization"
+            f"?response_type=code"
+            f"&client_id={client_id}"
+            f"&redirect_uri={redirect_uri}"
+            f"&state={state}"
+            f"&scope={scope}"
+        )
 
     @staticmethod
-    async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
-        """Exchange authorization code for LinkedIn access token."""
-        client_id = settings.LINKEDIN_CLIENT_ID or getattr(settings, "Linkedin_client_id", None)
-        client_secret = settings.LINKEDIN_CLIENT_SECRET or getattr(settings, "Linkedin_client_secret", None)
-        default_redirect = f"{settings.FRONTEND_URL.rstrip('/')}/login/user" if settings.FRONTEND_URL else "http://localhost:3000/login/user"
-        configured_redirect = settings.LINKEDIN_REDIRECT_URI
-        if configured_redirect and settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://") and "localhost" in configured_redirect:
-            configured_redirect = default_redirect
-
-        final_redirect = redirect_uri or configured_redirect or default_redirect
-
-        if not client_id or not client_secret:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="LinkedIn credentials not configured."
-            )
-
-        payload = {
+    async def exchange_code_for_token(code: str) -> Dict[str, Any]:
+        """Exchange authorization code for access token via LinkedIn OAuth token endpoint."""
+        data = {
             "grant_type": "authorization_code",
             "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": final_redirect,
+            "redirect_uri": settings.LINKEDIN_REDIRECT_URI,
+            "client_id": settings.LINKEDIN_CLIENT_ID,
+            "client_secret": settings.LINKEDIN_CLIENT_SECRET,
         }
         headers = {
             "Content-Type": "application/x-www-form-urlencoded"
         }
 
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            resp = await client.post(LINKEDIN_TOKEN_URL, data=payload, headers=headers)
-            if resp.status_code != 200:
-                logger.error(f"LinkedIn token exchange failed ({resp.status_code}): {resp.text}")
-                err_detail = resp.text
-                try:
-                    err_json = resp.json()
-                    err_detail = err_json.get("error_description") or err_json.get("error") or err_detail
-                except Exception:
-                    pass
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Failed to exchange LinkedIn code: {err_detail}"
-                )
-            return resp.json()
-
-    @staticmethod
-    async def get_user_info(access_token: str) -> Dict[str, Any]:
-        """Fetch user profile from LinkedIn OpenID UserInfo endpoint with propagation delay retry."""
-        import asyncio
-        headers = {
-            "Authorization": f"Bearer {access_token}"
-        }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            for attempt in range(3):
-                resp = await client.get(LINKEDIN_USERINFO_URL, headers=headers)
-                if resp.status_code == 200:
-                    return resp.json()
-
-                # If token was freshly generated, LinkedIn propagation delay might trigger REVOKED_ACCESS_TOKEN
-                if resp.status_code == 401 and "REVOKED_ACCESS_TOKEN" in resp.text and attempt < 2:
-                    logger.warning(f"LinkedIn token propagation delay detected on userinfo (attempt {attempt+1}/3). Retrying in 1.5s...")
-                    await asyncio.sleep(1.5)
-                    continue
-
-                logger.warning(f"LinkedIn userinfo endpoint failed ({resp.status_code}): {resp.text}. Trying fallback /v2/me.")
-                break
-
-            # Fallback to legacy /v2/me if openid is not available
-            fallback_resp = await client.get("https://api.linkedin.com/v2/me", headers=headers)
-            if fallback_resp.status_code == 200:
-                data = fallback_resp.json()
-                sub = data.get("id")
-                first = data.get("localizedFirstName") or "LinkedIn"
-                last = data.get("localizedLastName") or "User"
-                return {
-                    "sub": sub,
-                    "name": f"{first} {last}".strip(),
-                    "given_name": first,
-                    "family_name": last,
-                    "email": f"linkedin_{sub}@linkedin.user",
-                }
-
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Failed to retrieve LinkedIn user profile."
-            )
-
-    @staticmethod
-    async def authenticate_linkedin_user(
-        db,
-        code: Optional[str] = None,
-        access_token: Optional[str] = None,
-        id_token: Optional[str] = None,
-        redirect_uri: Optional[str] = None,
-        account_type: str = "business",
-        mode: str = "login"
-    ) -> Tuple[User, str, str]:
-        """
-        Authenticate or register a user via LinkedIn OAuth.
-        Returns (user, access_token_jwt, refresh_token_jwt).
-        """
-        token_data = {}
-        if code:
-            token_data = await LinkedInService.exchange_code_for_token(code, redirect_uri)
-            access_token = token_data.get("access_token")
-            if not id_token:
-                id_token = token_data.get("id_token")
-
-        if not access_token and not id_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing LinkedIn access token or authorization code."
-            )
-
-        user_info: Dict[str, Any] = {}
-
-        # 1. Prefer decoding id_token (Standard OpenID Connect JWT)
-        # It contains sub, name, email, picture, and completely bypasses LinkedIn's token propagation delay on /v2/userinfo
-        if id_token:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             try:
-                import jwt
-                decoded = jwt.decode(id_token, options={"verify_signature": False})
-                if decoded.get("sub") or decoded.get("email"):
-                    user_info = decoded
-                    logger.info(f"Successfully extracted LinkedIn user info from id_token for sub={decoded.get('sub')}")
-            except Exception as e:
-                logger.warning(f"Failed to decode LinkedIn id_token: {e}")
+                res = await client.post(f"{LINKEDIN_AUTH_BASE}/accessToken", data=data, headers=headers)
+                if res.status_code != 200:
+                    err_json = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
+                    logger.error(f"LinkedIn token exchange failed: {res.text}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"LinkedIn token exchange failed: {err_json.get('error_description', res.text)}"
+                    )
+                return res.json()
+            except httpx.HTTPError as e:
+                logger.error(f"LinkedIn HTTP error during token exchange: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to communicate with LinkedIn authorization server"
+                )
 
-        # 2. Fallback to querying userinfo API endpoint if id_token was absent or couldn't be decoded
-        if not user_info and access_token:
-            user_info = await LinkedInService.get_user_info(access_token)
+    @staticmethod
+    async def get_linkedin_profile(access_token: str) -> Dict[str, Any]:
+        """Fetch member identity via LinkedIn UserInfo API."""
+        headers = {"Authorization": f"Bearer {access_token}"}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            try:
+                res = await client.get(f"{LINKEDIN_API_BASE}/userinfo", headers=headers)
+                if res.status_code != 200:
+                    logger.error(f"LinkedIn userinfo failed: {res.text}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Failed to retrieve LinkedIn member profile"
+                    )
+                return res.json()
+            except httpx.HTTPError as e:
+                logger.error(f"LinkedIn profile fetch HTTP error: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Failed to communicate with LinkedIn API"
+                )
 
-        email = (user_info.get("email") or "").lower().strip()
-        linkedin_id = str(user_info.get("sub") or "")
-
-        if not email and not linkedin_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Unable to retrieve identity from LinkedIn."
-            )
-
-        if not email:
-            email = f"linkedin_{linkedin_id}@linkedin.user"
-
-        first_name = user_info.get("given_name") or user_info.get("name") or email.split("@")[0]
-        last_name = user_info.get("family_name") or ""
-        full_name = user_info.get("name") or f"{first_name} {last_name}".strip()
-        picture_url = user_info.get("picture")
-        author_urn = f"urn:li:person:{linkedin_id}" if linkedin_id else ""
+    @staticmethod
+    async def save_connection(
+        db,
+        user_id: str,
+        token_data: Dict[str, Any],
+        profile: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Persist encrypted LinkedIn connection in DB and sync business record."""
         now = datetime.now(timezone.utc)
-        auth_mode = (mode or "login").lower().strip()
+        sub_id = profile.get("sub") or profile.get("id") or "unknown"
+        author_id = f"urn:li:person:{sub_id}" if not str(sub_id).startswith("urn:li:") else sub_id
+        display_name = profile.get("name") or profile.get("localizedFirstName", "LinkedIn User")
 
-        # Check existing user by email or linkedinId
-        existing = await db["users"].find_one({
-            "$or": [
-                {"email": email},
-                {"linkedinId": linkedin_id},
-                {"linkedin_id": linkedin_id},
-            ]
-        })
+        expires_in = token_data.get("expires_in")
+        expires_at = now + timedelta(seconds=expires_in) if expires_in else None
 
-        if existing:
-            user_id = str(existing["_id"])
-            update_data = {
-                "linkedinId": linkedin_id,
-                "linkedin_id": linkedin_id,
+        access_token = token_data.get("access_token", "")
+        encrypted = encrypt_token(access_token) if access_token else None
+
+        connection_doc = {
+            "user_id": user_id,
+            "platform": "linkedin",
+            "linkedin_author_id": author_id,
+            "display_name": display_name,
+            "account_type": "PROFILE",
+            "profile_picture_url": profile.get("picture", ""),
+            "encrypted_access_token": encrypted,
+            "token_expires_at": expires_at,
+            "scopes": token_data.get("scope", "").split(),
+            "connected": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        await db["linkedin_connections"].update_one(
+            {"user_id": user_id, "platform": "linkedin"},
+            {"$set": connection_doc},
+            upsert=True
+        )
+
+        # Sync to businesses collection for publishing compatibility
+        await db["businesses"].update_one(
+            {"owner_id": user_id},
+            {"$set": {
+                "linkedin_author_id": author_id,
                 "linkedin_access_token": access_token,
-                "linkedin_author_id": author_urn,
-                "linkedin_connected": True,
-                "emailVerified": True,
-                "email_verified": True,
-                "emailVerifiedAt": existing.get("emailVerifiedAt") or now,
-                "updated_at": now,
-            }
-            if picture_url and not existing.get("profileImageUrl"):
-                update_data["profileImageUrl"] = picture_url
-            providers = existing.get("authProviders", [])
-            if "linkedin" not in providers:
-                providers.append("linkedin")
-                update_data["authProviders"] = providers
+                "linkedin_account_name": display_name,
+                "updated_at": now
+            }}
+        )
 
-            await db["users"].update_one({"_id": ObjectId(user_id)}, {"$set": update_data})
-            user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
-            user = User.from_mongo(user_doc)
-            user.id = user_id
-            user.emailVerified = True
-            user.email_verified = True
-            user.onboardingCompleted = bool(existing.get("onboardingCompleted", False))
-            user.onboarding_step = existing.get("onboarding_step", 1)
+        return connection_doc
 
-        else:
-            # Check pending_users
-            pending_existing = await db["pending_users"].find_one({
-                "$or": [
-                    {"email": email},
-                    {"linkedinId": linkedin_id},
-                    {"linkedin_id": linkedin_id},
-                ]
-            })
+    @staticmethod
+    async def get_connection(db, user_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve active LinkedIn connection for user (without exposing decrypted tokens)."""
+        return await db["linkedin_connections"].find_one(
+            {"user_id": user_id, "platform": "linkedin", "connected": True}
+        )
 
-            if pending_existing:
-                user_id = str(pending_existing["_id"])
-                user = User.from_mongo(pending_existing)
-                user.id = user_id
-                user.onboardingCompleted = False
-                user.onboarding_step = pending_existing.get("onboarding_step", 1)
-            else:
-                # Create NEW user
-                random_pwd = get_password_hash(secrets.token_urlsafe(32))
-                user = User(
-                    fullName=full_name,
-                    name=full_name,
-                    firstName=first_name,
-                    lastName=last_name,
-                    email=email,
-                    hashed_password=random_pwd,
-                    accountType=account_type or "business",
-                    authProviders=["linkedin"],
-                    emailVerified=True,
-                    email_verified=True,
-                    emailVerifiedAt=now,
-                    termsAcceptedAt=now,
-                    profileImageUrl=picture_url,
-                    role="user",
-                    onboardingCompleted=False,
-                    onboarding_step=1,
-                )
-                doc = user.model_dump(by_alias=True, exclude={"id"})
-                doc["linkedinId"] = linkedin_id
-                doc["linkedin_id"] = linkedin_id
-                doc["linkedin_access_token"] = access_token
-                doc["linkedin_author_id"] = author_urn
-                doc["linkedin_connected"] = True
-                doc["onboardingCompleted"] = False
-                doc["onboarding_completed"] = False
-                doc["onboarding_step"] = 1
+    @staticmethod
+    async def get_decrypted_token(db, user_id: str) -> str:
+        """Retrieve decrypted LinkedIn access token for backend publishing."""
+        conn = await db["linkedin_connections"].find_one(
+            {"user_id": user_id, "platform": "linkedin", "connected": True}
+        )
+        if not conn:
+            raise HTTPException(status_code=400, detail="LinkedIn is not connected")
 
-                # If signup mode, keep in pending_users until onboarding, otherwise insert to users
-                result = await db["users"].insert_one(doc)
-                user.id = str(result.inserted_id)
+        encrypted = conn.get("encrypted_access_token")
+        if not encrypted:
+            raise HTTPException(status_code=400, detail="LinkedIn access token not found")
 
-                try:
-                    from app.services.credit_service import CreditService
-                    await CreditService.get_or_create_subscription(db, user.id)
-                except Exception as e:
-                    logger.warning(f"Could not provision credits for LinkedIn user: {e}")
-
-        # Update businesses collection with linkedin_author_id and linkedin_access_token
         try:
-            business_query_or = [
-                {"ownerId": str(user.id)},
-                {"owner_id": str(user.id)},
-                {"user_id": str(user.id)},
-                {"userId": str(user.id)},
-            ]
-            if ObjectId.is_valid(str(user.id)):
-                oid_val = ObjectId(str(user.id))
-                business_query_or.extend([
-                    {"_id": oid_val},
-                    {"ownerId": oid_val},
-                    {"owner_id": oid_val},
-                    {"user_id": oid_val},
-                    {"userId": oid_val},
-                ])
-            existing_biz = await db["businesses"].find_one({"$or": business_query_or})
-            if existing_biz:
-                await db["businesses"].update_many(
-                    {"$or": business_query_or},
-                    {"$set": {
-                        "linkedin_author_id": author_urn,
-                        "linkedin_access_token": access_token,
-                        "linkedin_connected": True,
-                        "updated_at": now,
-                    }}
-                )
-            else:
-                biz_name = getattr(user, "businessName", None) or f"{user.fullName}'s Business"
-                await db["businesses"].insert_one({
-                    "ownerId": str(user.id),
-                    "owner_id": str(user.id),
-                    "userId": str(user.id),
-                    "user_id": str(user.id),
-                    "businessName": biz_name,
-                    "business_name": biz_name,
-                    "businessType": "Retail",
-                    "industry": "General",
-                    "email": email,
-                    "linkedin_author_id": author_urn,
-                    "linkedin_access_token": access_token,
-                    "linkedin_connected": True,
-                    "created_at": now,
-                    "updated_at": now,
-                })
-        except Exception as b_err:
-            logger.warning(f"Could not sync LinkedIn to businesses: {b_err}")
+            return decrypt_token(encrypted)
+        except Exception as e:
+            logger.error(f"LinkedIn token decryption failed for user {user_id}: {e}")
+            raise HTTPException(status_code=500, detail="Failed to decrypt LinkedIn token. Please reconnect.")
 
-        # Save connection record in linkedin_connections
-        try:
-            conn_doc = {
-                "user_id": str(user.id),
-                "platform": "linkedin",
-                "linkedin_id": linkedin_id,
-                "author_id": author_urn,
-                "access_token": access_token,
-                "name": full_name,
-                "email": email,
-                "connected": True,
-                "updated_at": now,
-            }
-            await db["linkedin_connections"].update_one(
-                {"user_id": str(user.id)},
-                {"$set": conn_doc},
-                upsert=True
-            )
-        except Exception as c_err:
-            logger.warning(f"Could not save linkedin_connections record: {c_err}")
+    @staticmethod
+    async def disconnect(db, user_id: str) -> bool:
+        """Disconnect LinkedIn account and invalidate stored credentials."""
+        now = datetime.now(timezone.utc)
+        result = await db["linkedin_connections"].update_one(
+            {"user_id": user_id, "platform": "linkedin"},
+            {"$set": {
+                "connected": False,
+                "encrypted_access_token": None,
+                "updated_at": now
+            }}
+        )
 
-        # Generate JWT session tokens
-        jwt_access_token = AuthService.create_token(
-            user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        await db["businesses"].update_one(
+            {"owner_id": user_id},
+            {"$set": {
+                "linkedin_author_id": None,
+                "linkedin_access_token": None,
+                "linkedin_account_name": None,
+                "updated_at": now
+            }}
         )
-        jwt_refresh_token = AuthService.create_token(
-            user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        rs = RefreshSession(
-            userId=str(user.id),
-            hashedToken=get_password_hash(hashlib.sha256(jwt_refresh_token.encode()).hexdigest()),
-            expiresAt=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
 
-        return user, jwt_access_token, jwt_refresh_token
+        return result.modified_count > 0
 
     @staticmethod
     async def publish_post(
@@ -448,6 +246,18 @@ class LinkedInService:
             if user_doc:
                 linkedin_author_id = linkedin_author_id or user_doc.get("linkedin_author_id")
                 linkedin_access_token = linkedin_access_token or user_doc.get("linkedin_access_token")
+        if not linkedin_author_id or not linkedin_access_token:
+            conn = await db["linkedin_connections"].find_one({"user_id": user_id, "connected": True})
+            if conn:
+                linkedin_author_id = linkedin_author_id or conn.get("linkedin_author_id") or conn.get("author_id")
+                enc = conn.get("encrypted_access_token")
+                if enc:
+                    try:
+                        linkedin_access_token = linkedin_access_token or decrypt_token(enc)
+                    except Exception:
+                        pass
+                linkedin_access_token = linkedin_access_token or conn.get("access_token")
+
                 
         # Fallback to linkedin_connections
         if not linkedin_author_id or not linkedin_access_token:

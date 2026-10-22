@@ -25,6 +25,7 @@ import urllib.parse
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.instagram_service import InstagramService
+from app.services.social_connectivity_service import sync_business_social_status
 
 from app.schemas.instagram import (
     InstagramConnectResponse,
@@ -192,7 +193,6 @@ async def instagram_callback(
             "account_type": "BUSINESS",
             "profile_picture_url": "",
         }
-
         if demo_user_id == "pending_login":
             user, access_token_jwt, _ = await InstagramService.authenticate_instagram_user(
                 db=db,
@@ -211,6 +211,7 @@ async def instagram_callback(
             token_data={"access_token": demo_token, "expires_in": 5184000, "user_id": DEMO_IG_USER_ID},
             profile=demo_profile,
         )
+        await sync_business_social_status(db, demo_user_id)
 
         return RedirectResponse(
             url=build_instagram_redirect(
@@ -263,6 +264,7 @@ async def instagram_callback(
 
         # 4. Save connection across businesses, users, and instagram_connections
         await InstagramService.save_connection(db, user_id, token_data, profile)
+        await sync_business_social_status(db, user_id)
 
         ig_id = profile.get("id") or profile.get("user_id") or token_data.get("user_id") or ""
         ig_username = profile.get("username") or ""
@@ -462,6 +464,7 @@ async def instagram_disconnect(
     """Disconnect Instagram for the current user across businesses, users, and instagram_connections."""
     user_id = str(current_user.get("id") or current_user.get("_id"))
     success = await InstagramService.disconnect(db, user_id)
+    await sync_business_social_status(db, user_id)
 
     return InstagramDisconnectResponse(
         success=True,
@@ -1130,3 +1133,16 @@ async def webhook_receive(
 
     result = await InstagramService.process_webhook_event(db, body)
     return result
+
+
+@router.get("/signup-url")
+@router.get("/create-account-url")
+async def instagram_signup_url():
+    """Returns official Instagram account signup URL."""
+    return {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/accounts/emailsignup/",
+        "official_signup_url": "https://www.instagram.com/accounts/emailsignup/",
+        "instructions": "Create your Instagram account on the official website, then return and connect it."
+    }
+
