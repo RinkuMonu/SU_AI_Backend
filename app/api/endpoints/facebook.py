@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 import secrets
 import logging
+import re
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -12,6 +13,7 @@ from app.core.database import get_database
 from app.core.config import settings
 from app.services.facebook_service import FacebookService, FACEBOOK_LOGIN_PERMISSIONS
 from app.services.social_connectivity_service import sync_business_social_status
+from app.services.instagram_service import encrypt_token
 from app.schemas.facebook import (
     FacebookSaveTokenRequest,
     FacebookConnectResponse,
@@ -255,7 +257,7 @@ async def facebook_callback(
         await sync_business_social_status(db, demo_user_id)
 
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001")
+            url=build_facebook_redirect(frontend_url, "facebook_connected=true&fb_page_id=100000000000001")
         )
 
     # Validate state parameter
@@ -324,7 +326,7 @@ async def facebook_callback(
         ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
 
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}")
+            url=build_facebook_redirect(frontend_url, f"facebook_connected=true{page_param}{ig_param}{token_param}")
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")

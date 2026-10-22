@@ -17,6 +17,7 @@ from app.api.endpoints.fashion import router as fashion_router
 from app.api.endpoints.instagram import router as instagram_router
 from app.api.endpoints.facebook import router as facebook_router
 from app.api.endpoints.linkedin import router as linkedin_router
+from app.api.endpoints.brand import router as brand_router
 from app.api.endpoints.influencers import router as influencers_router
 from app.api.endpoints.influencer_profile import router as influencer_profile_router
 from app.api.endpoints.business_collaborations import router as business_collaborations_router
@@ -90,6 +91,8 @@ app.include_router(facebook_router)
 app.include_router(linkedin_router, prefix="/api/linkedin")
 app.include_router(linkedin_router, prefix="/api/v1/linkedin")
 app.include_router(linkedin_router)
+app.include_router(brand_router, prefix="/api/brands", tags=["Brand Kit"])
+app.include_router(brand_router, prefix="/api/v1/brands", tags=["Brand Kit"])
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
