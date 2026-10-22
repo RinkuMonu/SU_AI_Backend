@@ -510,6 +510,8 @@ class InfluencerService:
         inf = await db["influencer_profiles"].find_one({"$or": [inf_filter, {"user_id": str(influencer_id)}]})
         if not inf:
             inf = await db["users"].find_one(inf_filter)
+        if not inf:
+            inf = await db["influencers"].find_one(inf_filter)
 
         inf_name = (inf.get("fullName") or inf.get("name") or "Creator") if inf else "Creator"
         inf_niche = (inf.get("category") or inf.get("niche") or "Fashion & Lifestyle") if inf else "Lifestyle"
@@ -586,18 +588,22 @@ Rules:
             inf_filter = {"_id": ObjectId(inf_id)} if ObjectId.is_valid(inf_id) else {"_id": inf_id}
             profile = await db["influencer_profiles"].find_one({"$or": [inf_filter, {"user_id": str(inf_id)}]})
             user_doc = await db["users"].find_one(inf_filter) or {}
+            manual_doc = await db["influencers"].find_one(inf_filter) or {} if not profile and not user_doc else {}
             
             p = profile or {}
+            name = p.get("fullName") or user_doc.get("fullName") or user_doc.get("name") or manual_doc.get("name") or "Creator"
+            raw_u = p.get("username") or user_doc.get("username") or (f"@{manual_doc.get('name', 'creator').lower().replace(' ', '_')}" if manual_doc else "@creator")
+            uname = raw_u if str(raw_u).startswith("@") else f"@{raw_u}"
             results.append({
                 "id": str(it["_id"]),
                 "influencer_id": inf_id,
-                "name": p.get("fullName") or user_doc.get("fullName") or user_doc.get("name") or "Creator",
-                "username": p.get("username") or user_doc.get("username") or "@creator",
-                "niche": p.get("category") or p.get("niche") or "Lifestyle",
-                "followers_count": int(p.get("follower_count") or 15000),
-                "engagement_rate": float(p.get("engagement_rate") or 4.2),
+                "name": name,
+                "username": uname,
+                "niche": p.get("category") or p.get("niche") or manual_doc.get("niche") or "Lifestyle",
+                "followers_count": int(p.get("follower_count") or manual_doc.get("followers_count") or 15000),
+                "engagement_rate": float(p.get("engagement_rate") or manual_doc.get("engagement_rate") or 4.2),
                 "expectedPricePerPost": float(p.get("expectedPricePerPost") or 5000),
-                "avatar_url": p.get("profile_image") or user_doc.get("profileImageUrl") or "https://api.dicebear.com/7.x/avataaars/svg?seed=creator",
+                "avatar_url": p.get("profile_image") or user_doc.get("profileImageUrl") or f"https://api.dicebear.com/7.x/avataaars/svg?seed={uname}",
                 "created_at": it.get("created_at")
             })
         return results
@@ -608,7 +614,11 @@ Rules:
         inf_id = data["influencer_id"]
         inf_filter = {"_id": ObjectId(inf_id)} if ObjectId.is_valid(inf_id) else {"_id": inf_id}
         inf = await db["influencer_profiles"].find_one({"$or": [inf_filter, {"user_id": str(inf_id)}]})
-        inf_name = (inf.get("fullName") or "Creator") if inf else "Creator"
+        if not inf:
+            inf = await db["users"].find_one(inf_filter)
+        if not inf:
+            inf = await db["influencers"].find_one(inf_filter)
+        inf_name = (inf.get("fullName") or inf.get("name") or "Creator") if inf else "Creator"
 
         now = datetime.now(timezone.utc)
         doc = {

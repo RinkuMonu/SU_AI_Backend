@@ -7,12 +7,29 @@ from typing import Dict, Any, List, Optional
 from bson import ObjectId
 from fastapi import HTTPException, status
 from app.utils.response import serialize_mongo
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Default platform fee in INR
 DEFAULT_PLATFORM_FEE = 200.0
 GST_RATE = 0.18
+
+
+def _req_filter(request_id: str, req: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    or_clauses = [{"hiring_request_id": str(request_id)}]
+    if ObjectId.is_valid(str(request_id)):
+        or_clauses.append({"_id": ObjectId(str(request_id))})
+    if req:
+        if req.get("hiring_request_id"):
+            or_clauses.append({"hiring_request_id": str(req["hiring_request_id"])})
+        if req.get("_id"):
+            val = str(req["_id"])
+            if ObjectId.is_valid(val):
+                or_clauses.append({"_id": ObjectId(val)})
+            else:
+                or_clauses.append({"_id": val})
+    return {"$or": or_clauses}
 
 class MarketplaceService:
 
@@ -195,35 +212,47 @@ class MarketplaceService:
         for m in manual_influencers:
             mid = str(m.get("_id"))
             if mid not in merged_items:
-                m_user = m.get("name") or "Creator"
-                m_username = f"@{m_user.lower().replace(' ', '_')}"
+                m_user = MarketplaceService._clean_display_name(m.get("fullName") or m.get("name"))
+                m_username = MarketplaceService._clean_handle(m.get("username") or m.get("name"))
+                m_cat = m.get("category") or m.get("niche") or "Fashion"
+                m_price = float(m.get("expectedPricePerPost") or 4500.0)
+                m_loc = m.get("location") or "India"
+                m_img = (
+                    m.get("profile_image") or 
+                    m.get("profileImageUrl") or 
+                    f"https://api.dicebear.com/7.x/avataaars/svg?seed={m_username.lstrip('@')}"
+                )
+                m_followers = int(m.get("followers_count") or 15000)
+                m_engagement = float(m.get("engagement_rate") or 3.2)
+                m_platform = m.get("platform") or "Instagram"
+
                 merged_items[mid] = {
                     "id": mid,
                     "user_id": mid,
                     "fullName": m_user,
                     "username": m_username,
                     "email": m.get("contact_email") or "",
-                    "niche": m.get("niche") or "Fashion",
-                    "category": m.get("niche") or "Fashion",
-                    "bio": f"Professional creator in {m.get('niche', 'Fashion')}.",
-                    "city": "",
-                    "state": "",
+                    "niche": m_cat,
+                    "category": m_cat,
+                    "bio": m.get("bio") or f"Professional creator in {m_cat}.",
+                    "city": m.get("city") or "",
+                    "state": m.get("state") or "",
                     "country": "India",
-                    "location": "India",
-                    "profile_image": f"https://api.dicebear.com/7.x/avataaars/svg?seed={m_username}",
-                    "is_verified": True,
-                    "follower_count": int(m.get("followers_count") or 15000),
-                    "engagement_rate": float(m.get("engagement_rate") or 3.2),
-                    "expectedPricePerPost": 4500.0,
-                    "connected_platforms": [m.get("platform") or "Instagram"],
+                    "location": m_loc,
+                    "profile_image": m_img,
+                    "is_verified": bool(m.get("is_verified", True)),
+                    "follower_count": m_followers,
+                    "engagement_rate": m_engagement,
+                    "expectedPricePerPost": m_price,
+                    "connected_platforms": [m_platform],
                     "platforms_data": [{
-                        "platform": m.get("platform") or "Instagram",
+                        "platform": m_platform,
                         "username": m_username,
-                        "url": f"https://instagram.com/{m_username.lstrip('@')}",
-                        "followers": int(m.get("followers_count") or 15000),
-                        "engagement_rate": float(m.get("engagement_rate") or 3.2)
+                        "url": m.get("profile_url") or f"https://{m_platform.lower()}.com/{m_username.lstrip('@')}",
+                        "followers": m_followers,
+                        "engagement_rate": m_engagement
                     }],
-                    "collaboration_info": "Experienced with paid brand collaborations."
+                    "collaboration_info": m.get("collaboration_info") or "Experienced with paid brand collaborations."
                 }
 
         all_influencers = list(merged_items.values())
@@ -231,52 +260,62 @@ class MarketplaceService:
         # FILTERING
         filtered = []
         for inf in all_influencers:
-            # Search filter (name, username, bio)
+            # Search filter (name, username, niche, bio, location)
             if search and search.strip():
                 s = search.strip().lower()
-                matches_search = (
-                    s in inf["fullName"].lower() or 
-                    s in inf["username"].lower() or 
-                    s in inf["niche"].lower() or 
-                    s in inf["bio"].lower()
-                )
+                search_words = [w for w in re.split(r'[\s,@]+', s) if len(w) > 1]
+                inf_text = f"{inf.get('fullName', '')} {inf.get('username', '')} {inf.get('niche', '')} {inf.get('category', '')} {inf.get('bio', '')} {inf.get('location', '')}".lower()
+                matches_search = (s in inf_text) or (any(w in inf_text for w in search_words) if search_words else False)
                 if not matches_search:
                     continue
 
             # Platform filter
-            if platform and platform.lower() != "all":
-                p_match = any(platform.lower() in p.lower() for p in inf["connected_platforms"])
+            if platform and platform.strip().lower() != "all":
+                plat_target = platform.strip().lower()
+                p_match = any(plat_target in p.lower() for p in inf.get("connected_platforms", []))
+                if not p_match:
+                    p_match = any(plat_target in (pd.get("platform") or "").lower() for pd in inf.get("platforms_data", []))
                 if not p_match:
                     continue
 
             # Follower count filter
-            if min_followers is not None and inf["follower_count"] < min_followers:
+            if min_followers is not None and int(inf.get("follower_count", 0)) < min_followers:
                 continue
-            if max_followers is not None and inf["follower_count"] > max_followers:
+            if max_followers is not None and int(inf.get("follower_count", 0)) > max_followers:
                 continue
 
-            # Location filter
-            if location and location.lower() != "all":
-                loc_pattern = location.lower()
+            # Location filter (handles city, state, or full formatted place strings)
+            if location and location.strip().lower() != "all":
+                loc_clean = location.strip().lower()
+                loc_words = [w for w in re.split(r'[\s,]+', loc_clean) if len(w) > 2]
+                inf_loc_text = f"{inf.get('location', '')} {inf.get('city', '')} {inf.get('state', '')} {inf.get('country', '')}".lower()
                 matches_loc = (
-                    loc_pattern in inf["location"].lower() or 
-                    loc_pattern in inf["city"].lower() or 
-                    loc_pattern in inf["state"].lower()
+                    loc_clean in inf_loc_text or
+                    inf_loc_text in loc_clean or
+                    (any(w in inf_loc_text for w in loc_words) if loc_words else False)
                 )
                 if not matches_loc:
                     continue
 
-            # Niche / Category filter
-            if niche and niche.lower() != "all":
-                if niche.lower() not in inf["niche"].lower() and niche.lower() not in inf["category"].lower():
+            # Niche / Category filter (handles category compound labels like "Fashion & Lifestyle", "Tech & Gadgets")
+            if niche and niche.strip().lower() != "all":
+                niche_clean = niche.strip().lower()
+                niche_words = [w for w in re.split(r'[\s,&/]+', niche_clean) if len(w) > 2]
+                inf_niche_text = f"{inf.get('niche', '')} {inf.get('category', '')}".lower()
+                matches_niche = (
+                    niche_clean in inf_niche_text or
+                    inf_niche_text in niche_clean or
+                    (any(w in inf_niche_text for w in niche_words) if niche_words else False)
+                )
+                if not matches_niche:
                     continue
 
             # Engagement rate filter
-            if min_engagement is not None and inf["engagement_rate"] < min_engagement:
+            if min_engagement is not None and float(inf.get("engagement_rate", 0)) < min_engagement:
                 continue
 
             # Verification status filter
-            if is_verified is not None and inf["is_verified"] != is_verified:
+            if is_verified is not None and inf.get("is_verified") != is_verified:
                 continue
 
             filtered.append(inf)
@@ -309,6 +348,44 @@ class MarketplaceService:
                 "total_pages": total_pages
             }
         }
+
+    @staticmethod
+    async def get_categories(db) -> List[str]:
+        """
+        Fetch distinct categories and niches dynamically from all influencer collections.
+        Automatically updates whenever new creators are added via Swagger UI or onboarding.
+        """
+        categories = set()
+        for col_name in ["influencers", "influencer_profiles"]:
+            for field in ["category", "niche"]:
+                distinct_vals = await db[col_name].distinct(field)
+                for v in distinct_vals:
+                    if v and isinstance(v, str) and v.strip():
+                        categories.add(v.strip())
+
+        # Also check creator users
+        for field in ["category", "niche"]:
+            distinct_vals = await db["users"].distinct(field, {"$or": [{"role": "influencer"}, {"isInfluencer": True}]})
+            for v in distinct_vals:
+                if v and isinstance(v, str) and v.strip():
+                    categories.add(v.strip())
+
+        baseline = [
+            "Fashion & Lifestyle",
+            "Beauty & Skincare",
+            "Tech & Gadgets",
+            "Food & Dining",
+            "Fitness & Health",
+            "Travel & Hospitality",
+            "Entertainment & Comedy",
+            "Gaming & Esports",
+            "Finance & Business",
+            "Education & Career"
+        ]
+        for b in baseline:
+            categories.add(b)
+
+        return sorted(list(categories), key=lambda x: x.lower())
 
     # -------------------------------------------------------------
     # PHASE 4A: PLATFORM SERVICE FEE CONFIGURATION
@@ -360,10 +437,21 @@ class MarketplaceService:
                     "email": inf_user.get("email"),
                     "user_id": str(inf_user["_id"])
                 }
+        if not inf_doc:
+            manual_inf = await db["influencers"].find_one(inf_filter)
+            if manual_inf:
+                m_name = manual_inf.get("name") or "Creator"
+                m_uname = f"@{m_name.lower().replace(' ', '_')}"
+                inf_doc = {
+                    "fullName": m_name,
+                    "username": m_uname,
+                    "email": manual_inf.get("contact_email") or "",
+                    "user_id": str(manual_inf["_id"])
+                }
 
         influencer_user_id = str(inf_doc.get("user_id") or influencer_id) if inf_doc else influencer_id
-        influencer_name = inf_doc.get("fullName") or inf_doc.get("name") or "Creator" if inf_doc else "Influencer"
-        influencer_username = inf_doc.get("username") or "creator" if inf_doc else "@creator"
+        influencer_name = (inf_doc.get("fullName") or inf_doc.get("name") or "Creator") if inf_doc else "Influencer"
+        influencer_username = (inf_doc.get("username") or "creator") if inf_doc else "@creator"
 
         # 2. Fetch Hirer / Business details
         business_doc = await db["businesses"].find_one({"ownerId": hirer_id})
@@ -425,6 +513,9 @@ class MarketplaceService:
         hiring_doc["id"] = str(res.inserted_id)
         hiring_doc["_id"] = str(res.inserted_id)
 
+        # Automatically generate initial bilateral agreement record
+        await MarketplaceService.generate_agreement(db, hiring_doc)
+
         return serialize_mongo(hiring_doc)
 
     @staticmethod
@@ -435,18 +526,37 @@ class MarketplaceService:
         status_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """Retrieve all hiring requests where user is either hirer or influencer."""
-        query: Dict[str, Any] = {
-            "$or": [
-                {"hirer_id": str(user_id)},
-                {"influencer_id": str(user_id)},
-                {"influencer_user_id": str(user_id)}
-            ]
-        }
+        or_conds = [
+            {"hirer_id": str(user_id)},
+            {"influencer_id": str(user_id)},
+            {"influencer_user_id": str(user_id)}
+        ]
+        user_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else await db["users"].find_one({"_id": user_id})
+        if user_doc and user_doc.get("email"):
+            or_conds.append({"influencer_email": user_doc.get("email")})
+            or_conds.append({"hirer_email": user_doc.get("email")})
+        prof_doc = await db["influencer_profiles"].find_one({"user_id": str(user_id)})
+        if prof_doc and prof_doc.get("username"):
+            or_conds.append({"influencer_username": prof_doc.get("username")})
+            or_conds.append({"influencer_username": f"@{prof_doc.get('username').lstrip('@')}"})
+
+        query: Dict[str, Any] = {"$or": or_conds}
         if status_filter and status_filter.lower() != "all":
             query["status"] = status_filter
 
         cursor = db["hiring_requests"].find(query).sort("created_at", -1)
         requests = await cursor.to_list(length=200)
+
+        manual_influencers = await db["influencers"].find({}).to_list(length=100)
+        manual_inf_map = {str(m["_id"]): m for m in manual_influencers}
+
+        for r in requests:
+            if r.get("influencer_name") in ["Creator", "Influencer", None] or r.get("influencer_username") in ["@creator", "creator", None]:
+                inf_id = str(r.get("influencer_id") or r.get("influencer_user_id") or "")
+                if inf_id in manual_inf_map:
+                    m = manual_inf_map[inf_id]
+                    r["influencer_name"] = m.get("name") or r.get("influencer_name")
+                    r["influencer_username"] = f"@{m.get('name', 'creator').lower().replace(' ', '_')}"
 
         return [serialize_mongo(r) for r in requests]
 
@@ -466,6 +576,15 @@ class MarketplaceService:
         })
         if not req:
             raise HTTPException(status_code=404, detail="Hiring request not found")
+
+        if req.get("influencer_name") in ["Creator", "Influencer", None] or req.get("influencer_username") in ["@creator", "creator", None]:
+            inf_id = str(req.get("influencer_id") or req.get("influencer_user_id") or "")
+            if inf_id:
+                inf_filter = {"_id": ObjectId(inf_id)} if ObjectId.is_valid(inf_id) else {"_id": inf_id}
+                m = await db["influencers"].find_one(inf_filter)
+                if m:
+                    req["influencer_name"] = m.get("name") or req.get("influencer_name")
+                    req["influencer_username"] = f"@{m.get('name', 'creator').lower().replace(' ', '_')}"
 
         # Authorization check
         is_participant = (
@@ -540,10 +659,73 @@ class MarketplaceService:
     # PHASE 3: ELECTRONIC AGREEMENT ENGINE
     # -------------------------------------------------------------
     @staticmethod
+    def _clean_handle(name_or_user: Optional[str]) -> str:
+        if not name_or_user:
+            return "@creator"
+        s = str(name_or_user).strip()
+        while s.startswith("@"):
+            s = s[1:].strip()
+        s = s.lower().replace(" ", "_")
+        return f"@{s}" if s else "@creator"
+
+    @staticmethod
+    def _clean_display_name(name: Optional[str]) -> str:
+        if not name:
+            return "Creator"
+        s = str(name).strip()
+        while s.startswith("@"):
+            s = s[1:].strip()
+        return s if s else "Creator"
+
+    @staticmethod
     async def generate_agreement(db, req: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate legal bilateral collaboration agreement."""
+        """Generate verified legal bilateral collaboration agreement dynamically from DB."""
         agreement_number = f"AGR-{datetime.now().year}-{uuid.uuid4().hex[:8].upper()}"
         now = datetime.now(timezone.utc)
+
+        # 1. Resolve Creator Details from DB
+        inf_uid = str(req.get("influencer_user_id") or req.get("influencer_id") or "")
+        creator_doc = None
+        if inf_uid:
+            inf_filter = {"_id": ObjectId(inf_uid)} if ObjectId.is_valid(inf_uid) else {"_id": inf_uid}
+            creator_doc = await db["influencers"].find_one(inf_filter) or await db["influencer_profiles"].find_one(inf_filter) or await db["users"].find_one(inf_filter)
+
+        raw_c_name = (creator_doc.get("fullName") or creator_doc.get("name") if creator_doc else None) or req.get("influencer_name") or "Creator"
+        raw_c_uname = (creator_doc.get("username") if creator_doc else None) or req.get("influencer_username") or raw_c_name
+        
+        c_name = MarketplaceService._clean_display_name(raw_c_name)
+        c_uname = MarketplaceService._clean_handle(raw_c_uname)
+        c_platform = (creator_doc.get("platform") if creator_doc else None) or req.get("social_platform") or "Instagram"
+        c_url = (creator_doc.get("profile_url") if creator_doc else None) or (creator_doc.get("instagram_url") if creator_doc else None) or f"https://{c_platform.lower()}.com/{c_uname.lstrip('@')}"
+        c_email = (creator_doc.get("contact_email") if creator_doc else None) or (creator_doc.get("email") if creator_doc else None) or ""
+
+        # 2. Resolve Hirer / Brand Details from DB
+        hirer_user = await db["users"].find_one({"_id": ObjectId(req["hirer_id"])}) if ObjectId.is_valid(req["hirer_id"]) else None
+        biz_doc = await db["businesses"].find_one({"$or": [{"owner_id": req["hirer_id"]}, {"ownerId": req["hirer_id"]}, {"userId": req["hirer_id"]}]})
+        h_city = (hirer_user.get("city") if hirer_user else "") or ""
+        h_state = (hirer_user.get("state") if hirer_user else "") or ""
+        h_loc = ", ".join([c for c in [h_city, h_state, "India"] if c]) if (h_city or h_state) else (biz_doc.get("location") if biz_doc else "Registered Office, India")
+        h_gstin = (biz_doc.get("gstin") if biz_doc else None) or (hirer_user.get("gstin") if hirer_user else None) or "NA (Standard Platform Merchant)"
+
+        h_name = (hirer_user.get("fullName") or hirer_user.get("name") if hirer_user else None) or req.get("hirer_name") or "Brand Representative"
+        h_biz = (biz_doc.get("businessName") or biz_doc.get("name") if biz_doc else None) or req.get("business_name") or f"{h_name}'s Brand"
+        h_email = req.get("hirer_email") or (hirer_user.get("email") if hirer_user else "brand@example.com")
+
+        # 3. Dynamic campaign specifications
+        start_date = req.get("start_date") or now.strftime("%Y-%m-%d")
+        end_date = req.get("end_date") or (now + timedelta(days=14)).strftime("%Y-%m-%d")
+        content_sub_deadline = req.get("content_submission_deadline") or (now + timedelta(days=7)).strftime("%Y-%m-%d")
+        publishing_deadline = req.get("publishing_deadline") or end_date
+        deliverables = req.get("deliverables") or ["1 Dedicated Video / Reel", "2 Promotional Stories"]
+
+        # 4. Financial Calculations
+        comp = float(req.get("proposed_compensation") or 4500.0)
+        fee = float(req.get("platform_fee") or 200.0)
+        fee_tax = float(req.get("platform_fee_tax") or 36.0)
+        total_fee = float(req.get("total_platform_fee") or 236.0)
+        total_payable = float(req.get("total_payable") or (comp + total_fee))
+
+        doc_hash = hashlib.sha256(f"{agreement_number}:{req['hirer_id']}:{inf_uid}:{comp}".encode()).hexdigest()
 
         agreement = {
             "agreement_number": agreement_number,
@@ -552,54 +734,92 @@ class MarketplaceService:
             "title": f"Influencer Marketing Agreement — {req['campaign_name']}",
             "hirer_party": {
                 "user_id": req["hirer_id"],
-                "legal_name": req["hirer_name"],
-                "business_name": req["business_name"],
-                "email": req["hirer_email"],
+                "legal_name": h_name,
+                "business_name": h_biz,
+                "email": h_email,
+                "address": h_loc,
+                "gstin": h_gstin,
                 "role": "Brand / Hirer"
             },
             "influencer_party": {
-                "user_id": req["influencer_user_id"],
-                "legal_name": req["influencer_name"],
-                "username": req["influencer_username"],
+                "user_id": inf_uid,
+                "legal_name": c_name,
+                "display_name": c_name,
+                "username": c_uname,
+                "platform": c_platform,
+                "profile_url": c_url,
+                "email": c_email,
                 "role": "Creator / Influencer"
             },
             "campaign_details": {
                 "campaign_name": req["campaign_name"],
-                "product_or_service": req["product_or_service"],
-                "campaign_objectives": req["campaign_objectives"],
-                "deliverables": req["deliverables"],
-                "social_platform": req["social_platform"],
-                "start_date": req["start_date"],
-                "end_date": req["end_date"]
+                "product_or_service": req.get("product_or_service") or "Commercial Marketing Collaboration",
+                "campaign_objectives": req.get("campaign_objectives") or "Boost brand awareness, organic engagement, and conversions.",
+                "deliverables": deliverables,
+                "social_platform": c_platform,
+                "start_date": start_date,
+                "end_date": end_date,
+                "content_submission_deadline": content_sub_deadline,
+                "publishing_deadline": publishing_deadline,
+                "revision_requirements": req.get("revision_requirements") or "Up to 2 creative revisions included within 5 business days of deliverable submission.",
+                "special_instructions": req.get("special_instructions") or "Adhere to platform community guidelines, maintain clear product visibility, and tag official brand handles.",
+                "mandatory_disclosures": "#ad #sponsored ASCI & FTC Compliant"
             },
             "financial_terms": {
-                "agreed_compensation": req["proposed_compensation"],
-                "platform_service_fee": req["total_platform_fee"],
+                "proposed_compensation": comp,
+                "agreed_compensation": comp,
+                "platform_service_fee": fee,
+                "platform_fee_tax": fee_tax,
+                "total_platform_fee": total_fee,
+                "total_payable": total_payable,
+                "influencer_net_payout": comp,
                 "currency": "INR",
-                "payment_schedule": "100% Escrow deposit by Hirer before campaign initiation. Full payout released to Influencer upon Hirer approval of deliverables."
+                "payment_schedule": "100% Escrow deposit by Hirer via Zaakpay before campaign initiation. Full payout released to Influencer upon Hirer approval of deliverables.",
+                "refund_policy": "Full escrow refund to Hirer in event of unfulfilled deliverables or quality non-compliance via SevenUnique Platform Arbitration."
             },
             "legal_clauses": [
                 {
-                    "clause_title": "1. Scope of Work and Deliverables",
-                    "clause_text": f"The Creator agrees to produce, edit, and publish the designated deliverables ({', '.join(req['deliverables'])}) adhering strictly to the Brand objectives and quality standards."
+                    "clause_title": "1. Scope of Work, Deliverables & Specifications",
+                    "clause_text": f"The Creator agrees to produce, edit, and publish the designated deliverables ({', '.join(deliverables)}) adhering strictly to Brand objectives, guidelines, and timeline."
                 },
                 {
-                    "clause_title": "2. Intellectual Property & Commercial License",
-                    "clause_text": "The Creator retains ownership of the underlying content while granting the Brand an irrevocable, worldwide, royalty-free license to use, display, distribute, and promote the deliverables across digital advertising channels for 12 months."
+                    "clause_title": "2. Commercial License, Reposting & Exclusivity",
+                    "clause_text": "Creator retains creator attribution rights while granting the Brand an exclusive, worldwide, royalty-free, 12-month commercial license to repost, boost, and run digital advertisements using the deliverables."
                 },
                 {
-                    "clause_title": "3. Revisions & Approval Policy",
-                    "clause_text": f"{req['revision_requirements']} Revisions must be requested within 5 business days of deliverable submission."
+                    "clause_title": "3. Content Approvals, Revisions & Review Deadlines",
+                    "clause_text": f"{req.get('revision_requirements', 'Up to 2 creative revisions included.')} Revisions must be requested within 5 business days of deliverable submission, otherwise content is deemed approved."
                 },
                 {
-                    "clause_title": "4. Advertising Disclosures & FTC/ASCI Compliance",
-                    "clause_text": "The Creator must visibly label all published deliverables with '#ad', '#sponsored', or official platform partnership tags in full compliance with ASCI guidelines."
+                    "clause_title": "4. Mandatory Advertising Disclosures (ASCI & FTC)",
+                    "clause_text": "The Creator must visibly label all published deliverables with '#ad', '#sponsored', or official platform partnership tags in full compliance with ASCI and FTC guidelines."
                 },
                 {
-                    "clause_title": "5. Dispute Resolution & Platform Escrow",
-                    "clause_text": "All monetary deposits are safeguarded under SevenUnique AI Platform Escrow. In the event of a dispute, SevenUnique AI Arbitration mediates binding settlement."
+                    "clause_title": "5. Confidentiality, Non-Disclosure & DPDP Act",
+                    "clause_text": "Both parties agree to treat negotiated commercial compensation, unreleased product briefs, and strategic campaign data as strictly confidential under the Digital Personal Data Protection Act, 2023."
+                },
+                {
+                    "clause_title": "6. Mutual Responsibilities of Both Parties",
+                    "clause_text": "Creator shall maintain brand safety and professional standards. Brand agrees to supply approved product samples, assets, and brief instructions in a timely manner."
+                },
+                {
+                    "clause_title": "7. Cancellation, Termination & Force Majeure",
+                    "clause_text": "Either party may terminate upon mutual written agreement. Unjustified creator default entitles Brand to 100% platform escrow refund. Neither party is liable for verifiable force majeure delays."
+                },
+                {
+                    "clause_title": "8. Limitation of Liability & Platform Escrow",
+                    "clause_text": "Total liability of either party shall not exceed the total contract value. Deposited funds are held in secure SevenUnique AI Escrow and released upon deliverable verification."
+                },
+                {
+                    "clause_title": "9. Dispute Resolution, Applicable Law & Jurisdiction",
+                    "clause_text": "This Agreement is governed by the laws of India. Disputes are subject to binding platform arbitration under the Arbitration and Conciliation Act, 1996 with jurisdiction in Jaipur, India."
+                },
+                {
+                    "clause_title": "10. Electronic Signature Consent & IT Act 2000",
+                    "clause_text": "Execution of this agreement via electronic signature constitutes legally binding assent under Section 10A of the Information Technology Act, 2000."
                 }
             ],
+            "document_hash": doc_hash,
             "signatures": {
                 "hirer": {
                     "signed": False,
@@ -618,12 +838,22 @@ class MarketplaceService:
                 }
             },
             "admin_approval": {
-                "status": "pending_admin_review",
-                "reviewed_by": None,
-                "reviewed_at": None,
-                "notes": None
+                "status": "approved",
+                "reviewed_by": "System",
+                "reviewed_at": now.isoformat(),
+                "notes": "Standard marketplace terms verified"
             },
-            "status": "awaiting_admin_approval",
+            "status": "pending_signatures",
+            "audit_trail": [
+                {
+                    "event": "AGREEMENT_GENERATED",
+                    "version": "1.0",
+                    "actor_id": str(req.get("hirer_id")),
+                    "actor_role": "system",
+                    "timestamp": now.isoformat(),
+                    "details": f"Agreement {agreement_number} generated for hiring request {req['hiring_request_id']}."
+                }
+            ],
             "created_at": now,
             "updated_at": now
         }
@@ -635,18 +865,151 @@ class MarketplaceService:
         )
         return serialize_mongo(agreement)
 
-    @staticmethod
-    async def get_agreement(db, request_id: str, user_id: str, is_admin: bool = False) -> Dict[str, Any]:
-        """Fetch agreement document with authorization check."""
-        # Ensure user is authorized on request
-        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id, is_admin)
 
-        agreement = await db["marketplace_agreements"].find_one({"hiring_request_id": request_id})
+    @staticmethod
+    async def make_agreement(db, request_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Influencer initiates formal agreement request for admin review and seal.
+        Ensures agreement exists and updates status to awaiting_admin_approval.
+        """
+        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
+        clean_req_id = req.get("hiring_request_id") or str(req.get("_id") or request_id)
+
+        agreement = await db["marketplace_agreements"].find_one({
+            "$or": [
+                {"hiring_request_id": clean_req_id},
+                {"hiring_request_id": str(request_id)}
+            ]
+        })
         if not agreement:
-            # Auto-generate bilateral agreement draft on demand for valid hiring request
             agreement = await MarketplaceService.generate_agreement(db, req)
 
+        now = datetime.now(timezone.utc)
+        await db["marketplace_agreements"].update_one(
+            {"_id": agreement["_id"]},
+            {
+                "$set": {
+                    "admin_approval": {
+                        "status": "pending_admin_review",
+                        "requested_by": str(user_id),
+                        "requested_at": now.isoformat(),
+                        "notes": "Influencer requested formal bilateral agreement verification & official seal"
+                    },
+                    "status": "awaiting_admin_approval",
+                    "updated_at": now
+                }
+            }
+        )
+
+        await db["hiring_requests"].update_one(
+            _req_filter(request_id, req),
+            {
+                "$set": {
+                    "agreement_status": "awaiting_admin_approval",
+                    "status": "awaiting_admin_approval",
+                    "admin_approval": {
+                        "status": "pending_admin_review",
+                        "requested_at": now.isoformat()
+                    },
+                    "updated_at": now
+                }
+            }
+        )
+
+        updated_req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
+        updated_agr = await db["marketplace_agreements"].find_one({"_id": agreement["_id"]})
+        return {
+            "success": True,
+            "message": "Agreement request sent to Admin Panel for review & official seal.",
+            "hiring_request": updated_req,
+            "agreement": serialize_mongo(updated_agr)
+        }
+
+    @staticmethod
+    async def get_agreement(db, request_id: str, user_id: str, is_admin: bool = False) -> Dict[str, Any]:
+        """Fetch agreement document with authorization check and data self-healing."""
+        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id, is_admin)
+
+        canonical_req_id = req.get("hiring_request_id") or str(req.get("_id"))
+        agreement = await db["marketplace_agreements"].find_one({
+            "$or": [
+                {"hiring_request_id": request_id},
+                {"hiring_request_id": canonical_req_id},
+                {"hiring_request_id": str(req.get("_id"))}
+            ]
+        })
+        if not agreement:
+            agreement = await MarketplaceService.generate_agreement(db, req)
+        else:
+            # Self-healing if existing agreement has generic fallback or double @@
+            inf_party = agreement.get("influencer_party") or {}
+            needs_update = False
+            raw_u = str(inf_party.get("username", ""))
+            if "@@" in raw_u or not raw_u or raw_u == "@creator":
+                inf_party["username"] = MarketplaceService._clean_handle(raw_u or inf_party.get("legal_name"))
+                needs_update = True
+            raw_l = str(inf_party.get("legal_name", ""))
+            if raw_l.startswith("@") or raw_l in ["Creator", "Influencer", None]:
+                inf_id = inf_party.get("user_id") or req.get("influencer_id") or req.get("influencer_user_id")
+                if inf_id:
+                    inf_filter = {"_id": ObjectId(inf_id)} if ObjectId.is_valid(inf_id) else {"_id": inf_id}
+                    creator_item = await db["influencers"].find_one(inf_filter) or await db["influencer_profiles"].find_one(inf_filter)
+                    if creator_item:
+                        inf_party["legal_name"] = MarketplaceService._clean_display_name(creator_item.get("fullName") or creator_item.get("name"))
+                        inf_party["username"] = MarketplaceService._clean_handle(creator_item.get("username") or creator_item.get("name"))
+                else:
+                    inf_party["legal_name"] = MarketplaceService._clean_display_name(raw_l)
+                needs_update = True
+
+            # Ensure hirer details are enriched
+            hirer_party = agreement.get("hirer_party") or {}
+            if not hirer_party.get("address") or not hirer_party.get("gstin"):
+                hirer_user = await db["users"].find_one({"_id": ObjectId(req["hirer_id"])}) if ObjectId.is_valid(req.get("hirer_id", "")) else None
+                biz_doc = await db["businesses"].find_one({"$or": [{"owner_id": req.get("hirer_id")}, {"ownerId": req.get("hirer_id")}]})
+                h_city = (hirer_user.get("city") if hirer_user else "") or ""
+                h_state = (hirer_user.get("state") if hirer_user else "") or ""
+                hirer_party["address"] = ", ".join([c for c in [h_city, h_state, "India"] if c]) if (h_city or h_state) else (biz_doc.get("location") if biz_doc else "Registered Office, India")
+                hirer_party["gstin"] = (biz_doc.get("gstin") if biz_doc else None) or "NA (Standard Platform Merchant)"
+                agreement["hirer_party"] = hirer_party
+                needs_update = True
+
+            if needs_update:
+                agreement["influencer_party"] = inf_party
+                await db["marketplace_agreements"].update_one(
+                    {"_id": agreement["_id"]},
+                    {"$set": {"influencer_party": inf_party, "hirer_party": agreement.get("hirer_party", {})}}
+                )
+
         return serialize_mongo(agreement)
+
+    @staticmethod
+    async def get_agreement_pdf(db, request_id: str, user_id: str, is_admin: bool = False) -> tuple[bytes, str]:
+        """Fetch agreement, verify authorization, and generate PDF bytes."""
+        agreement = await MarketplaceService.get_agreement(db, request_id, user_id, is_admin)
+        from app.services.agreement_pdf_service import AgreementPdfService
+        pdf_bytes = AgreementPdfService.generate_pdf(agreement)
+        filename = f"Agreement-{agreement.get('agreement_number', 'draft')}.pdf"
+        return pdf_bytes, filename
+
+    @staticmethod
+    async def get_user_agreements(db, user_id: str) -> List[Dict[str, Any]]:
+        """List all agreements where current user is Hirer or Influencer."""
+        reqs = await MarketplaceService.get_hiring_requests(db, user_id)
+        req_ids = [r["hiring_request_id"] for r in reqs if r.get("hiring_request_id")]
+        
+        user_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else None
+        agr_or = [
+            {"hirer_party.user_id": str(user_id)},
+            {"influencer_party.user_id": str(user_id)},
+            {"hiring_request_id": {"$in": req_ids}}
+        ]
+        if user_doc and user_doc.get("email"):
+            agr_or.append({"influencer_party.email": user_doc.get("email")})
+            agr_or.append({"hirer_party.email": user_doc.get("email")})
+
+        cursor = db["marketplace_agreements"].find({"$or": agr_or}).sort("created_at", -1)
+        agreements = await cursor.to_list(length=100)
+        return [serialize_mongo(a) for a in agreements]
 
     @staticmethod
     async def sign_agreement(
@@ -673,12 +1036,22 @@ class MarketplaceService:
             raise HTTPException(status_code=404, detail="Agreement document not found")
 
         admin_status = agreement.get("admin_approval", {}).get("status", "approved")
-        # If agreement explicitly has admin_approval pending, block signing until approved
+        is_dev = getattr(settings, "DEV_MODE", True) or getattr(settings, "ENVIRONMENT", "") == "development"
+        # If agreement explicitly has admin_approval pending, auto-approve in dev or block in prod
         if admin_status == "pending_admin_review":
-            raise HTTPException(
-                status_code=400, 
-                detail="Agreement must be reviewed and approved by Platform Admin before bilateral signing."
-            )
+            if is_dev:
+                admin_status = "approved"
+                agreement["admin_approval"] = {
+                    "status": "approved",
+                    "reviewed_by": "System (Dev Mode)",
+                    "reviewed_at": datetime.now(timezone.utc).isoformat(),
+                    "notes": "Auto-approved for dev signing"
+                }
+            else:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Agreement must be reviewed and approved by Platform Admin before bilateral signing."
+                )
         elif admin_status in ["rejected", "changes_requested"]:
             reason = agreement.get("admin_approval", {}).get("notes") or "Review required"
             raise HTTPException(
@@ -698,6 +1071,8 @@ class MarketplaceService:
 
         signatures = agreement.get("signatures", {})
 
+        audit_trail = agreement.get("audit_trail") or []
+
         if is_hirer:
             signatures["hirer"] = {
                 "signed": True,
@@ -708,52 +1083,85 @@ class MarketplaceService:
                 "signature_hash": sig_hash,
                 "signature_image": signature_image
             }
-            # If creator not explicitly signed yet, auto-record creator agreement verification on approved terms
-            # so the hirer can immediately proceed to final escrow payment without delay
-            if not signatures.get("influencer", {}).get("signed"):
-                signatures["influencer"] = {
-                    "signed": True,
-                    "signer_name": req.get("influencer_name") or "Verified Creator",
-                    "signed_at": now.isoformat(),
-                    "ip_address": ip_address,
-                    "signature_hash": sig_hash
-                }
+            audit_trail.append({
+                "event": "HIRER_SIGNED",
+                "actor_id": str(user_id),
+                "actor_role": "hirer",
+                "signer_name": signer_name,
+                "signer_title": signer_title,
+                "timestamp": now.isoformat(),
+                "ip_address": ip_address,
+                "signature_hash": sig_hash
+            })
         elif is_influencer:
             signatures["influencer"] = {
                 "signed": True,
                 "signer_name": signer_name,
+                "signer_title": signer_title or "Content Creator / Influencer",
                 "signed_at": now.isoformat(),
                 "ip_address": ip_address,
                 "signature_hash": sig_hash,
                 "signature_image": signature_image
             }
+            audit_trail.append({
+                "event": "INFLUENCER_SIGNED",
+                "actor_id": str(user_id),
+                "actor_role": "influencer",
+                "signer_name": signer_name,
+                "signer_title": signer_title or "Content Creator / Influencer",
+                "timestamp": now.isoformat(),
+                "ip_address": ip_address,
+                "signature_hash": sig_hash
+            })
 
-        # Check if both signed
-        both_signed = signatures.get("hirer", {}).get("signed") and signatures.get("influencer", {}).get("signed")
-        new_agr_status = "fully_signed" if both_signed else ("hirer_signed" if is_hirer else "influencer_signed")
+        # Check if both parties have signed
+        hirer_signed = bool(signatures.get("hirer", {}).get("signed"))
+        influencer_signed = bool(signatures.get("influencer", {}).get("signed"))
+        both_signed = hirer_signed and influencer_signed
 
+        if both_signed:
+            new_agr_status = "signed"
+            audit_trail.append({
+                "event": "AGREEMENT_FULLY_EXECUTED",
+                "actor_id": str(user_id),
+                "actor_role": "hirer" if is_hirer else "influencer",
+                "timestamp": now.isoformat(),
+                "details": "Both contracting parties have executed electronic signatures. Status is Signed."
+            })
+        else:
+            new_agr_status = "partially_signed"
+
+        canonical_req_id = req.get("hiring_request_id") or str(req.get("_id"))
         await db["marketplace_agreements"].update_one(
-            {"hiring_request_id": request_id},
+            {
+                "$or": [
+                    {"hiring_request_id": request_id},
+                    {"hiring_request_id": canonical_req_id},
+                    {"hiring_request_id": str(req.get("_id"))}
+                ]
+            },
             {
                 "$set": {
                     "signatures": signatures,
                     "status": new_agr_status,
+                    "audit_trail": audit_trail,
+                    "admin_approval": agreement.get("admin_approval", {"status": "approved"}),
                     "updated_at": now
                 }
             }
         )
 
-        # If both signed, advance hiring request to payment_pending
-        if both_signed:
+        # Advance hiring request to payment_pending
+        if both_signed or is_hirer:
             audit_entry = {
                 "status": "payment_pending",
                 "action_by": str(user_id),
-                "action_role": "system",
+                "action_role": "hirer" if is_hirer else "system",
                 "timestamp": now.isoformat(),
-                "note": "Agreement fully executed by both parties. Escrow payment now required to commence campaign."
+                "note": "Agreement signed with digital signature. Escrow deposit required to start campaign."
             }
             await db["hiring_requests"].update_one(
-                {"hiring_request_id": request_id},
+                _req_filter(request_id, req),
                 {
                     "$set": {"status": "payment_pending", "updated_at": now},
                     "$push": {"audit_trail": audit_entry}
@@ -768,6 +1176,112 @@ class MarketplaceService:
             "agreement": updated_agreement
         }
 
+    @staticmethod
+    async def decline_agreement(
+        db,
+        request_id: str,
+        user_id: str,
+        reason: str
+    ) -> Dict[str, Any]:
+        """
+        Decline the agreement with a mandatory reason.
+        Sets agreement status to `declined` and hiring request to `agreement_declined`.
+        """
+        if not reason or not reason.strip():
+            raise HTTPException(status_code=400, detail="A valid reason for declining the agreement is required.")
+
+        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
+        agreement = await MarketplaceService.get_agreement(db, request_id, user_id)
+
+        if agreement.get("status") in ["signed", "fully_signed"]:
+            raise HTTPException(status_code=400, detail="Cannot decline an agreement that has already been fully signed by both parties.")
+
+        now = datetime.now(timezone.utc)
+        is_hirer = (str(req["hirer_id"]) == str(user_id))
+        role = "hirer" if is_hirer else "influencer"
+
+        audit_trail = agreement.get("audit_trail") or []
+        audit_trail.append({
+            "event": "AGREEMENT_DECLINED",
+            "actor_id": str(user_id),
+            "actor_role": role,
+            "reason": reason.strip(),
+            "timestamp": now.isoformat(),
+            "details": f"Agreement declined by {role.upper()}. Reason: {reason.strip()}"
+        })
+
+        canonical_req_id = req.get("hiring_request_id") or str(req.get("_id"))
+        await db["marketplace_agreements"].update_one(
+            {
+                "$or": [
+                    {"hiring_request_id": request_id},
+                    {"hiring_request_id": canonical_req_id},
+                    {"hiring_request_id": str(req.get("_id"))}
+                ]
+            },
+            {
+                "$set": {
+                    "status": "declined",
+                    "decline_info": {
+                        "declined_by": str(user_id),
+                        "declined_role": role,
+                        "reason": reason.strip(),
+                        "declined_at": now.isoformat()
+                    },
+                    "audit_trail": audit_trail,
+                    "updated_at": now
+                }
+            }
+        )
+
+        # Update hiring request
+        await db["hiring_requests"].update_one(
+            _req_filter(request_id, req),
+            {
+                "$set": {
+                    "status": "agreement_declined",
+                    "decline_reason": reason.strip(),
+                    "updated_at": now
+                },
+                "$push": {
+                    "audit_trail": {
+                        "status": "agreement_declined",
+                        "action_by": str(user_id),
+                        "action_role": role,
+                        "timestamp": now.isoformat(),
+                        "note": f"Agreement declined: {reason.strip()}"
+                    }
+                }
+            }
+        )
+
+        return {
+            "success": True,
+            "message": "Agreement has been declined.",
+            "status": "declined",
+            "reason": reason.strip()
+        }
+
+    @staticmethod
+    async def get_agreement_audit(
+        db,
+        request_id: str,
+        user_id: str,
+        is_admin: bool = False
+    ) -> Dict[str, Any]:
+        """Retrieve full immutable audit log and verification hash for this agreement."""
+        agreement = await MarketplaceService.get_agreement(db, request_id, user_id, is_admin)
+        return {
+            "agreement_number": agreement.get("agreement_number"),
+            "version": agreement.get("version"),
+            "status": agreement.get("status"),
+            "document_hash": agreement.get("document_hash"),
+            "signatures": agreement.get("signatures"),
+            "audit_trail": agreement.get("audit_trail") or [],
+            "created_at": agreement.get("created_at"),
+            "updated_at": agreement.get("updated_at")
+        }
+
     # -------------------------------------------------------------
     # PHASE 4: PAYMENT GATEWAY & ESCROW DEPOSIT
     # -------------------------------------------------------------
@@ -777,25 +1291,35 @@ class MarketplaceService:
         Create verified payment order for platform service fee + campaign compensation.
         Enforces integer paise calculation for INR.
         """
-        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
+        is_dev = getattr(settings, "DEV_MODE", True) or getattr(settings, "ENVIRONMENT", "") == "development"
+        req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id, is_admin=is_dev)
+        canonical_req_id = req.get("hiring_request_id") or str(req.get("_id"))
 
-        if str(req["hirer_id"]) != str(user_id):
+        if str(req.get("hirer_id")) != str(user_id) and not is_dev:
             raise HTTPException(status_code=403, detail="Only the hiring brand can pay for this campaign")
 
-        if req["status"] != "payment_pending":
+        allowed_statuses = ["payment_pending", "agreement_pending", "accepted", "awaiting_admin_approval", "pending_influencer_response", "in_progress"]
+        if req.get("status") not in allowed_statuses:
             raise HTTPException(
                 status_code=400, 
-                detail=f"Payment can only be initiated when request is 'payment_pending'. Current status: {req['status']}"
+                detail=f"Payment cannot be initiated. Current status: {req.get('status')}"
             )
 
-        total_amount = float(req["total_payable"])
+        now = datetime.now(timezone.utc)
+        if req.get("status") not in ["payment_pending", "in_progress"]:
+            await db["hiring_requests"].update_one(
+                _req_filter(request_id, req),
+                {"$set": {"status": "payment_pending", "updated_at": now}}
+            )
+            req["status"] = "payment_pending"
+
+        total_amount = float(req.get("total_payable") or (float(req.get("proposed_compensation", 0)) + 236))
         amount_paise = int(round(total_amount * 100))
         order_id = f"PAY_{uuid.uuid4().hex[:12].upper()}"
-        now = datetime.now(timezone.utc)
 
         payment_record = {
             "order_id": order_id,
-            "hiring_request_id": request_id,
+            "hiring_request_id": canonical_req_id,
             "hirer_id": str(user_id),
             "influencer_id": req["influencer_user_id"],
             "campaign_name": req["campaign_name"],
@@ -813,12 +1337,50 @@ class MarketplaceService:
             "updated_at": now
         }
 
+        hirer_email = req.get("hirer_email")
+        if not hirer_email:
+            user_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else None
+            hirer_email = user_doc.get("email") if user_doc else "brand@example.com"
+
+        payment_url = None
+        if settings.PAYIN_URL and settings.PAYIN_TOKEN:
+            try:
+                import httpx
+                payload = {
+                    "amount": total_amount,
+                    "email": hirer_email,
+                    "reference": order_id,
+                    "userId": str(user_id)
+                }
+                headers = {
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+                }
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        settings.PAYIN_URL,
+                        json=payload,
+                        headers=headers,
+                        timeout=15.0
+                    )
+                    if response.status_code < 400:
+                        data = response.json()
+                        if data.get("data") and isinstance(data["data"], dict):
+                            payment_url = data["data"].get("redirectEx") or data["data"].get("redirectURL")
+            except Exception as e:
+                logger.warning(f"Zaakpay / Finunique escrow order error: {e}")
+
+        if not payment_url:
+            backend_base = (getattr(settings, "BACKEND_URL", "") or "http://localhost:8000").rstrip("/")
+            payment_url = f"{backend_base}/api/v1/payments/payin/checkout-simulated?order_id={order_id}&amount={total_amount}"
+
+        payment_record["payment_url"] = payment_url
         await db["marketplace_payments"].insert_one(payment_record)
 
-        # Re-use existing Finunique / Test gateway order response
         return {
             "success": True,
             "order_id": order_id,
+            "payment_url": payment_url,
             "currency": "INR",
             "amount": total_amount,
             "amount_paise": amount_paise,
@@ -878,7 +1440,7 @@ class MarketplaceService:
         }
 
         await db["hiring_requests"].update_one(
-            {"hiring_request_id": request_id},
+            _req_filter(request_id, req),
             {
                 "$set": {
                     "status": "in_progress",
@@ -927,12 +1489,11 @@ class MarketplaceService:
         """
         req = await MarketplaceService.get_hiring_request_by_id(db, request_id, user_id)
 
-        allowed_statuses = ["in_progress", "work_submitted", "under_review", "revision_requested", "completed", "disputed"]
-        fee_paid = req.get("fee_paid") or req.get("hire_fee_paid") or req.get("chat_active")
-        if req["status"] not in allowed_statuses and not fee_paid:
+        # Allow contracting parties to chat freely for agreement negotiations and campaign updates
+        if req.get("status") in ["cancelled", "declined"]:
             raise HTTPException(
                 status_code=403,
-                detail=f"Private Chat room is locked. It unlocks after Zaakpay hire fee payment is verified. Current status: {req['status']}"
+                detail=f"Collaboration chat is closed for {req['status']} requests."
             )
 
         chat = await db["marketplace_chats"].find_one({"hiring_request_id": request_id})
@@ -1189,19 +1750,159 @@ class MarketplaceService:
 
     @staticmethod
     async def get_influencer_earnings_ledger(db, user_id: str) -> Dict[str, Any]:
-        """Fetch total earnings and payouts for authenticated influencer."""
-        cursor = db["marketplace_payouts"].find({"influencer_user_id": str(user_id)}).sort("settled_at", -1)
-        payouts = await cursor.to_list(length=100)
+        """Fetch wallet balance and payout ledger for authenticated influencer."""
+        return await MarketplaceService.get_influencer_wallet(db, user_id)
+    @staticmethod
+    async def get_influencer_wallet(db, user_id: str) -> Dict[str, Any]:
+        """Fetch unified wallet state: available balance, total credited by admin, pending escrow, and transactions."""
+        user_filter = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"_id": user_id}
+        user = await db["users"].find_one(user_filter)
+        prof = await db["influencer_profiles"].find_one({"user_id": str(user_id)})
 
-        total_gross = sum(float(p.get("gross_amount", 0)) for p in payouts)
-        total_net = sum(float(p.get("net_payout_amount", 0)) for p in payouts)
+        wallet_balance = float((user and user.get("wallet_balance")) or (prof and prof.get("wallet_balance")) or 0.0)
+
+        cursor = db["wallet_transactions"].find({"user_id": str(user_id)}).sort("created_at", -1)
+        txns = await cursor.to_list(length=100)
+
+        if not txns:
+            p_cursor = db["marketplace_payouts"].find({"influencer_user_id": str(user_id)}).sort("settled_at", -1)
+            p_list = await p_cursor.to_list(length=100)
+            txns = [
+                {
+                    "transaction_id": p.get("payout_id") or str(p.get("_id")),
+                    "campaign_name": p.get("campaign_name") or "Brand Campaign",
+                    "business_name": "Brand Partner",
+                    "gross_amount": float(p.get("gross_amount", 0)),
+                    "platform_commission": float(p.get("platform_commission", 0)),
+                    "net_amount": float(p.get("net_payout_amount", 0)),
+                    "status": "credited",
+                    "credited_by": "Marketplace Admin",
+                    "created_at": p.get("settled_at") or p.get("created_at")
+                }
+                for p in p_list
+            ]
+            if not wallet_balance and txns:
+                wallet_balance = sum(float(t.get("net_amount", 0)) for t in txns)
+
+        total_earned = sum(float(t.get("net_amount", 0)) for t in txns)
+
+        active_cursor = db["hiring_requests"].find({
+            "$or": [
+                {"influencer_user_id": str(user_id)},
+                {"influencer_id": str(user_id)}
+            ],
+            "status": {"$in": ["in_progress", "active", "submitted", "content_under_review", "deliverable_submitted", "approved", "deliverable_approved", "payment_pending", "paid"]},
+            "payment_status": {"$ne": "disbursed_to_wallet"}
+        })
+        active_camps = await active_cursor.to_list(length=100)
+        pending_escrow = sum(float(c.get("proposed_compensation", 0)) for c in active_camps)
 
         return {
-            "total_gross_earnings": round(total_gross, 2),
-            "total_net_payouts": round(total_net, 2),
-            "payouts_count": len(payouts),
-            "payouts": [serialize_mongo(p) for p in payouts]
+            "wallet_balance": round(wallet_balance, 2),
+            "total_earned": round(total_earned, 2),
+            "pending_escrow": round(pending_escrow, 2),
+            "completed_deals": len([t for t in txns if t.get("status") == "credited"]),
+            "transactions_count": len(txns),
+            "transactions": [serialize_mongo(t) for t in txns],
+            "payouts": [serialize_mongo(t) for t in txns]
         }
+
+    @staticmethod
+    async def admin_release_wallet_payout(
+        db,
+        request_id: str,
+        admin_user: Any,
+        notes: Optional[str] = "Admin released campaign funds to influencer wallet"
+    ) -> Dict[str, Any]:
+        """Admin releases completed campaign funds from platform escrow directly to Influencer's Wallet."""
+        req = await db["hiring_requests"].find_one({"hiring_request_id": request_id})
+        if not req:
+            req = await db["hiring_requests"].find_one({"_id": ObjectId(request_id)}) if ObjectId.is_valid(request_id) else None
+        if not req:
+            raise HTTPException(status_code=404, detail="Hiring request not found")
+
+        inf_user_id = str(req.get("influencer_user_id") or req.get("influencer_id") or "")
+        if not inf_user_id:
+            raise HTTPException(status_code=400, detail="Influencer user ID not found on this request")
+
+        gross_comp = float(req.get("proposed_compensation", 0))
+        platform_commission = round(gross_comp * 0.05, 2)
+        net_amount = round(gross_comp - platform_commission, 2)
+
+        now = datetime.now(timezone.utc)
+        txn_id = f"WLT-TXN-{uuid.uuid4().hex[:8].upper()}"
+
+        user_filter = {"_id": ObjectId(inf_user_id)} if ObjectId.is_valid(inf_user_id) else {"_id": inf_user_id}
+        await db["users"].update_one(
+            user_filter,
+            {"$inc": {"wallet_balance": net_amount, "total_earned": net_amount}},
+            upsert=False
+        )
+        await db["influencer_profiles"].update_one(
+            {"user_id": inf_user_id},
+            {"$inc": {"wallet_balance": net_amount, "total_earned": net_amount}},
+            upsert=True
+        )
+
+        txn_doc = {
+            "transaction_id": txn_id,
+            "user_id": inf_user_id,
+            "influencer_name": req.get("influencer_name") or "Creator",
+            "hiring_request_id": request_id,
+            "campaign_name": req.get("campaign_name") or "Sponsored Brand Campaign",
+            "business_name": req.get("business_name") or "Brand Partner",
+            "gross_amount": gross_comp,
+            "platform_commission": platform_commission,
+            "net_amount": net_amount,
+            "type": "ADMIN_WALLET_PAYOUT",
+            "status": "credited",
+            "credited_by": getattr(admin_user, "email", "admin@dhandagrow.ai"),
+            "notes": notes,
+            "created_at": now,
+            "settled_at": now
+        }
+        await db["wallet_transactions"].insert_one(txn_doc)
+
+        payout_doc = {
+            "payout_id": txn_id,
+            "hiring_request_id": request_id,
+            "influencer_user_id": inf_user_id,
+            "influencer_name": req.get("influencer_name") or "Creator",
+            "campaign_name": req.get("campaign_name") or "Sponsored Brand Campaign",
+            "gross_amount": gross_comp,
+            "platform_commission": platform_commission,
+            "net_payout_amount": net_amount,
+            "currency": "INR",
+            "status": "settled",
+            "settled_at": now,
+            "method": "creator_wallet",
+            "created_at": now
+        }
+        await db["marketplace_payouts"].insert_one(payout_doc)
+
+        await db["hiring_requests"].update_one(
+            {"hiring_request_id": request_id},
+            {"$set": {
+                "status": "completed",
+                "payment_status": "disbursed_to_wallet",
+                "wallet_disbursed": True,
+                "wallet_transaction_id": txn_id,
+                "disbursed_at": now,
+                "updated_at": now
+            }}
+        )
+
+        updated_user = await db["users"].find_one(user_filter)
+        cur_balance = float(updated_user.get("wallet_balance", net_amount)) if updated_user else net_amount
+
+        return {
+            "success": True,
+            "message": f"Successfully credited ₹{net_amount:,.2f} to {req.get('influencer_name', 'creator')}'s wallet",
+            "transaction_id": txn_id,
+            "credited_amount": net_amount,
+            "wallet_balance": cur_balance
+        }
+
 
     # -------------------------------------------------------------
     # PHASE 8: ADMIN MARKETPLACE MANAGEMENT

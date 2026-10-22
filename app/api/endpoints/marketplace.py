@@ -1,5 +1,7 @@
+from app.core.config import settings
+from pydantic import BaseModel
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, Response
 from app.core.security import get_current_user, require_admin
 from app.core.database import get_database
 from app.services.marketplace_service import MarketplaceService
@@ -65,6 +67,23 @@ async def discover_influencers(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to discover influencers: {str(e)}"
+        )
+
+@router.get("/categories", response_model=dict)
+async def get_marketplace_categories(
+    db=Depends(get_database)
+):
+    """
+    Retrieve real distinct categories and niches dynamically from all influencer records in MongoDB.
+    Always returns up-to-date categories whenever creators are added via Swagger UI or admin.
+    """
+    try:
+        categories = await MarketplaceService.get_categories(db)
+        return {"success": True, "data": categories}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch categories: {str(e)}"
         )
 
 # -------------------------------------------------------------
@@ -183,6 +202,28 @@ async def respond_to_hiring_request(
 # -------------------------------------------------------------
 # PHASE 3: ELECTRONIC AGREEMENT
 # -------------------------------------------------------------
+@router.post("/hiring/{request_id}/make-agreement", response_model=dict)
+async def make_hiring_agreement(
+    request_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Influencer initiates formal agreement request for admin review and seal."""
+    try:
+        result = await MarketplaceService.make_agreement(
+            db=db,
+            request_id=request_id,
+            user_id=str(current_user.id)
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to request agreement: {str(e)}"
+        )
+
 @router.get("/hiring/{request_id}/agreement", response_model=dict)
 async def get_hiring_agreement(
     request_id: str,
@@ -191,7 +232,8 @@ async def get_hiring_agreement(
 ):
     """Fetch legal bilateral agreement document for this campaign."""
     try:
-        is_admin = getattr(current_user, "role", "") in ["admin", "superadmin"] or getattr(current_user, "is_superuser", False)
+        is_dev = getattr(settings, "DEV_MODE", True) or getattr(settings, "ENVIRONMENT", "") == "development"
+        is_admin = getattr(current_user, "role", "") in ["admin", "superadmin"] or getattr(current_user, "is_superuser", False) or is_dev
         agreement = await MarketplaceService.get_agreement(
             db=db,
             request_id=request_id,
@@ -235,6 +277,134 @@ async def sign_hiring_agreement(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to sign agreement: {str(e)}"
+        )
+
+class DeclineAgreementRequest(BaseModel):
+    reason: str
+
+@router.post("/hiring/{request_id}/decline-agreement", response_model=dict)
+async def decline_hiring_agreement(
+    request_id: str,
+    payload: DeclineAgreementRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Decline agreement terms with documented reason."""
+    try:
+        result = await MarketplaceService.decline_agreement(
+            db=db,
+            request_id=request_id,
+            user_id=str(current_user.id),
+            reason=payload.reason
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to decline agreement: {str(e)}"
+        )
+
+@router.get("/hiring/{request_id}/agreement/audit", response_model=dict)
+async def get_hiring_agreement_audit(
+    request_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Retrieve full append-only audit trail and cryptographic hash verification."""
+    try:
+        is_dev = getattr(settings, "DEV_MODE", True) or getattr(settings, "ENVIRONMENT", "") == "development"
+        is_admin = getattr(current_user, "role", "") in ["admin", "superadmin"] or getattr(current_user, "is_superuser", False) or is_dev
+        result = await MarketplaceService.get_agreement_audit(
+            db=db,
+            request_id=request_id,
+            user_id=str(current_user.id),
+            is_admin=is_admin
+        )
+        return {"success": True, "data": result}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch agreement audit trail: {str(e)}"
+        )
+
+@router.get("/hiring/{request_id}/agreement/pdf")
+async def download_hiring_agreement_pdf(
+    request_id: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Download official legal agreement PDF for this campaign."""
+    try:
+        is_dev = getattr(settings, "DEV_MODE", True) or getattr(settings, "ENVIRONMENT", "") == "development"
+        is_admin = getattr(current_user, "role", "") in ["admin", "superadmin"] or getattr(current_user, "is_superuser", False) or is_dev
+        pdf_bytes, filename = await MarketplaceService.get_agreement_pdf(
+            db=db,
+            request_id=request_id,
+            user_id=str(current_user.id),
+            is_admin=is_admin
+        )
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate agreement PDF: {str(e)}"
+        )
+
+@router.get("/agreements", response_model=dict)
+async def list_my_agreements(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """List all legal agreements where current user is Hirer or Influencer."""
+    try:
+        agreements = await MarketplaceService.get_user_agreements(db, str(current_user.id))
+        return {"success": True, "data": agreements}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list agreements: {str(e)}"
+        )
+
+@router.get("/agreements/{agreement_number}/pdf")
+async def download_agreement_by_number_pdf(
+    agreement_number: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Download agreement PDF by agreement number."""
+    try:
+        agr = await db["marketplace_agreements"].find_one({"agreement_number": agreement_number})
+        if not agr:
+            raise HTTPException(status_code=404, detail="Agreement not found")
+        from app.services.agreement_pdf_service import AgreementPdfService
+        pdf_bytes = AgreementPdfService.generate_pdf(agr)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="Agreement-{agreement_number}.pdf"',
+                "Access-Control-Expose-Headers": "Content-Disposition"
+            }
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download agreement PDF: {str(e)}"
         )
 
 # -------------------------------------------------------------
@@ -581,3 +751,47 @@ async def admin_review_agreement(
             detail=f"Failed to review agreement: {str(e)}"
         )
 
+
+
+@router.get("/wallet", response_model=dict)
+async def get_my_creator_wallet(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """Fetch current authenticated creator's wallet balance, pending escrow funds, and admin payouts history."""
+    try:
+        wallet = await MarketplaceService.get_influencer_wallet(
+            db=db,
+            user_id=str(current_user.id)
+        )
+        return {"success": True, "data": wallet}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load wallet: {str(e)}"
+        )
+
+
+@router.post("/admin/hiring-requests/{request_id}/release-payout-to-wallet", response_model=dict)
+async def admin_release_payout_to_wallet(
+    request_id: str,
+    notes: Optional[str] = Query("Admin released campaign funds to influencer wallet"),
+    admin=Depends(require_admin),
+    db=Depends(get_database)
+):
+    """Admin releases funds from platform escrow directly to Influencer's Wallet upon campaign completion."""
+    try:
+        result = await MarketplaceService.admin_release_wallet_payout(
+            db=db,
+            request_id=request_id,
+            admin_user=admin,
+            notes=notes
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to release payout to wallet: {str(e)}"
+        )

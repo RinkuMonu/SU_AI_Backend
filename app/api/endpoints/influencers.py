@@ -416,3 +416,80 @@ async def save_my_payout_account(
             detail=f"Failed to save payout account: {str(e)}"
         )
 
+from pydantic import BaseModel
+from datetime import datetime, timezone
+from bson import ObjectId
+
+class ManualInfluencerCreate(BaseModel):
+    name: str
+    username: Optional[str] = None
+    platform: Optional[str] = "Instagram"
+    niche: Optional[str] = "Fashion"
+    category: Optional[str] = None
+    followers_count: Optional[int] = 15000
+    engagement_rate: Optional[float] = 3.5
+    contact_email: Optional[str] = None
+    bio: Optional[str] = None
+    location: Optional[str] = "India"
+    expectedPricePerPost: Optional[float] = 4500.0
+
+@router.post("/add", response_model=dict)
+async def add_manual_influencer(
+    payload: ManualInfluencerCreate,
+    db=Depends(get_database)
+):
+    """Add a verified influencer directly into database; immediately appears in All Influencers."""
+    name = payload.name.strip()
+    raw_uname = payload.username or name.lower().replace(" ", "_")
+    username = raw_uname if raw_uname.startswith("@") else f"@{raw_uname}"
+    niche = payload.niche or payload.category or "Fashion"
+
+    doc = {
+        "name": name,
+        "fullName": name,
+        "username": username,
+        "platform": payload.platform or "Instagram",
+        "niche": niche,
+        "category": niche,
+        "followers_count": int(payload.followers_count or 15000),
+        "engagement_rate": float(payload.engagement_rate or 3.5),
+        "contact_email": payload.contact_email or "",
+        "bio": payload.bio or f"Professional creator in {niche}.",
+        "location": payload.location or "India",
+        "expectedPricePerPost": float(payload.expectedPricePerPost or 4500.0),
+        "is_verified": True,
+        "created_at": datetime.now(timezone.utc)
+    }
+    res = await db["influencers"].insert_one(doc)
+    doc["id"] = str(res.inserted_id)
+    doc["_id"] = str(res.inserted_id)
+    return {"success": True, "data": serialize_mongo(doc), "message": "Influencer added successfully"}
+
+@router.delete("/{influencer_id}", response_model=dict)
+async def delete_manual_influencer(
+    influencer_id: str,
+    db=Depends(get_database)
+):
+    """Delete influencer by ID from database."""
+    inf_filter = {"_id": ObjectId(influencer_id)} if ObjectId.is_valid(influencer_id) else {"_id": influencer_id}
+    await db["influencers"].delete_one(inf_filter)
+    await db["influencer_profiles"].delete_one(inf_filter)
+    return {"success": True, "message": "Influencer removed successfully"}
+
+@router.get("/categories", response_model=dict)
+async def get_all_influencer_categories(
+    db=Depends(get_database)
+):
+    """
+    Retrieve real distinct categories and niches dynamically from all influencer records in MongoDB.
+    Always returns up-to-date categories whenever creators are added via Swagger UI or admin.
+    """
+    try:
+        categories = await MarketplaceService.get_categories(db)
+        return {"success": True, "data": categories}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch categories: {str(e)}"
+        )
+

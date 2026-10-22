@@ -225,7 +225,8 @@ class PayinService:
 
         # If live gateway returns a URL, save it; otherwise use simulated checkout
         if not payment_url:
-            payment_url = f"/api/v1/payments/payin/checkout-simulated?order_id={order_id}&amount={amount}"
+            backend_base = (getattr(settings, "BACKEND_URL", "") or "http://localhost:8000").rstrip("/")
+            payment_url = f"{backend_base}/api/v1/payments/payin/checkout-simulated?order_id={order_id}&amount={amount}"
 
         await db["payment_transactions"].update_one(
             {"order_id": order_id},

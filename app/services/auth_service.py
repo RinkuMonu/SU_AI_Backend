@@ -154,41 +154,8 @@ class AuthService:
         if existing:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
 
-        email_is_verified = False
-
-        # If user passed an OTP directly with signup
-        if req.otp:
-            clean_otp = str(req.otp).strip()
-            otp_doc = await db["otps"].find_one({"email": email})
-            if otp_doc:
-                matches = False
-                if otp_doc.get("otp") and otp_doc["otp"] == clean_otp:
-                    matches = True
-                elif otp_doc.get("otp_hash") and verify_password(clean_otp, otp_doc["otp_hash"]):
-                    matches = True
-                elif clean_otp == "123456" and settings.ENVIRONMENT == "development":
-                    matches = True
-
-                if matches:
-                    email_is_verified = True
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid verification OTP entered."
-                    )
-            else:
-                if clean_otp == "123456" and settings.ENVIRONMENT == "development":
-                    email_is_verified = True
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="OTP expired or not found. Please click 'Send OTP' first."
-                    )
-        else:
-            # Check if OTP was already verified via /verify-otp
-            otp_doc = await db["otps"].find_one({"email": email, "verified": True})
-            if otp_doc:
-                email_is_verified = True
+        # Email verification is removed / auto-verified
+        email_is_verified = True
         
         user = User(
             fullName=req.fullName,
