@@ -204,6 +204,11 @@ class GoogleAuthLoginRequest(BaseModel):
     redirect_uri: Optional[str] = None
     accountType: Optional[str] = 'business'
     mode: Optional[str] = 'login'
+    phone_number: Optional[str] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    country_code: Optional[str] = None
+    countryCode: Optional[str] = None
 
 
 class LinkedInAuthLoginRequest(BaseModel):

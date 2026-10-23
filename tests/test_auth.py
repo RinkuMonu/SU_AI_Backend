@@ -36,8 +36,10 @@ async def setup_and_cleanup_db():
         
     yield
     if db is not None:
-        await db["users"].delete_many({"email": {"$regex": r".*@example\.com|.*@test\.com"}})
-        await db["otps"].delete_many({"email": {"$regex": r".*@example\.com|.*@test\.com"}})
+        await db["users"].delete_many({"email": {"$regex": r".*@example\.com|.*@test\.com", "$ne": "admin@example.com"}})
+        await db["pending_users"].delete_many({"email": {"$regex": r".*@example\.com|.*@test\.com"}})
+        await db["otps"].delete_many({})
+        await db["phone_verifications"].delete_many({})
         await db["businesses"].delete_many({"userId": {"$exists": True}})
         await db["refresh_sessions"].delete_many({})
 
@@ -114,7 +116,7 @@ async def test_login(async_client):
     await async_client.post("/api/v1/auth/signup", json={
         "firstName": "Login",
         "lastName": "User",
-        "contactNumber": "9876543210",
+        "contactNumber": "9876500001",
         "email": "login_user@example.com",
         "password": "Password123",
         "accountType": "personal",
@@ -133,7 +135,7 @@ async def test_login(async_client):
 # =====================================================================
 async def test_phone_signup_and_sign_in_flow(mock_sms_service):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        test_phone = "+919876543210"
+        test_phone = "+919000000001"
         test_email = "rohan@example.com"
         
         # 1. Clean previous test data
@@ -145,7 +147,7 @@ async def test_phone_signup_and_sign_in_flow(mock_sms_service):
         # 2. User signup via Phone & Email (no verification required on signup)
         response = await ac.post("/api/v1/auth/signup", json={
             "name": "Rohan Sharma",
-            "phone_number": "9876543210",  # Will be normalized to +919876543210
+            "phone_number": "9000000001",  # Will be normalized to +919000000001
             "email": test_email,
             "password": "Password@123",
             "confirmPassword": "Password@123"
@@ -165,7 +167,7 @@ async def test_phone_signup_and_sign_in_flow(mock_sms_service):
         # 4. Sign in: Step 1 - user enters mobile number and password
         # Backend verifies password, sends mobile OTP via SMS, and returns 403 PHONE_NOT_VERIFIED
         login_attempt_1 = await ac.post("/api/v1/auth/login", json={
-            "phone_number": "9876543210",
+            "phone_number": "9000000001",
             "password": "Password@123"
         })
         assert login_attempt_1.status_code == 403
@@ -187,7 +189,7 @@ async def test_phone_signup_and_sign_in_flow(mock_sms_service):
 
         # 7. Sign in: Step 2 - verify mobile OTP
         verify_response = await ac.post("/api/v1/auth/verify-otp", json={
-            "phone_number": "9876543210",
+            "phone_number": "9000000001",
             "otp": test_otp
         })
         assert verify_response.status_code == 200
@@ -202,7 +204,7 @@ async def test_phone_signup_and_sign_in_flow(mock_sms_service):
 
         # 9. Subsequent login with verified phone number and password succeeds directly
         login_response = await ac.post("/api/v1/auth/login", json={
-            "phone_number": "9876543210",
+            "phone_number": "9000000001",
             "password": "Password@123"
         })
         assert login_response.status_code == 200
@@ -232,7 +234,7 @@ async def test_missing_email_on_signup():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post("/api/v1/auth/signup", json={
             "name": "Missing Email",
-            "phone_number": "9876543210",
+            "phone_number": "9000000001",
             "password": "Password@123",
             "confirmPassword": "Password@123"
         })
@@ -1042,3 +1044,104 @@ async def test_req_16_regression_existing_msg91_and_security(mock_sms_service):
         user_body = v_res.json()["user"]
         assert "hashed_password" not in user_body
         assert "password" not in user_body
+
+
+async def test_phone_normalization_and_verification_token_flow(mock_sms_service):
+    """
+    Validates:
+    - Normalization of Indian numbers (+91, exactly 10 digits starting with 6, 7, 8, or 9).
+    - Prevention of duplicated country codes (+91916261234655 -> +916261234655).
+    - Preservation of all 10 national digits (6261234655 -> +916261234655).
+    - International country calling codes (+1, +44, +971).
+    - Invalid phone rejection with descriptive 400.
+    - Server-controlled verification token generation and signup with token.
+    - Safe phone masking (+91 626*** **655).
+    """
+    from app.utils.phone import normalize_phone_number, mask_phone_number, InvalidPhoneNumberException
+
+    # 1. Normalization unit tests
+    assert normalize_phone_number("6261234655") == "+916261234655"
+    assert normalize_phone_number("+916261234655") == "+916261234655"
+    assert normalize_phone_number("916261234655") == "+916261234655"
+    assert normalize_phone_number("+91 6261234655") == "+916261234655"
+    assert normalize_phone_number("06261234655") == "+916261234655"
+    assert normalize_phone_number("6261234655", country_code="+91") == "+916261234655"
+
+    # Deduplication of country codes
+    assert normalize_phone_number("+91916261234655") == "+916261234655"
+    assert normalize_phone_number("91916261234655") == "+916261234655"
+
+    # International numbers
+    assert normalize_phone_number("+15551234567") == "+15551234567"
+    assert normalize_phone_number("+447911123456") == "+447911123456"
+    assert normalize_phone_number("+971501234567") == "+971501234567"
+
+    # Masking
+    assert mask_phone_number("+916261234655") == "+91 626*** **655"
+
+    # Invalid rejection
+    for inv in ["12345", "0000000000", "5876543210", "abc"]:
+        try:
+            normalize_phone_number(inv)
+            assert False, f"Expected invalid phone exception for '{inv}'"
+        except InvalidPhoneNumberException:
+            pass
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        db = get_database()
+        test_phone = "+916261234655"
+        test_email = "preverified_user@example.com"
+        await db["users"].delete_many({"phone_number": test_phone})
+        await db["users"].delete_many({"email": test_email})
+        await db["otps"].delete_many({"phone_number": test_phone})
+        await db["phone_verifications"].delete_many({"phone_number": test_phone})
+
+        # Step A: Request OTP via /api/v1/auth/otp/send-phone (alias)
+        send_res = await ac.post("/api/v1/auth/otp/send-phone", json={"phone_number": "6261234655", "country_code": "+91"})
+        assert send_res.status_code == 200
+        send_data = send_res.json()
+        assert send_data["phone_number"] == "+91 626*** **655"
+        assert send_data["canonical_phone_number"] == test_phone
+
+        # Step B: Set known OTP in DB
+        await db["otps"].update_one(
+            {"phone_number": test_phone},
+            {"$set": {"otp_hash": get_password_hash("778899")}}
+        )
+
+        # Step C: Verify OTP via /api/v1/auth/otp/verify-phone (alias)
+        verify_res = await ac.post("/api/v1/auth/otp/verify-phone", json={
+            "phone_number": "6261234655",
+            "country_code": "+91",
+            "otp": "778899"
+        })
+        assert verify_res.status_code == 200
+
+        # Server recorded verification record in phone_verifications collection
+        pv_doc = await db["phone_verifications"].find_one({"phone_number": test_phone})
+        assert pv_doc is not None
+        assert "verification_token" in pv_doc
+        token = pv_doc["verification_token"]
+
+        # Step D: Signup with server-issued verification_token
+        signup_res = await ac.post("/api/v1/auth/signup", json={
+            "name": "Preverified User",
+            "phone_number": "6261234655",
+            "country_code": "+91",
+            "email": test_email,
+            "password": "Password@123",
+            "verification_token": token
+        })
+        assert signup_res.status_code == 201
+        assert signup_res.json()["phone_verified"] is True
+        assert signup_res.json()["canonical_phone_number"] == test_phone
+
+        # Token is marked used (cannot be reused)
+        pv_after = await db["phone_verifications"].find_one({"phone_number": test_phone})
+        assert pv_after["used"] is True
+
+        # Cleanup
+        await db["users"].delete_many({"phone_number": test_phone})
+        await db["users"].delete_many({"email": test_email})
+        await db["otps"].delete_many({"phone_number": test_phone})
+        await db["phone_verifications"].delete_many({"phone_number": test_phone})
