@@ -71,6 +71,7 @@ def set_refresh_cookie(response: Response, refresh_token: str):
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def signup(request: Request, response: Response):
     body = await request.json()
     
@@ -143,6 +144,7 @@ async def signup(request: Request, response: Response):
 
 
 @router.post("/verify-otp")
+@router.post("/otp/verify-phone")
 async def verify_otp(request: OTPVerifyRequest):
     identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
     if not identifier:
@@ -151,12 +153,74 @@ async def verify_otp(request: OTPVerifyRequest):
             detail="Phone number or identifier is required for OTP verification."
         )
 
-    result = await AuthService.verify_otp(identifier, request.otp)
+    cc = request.country_code or request.countryCode
+    result = await AuthService.verify_otp(identifier, request.otp, country_code=cc)
     if isinstance(result, dict) and not isinstance(result, User):
-        return result
+        users = await AuthService.get_collection()
+        norm_phone = result.get("canonical_phone_number") or identifier
+        user_doc = await users.find_one({"phone_number": norm_phone})
         
+        if not user_doc:
+            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
+            new_user = User(
+                name="User",
+                phone_number=norm_phone,
+                phone_verified=True,
+                email=f"{norm_phone.lstrip('+')}@phone.user",
+                email_verified=True,
+                hashed_password="",
+                role=None,
+                created_at=now,
+                updated_at=now
+            )
+            doc_to_insert = new_user.model_dump(by_alias=True, exclude={"id"})
+            inserted = await users.insert_one(doc_to_insert)
+            new_user.id = str(inserted.inserted_id)
+            user = new_user
+            try:
+                from app.services.credit_service import CreditService
+                await CreditService.get_or_create_subscription(get_database(), user.id)
+            except Exception:
+                pass
+        else:
+            await users.update_one({"_id": user_doc["_id"]}, {"$set": {"phone_verified": True}})
+            user_doc["phone_verified"] = True
+            user = User(**user_doc)
+            
+        access_token = create_access_token(subject=str(user.id))
+        role = getattr(user, "role", None)
+        requires_role = role is None or role in ["user", ""]
+        dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+        
+        user_resp = UserResponse(
+            id=str(user.id),
+            name=user.name,
+            phone_number=getattr(user, "phone_number", None),
+            phone_verified=True,
+            email=getattr(user, "email", None),
+            role=role,
+            email_verified=getattr(user, "email_verified", True)
+        )
+        return {
+            "success": True,
+            "message": "Phone number verified successfully.",
+            "access_token": access_token,
+            "accessToken": access_token,
+            "token": access_token,
+            "verification_token": result.get("verification_token") or access_token,
+            "user": user_resp.model_dump(),
+            "role": role,
+            "requires_role_selection": requires_role,
+            "dashboard_route": dashboard_route
+        }
+
     user = result
     access_token = create_access_token(subject=str(user.id))
+
+    role = getattr(user, "role", None)
+    requires_role = role is None or role in ["user", ""]
+    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
 
     user_resp = UserResponse(
         id=str(user.id),
@@ -164,17 +228,21 @@ async def verify_otp(request: OTPVerifyRequest):
         phone_number=getattr(user, "phone_number", None),
         phone_verified=getattr(user, "phone_verified", False),
         email=getattr(user, "email", None),
-        role=getattr(user, "role", None),
+        role=role,
         email_verified=getattr(user, "email_verified", True)
     )
     return TokenResponse(
         access_token=access_token,
-        user=user_resp
+        user=user_resp,
+        role=role,
+        requires_role_selection=requires_role,
+        dashboard_route=dashboard_route
     )
 
 
 @router.post("/send-otp")
 @router.post("/resend-otp")
+@router.post("/otp/send-phone")
 async def resend_otp(request: OTPResendRequest):
     identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
     if not identifier:
@@ -183,15 +251,20 @@ async def resend_otp(request: OTPResendRequest):
             detail="Phone number or identifier is required to resend OTP."
         )
 
-    result = await AuthService.resend_otp(identifier)
+    cc = request.country_code or request.countryCode
+    result = await AuthService.resend_otp(identifier, country_code=cc)
     return result
 
 
 @router.post("/login")
 async def login(request: Request, response: Response):
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
     email = body.get("email")
     phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("username")
+    country_code = body.get("country_code") or body.get("countryCode")
     password = body.get("password")
     
     if not password:
@@ -200,7 +273,7 @@ async def login(request: Request, response: Response):
     from pydantic import ValidationError
     from fastapi.exceptions import RequestValidationError
     try:
-        user_in = UserLogin(phone_number=phone, email=email, password=password)
+        user_in = UserLogin(phone_number=phone, email=email, password=password, country_code=country_code)
     except ValidationError as ve:
         raise RequestValidationError(ve.errors())
 
@@ -218,15 +291,22 @@ async def login(request: Request, response: Response):
                 login_req = LoginRequest(email=email, password=password)
                 user, access_token, refresh_token = await AuthService.login(login_req)
                 set_refresh_cookie(response, refresh_token)
+                u_phone = getattr(user, "phone", None) or getattr(user, "phone_number", None)
+                u_role = getattr(user, "role", "user")
+                u_pv = getattr(user, "phone_verified", False)
+                if not u_phone or u_role in ["businessman", "influencer", "admin"]:
+                    u_pv = True
+
                 user_dict = {
                     "id": str(user.id),
                     "fullName": getattr(user, "fullName", None) or getattr(user, "name", None) or "User",
                     "name": getattr(user, "name", None) or getattr(user, "fullName", None) or "User",
                     "email": getattr(user, "email", None),
-                    "phone": getattr(user, "phone", None) or getattr(user, "phone_number", None),
-                    "role": getattr(user, "role", "user"),
+                    "phone": u_phone,
+                    "phone_number": u_phone,
+                    "role": u_role,
                     "email_verified": getattr(user, "email_verified", True),
-                    "phone_verified": getattr(user, "phone_verified", False),
+                    "phone_verified": u_pv,
                 }
                 return {
                     "success": True,
@@ -247,15 +327,21 @@ async def login(request: Request, response: Response):
         raise auth_exc
 
     access_token = create_access_token(subject=str(user.id))
+    u_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
+    u_role = getattr(user, "role", None)
+    u_pv = getattr(user, "phone_verified", False)
+    if not u_phone or u_role in ["businessman", "influencer", "admin"]:
+        u_pv = True
+
     user_dict = {
         "id": str(user.id),
         "name": user.name,
         "fullName": getattr(user, "fullName", None) or user.name,
         "email": getattr(user, "email", None),
-        "phone_number": getattr(user, "phone_number", None),
-        "phone": getattr(user, "phone_number", None),
-        "role": getattr(user, "role", None),
-        "phone_verified": getattr(user, "phone_verified", False),
+        "phone_number": u_phone,
+        "phone": u_phone,
+        "role": u_role,
+        "phone_verified": u_pv,
         "email_verified": getattr(user, "email_verified", True),
     }
     
@@ -265,17 +351,27 @@ async def login(request: Request, response: Response):
     except Exception:
         pass
         
+    role = getattr(user, "role", None)
+    requires_role = role is None or role in ["user", ""]
+    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+
     return {
         "success": True,
         "access_token": access_token,
         "accessToken": access_token,
         "token_type": "bearer",
         "user": user_dict,
+        "role": role,
+        "requires_role_selection": requires_role,
+        "dashboard_route": dashboard_route,
         "data": {
             "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
-            "user": user_dict
+            "user": user_dict,
+            "role": role,
+            "requires_role_selection": requires_role,
+            "dashboard_route": dashboard_route
         }
     }
 
@@ -297,11 +393,16 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: CurrentUser = Depends(get_current_user)):
+    user_phone = current_user.get("phone_number")
+    phone_verified = current_user.get("phone_verified", True if not user_phone else False)
+    if not user_phone or current_user.get("role") in ["businessman", "influencer", "admin"]:
+        phone_verified = True
+
     return UserResponse(
         id=current_user["id"],
         name=current_user["name"],
-        phone_number=current_user.get("phone_number"),
-        phone_verified=current_user.get("phone_verified", False),
+        phone_number=user_phone,
+        phone_verified=phone_verified,
         email=current_user.get("email") or None,
         role=current_user.get("role"),
         email_verified=current_user.get("email_verified", True)
@@ -1189,6 +1290,8 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
     mode = (req.mode or "login").lower().strip()
     redirect_uri = req.redirect_uri or req.redirectUri
     account_type = req.accountType or req.account_type or "business"
+    raw_phone = req.phone_number or req.phone or req.mobile
+    country_code = req.country_code or req.countryCode
     user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
         db=db,
         code=req.code,
@@ -1197,24 +1300,34 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
         redirect_uri=redirect_uri,
         account_type=account_type,
         mode=mode,
+        phone_number=raw_phone,
+        country_code=country_code,
     )
     set_refresh_cookie(response, refresh_token_jwt)
 
+    role = getattr(user, "role", None)
+    requires_role = role is None or role in ["user", ""]
+    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    user_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
+    phone_verified = getattr(user, "phone_verified", False)
+
     user_payload = {
         "id": str(user.id),
-        "fullName": user.fullName,
-        "firstName": user.firstName,
-        "lastName": user.lastName,
-        "email": user.email,
-        "phone": user.phone,
-        "contactNumber": user.contactNumber,
-        "accountType": user.accountType,
-        "role": getattr(user, "role", "user") or "user",
-        "name": getattr(user, "name", user.fullName) or user.fullName,
-        "emailVerified": bool(user.emailVerified),
-        "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified),
-        "profileImageUrl": user.profileImageUrl,
+        "fullName": getattr(user, "fullName", None) or getattr(user, "name", "User"),
+        "name": getattr(user, "name", None) or getattr(user, "fullName", "User"),
+        "firstName": getattr(user, "firstName", None),
+        "lastName": getattr(user, "lastName", None),
+        "email": getattr(user, "email", None),
+        "phone": user_phone,
+        "phone_number": user_phone,
+        "contactNumber": user_phone,
+        "phone_verified": phone_verified,
+        "accountType": getattr(user, "accountType", "business"),
+        "role": role,
+        "emailVerified": bool(getattr(user, "emailVerified", True)),
+        "email_verified": bool(getattr(user, "email_verified", True)),
+        "isVerified": bool(getattr(user, "email_verified", True)),
+        "profileImageUrl": getattr(user, "profileImageUrl", None),
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
@@ -1226,72 +1339,27 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
         "access_token": access_token_jwt,
         "accessToken": access_token_jwt,
         "token": access_token_jwt,
+        "role": role,
+        "requires_role_selection": requires_role,
+        "dashboard_route": dashboard_route,
         "user": user_payload,
         "data": {
             "access_token": access_token_jwt,
             "accessToken": access_token_jwt,
             "token": access_token_jwt,
+            "role": role,
+            "requires_role_selection": requires_role,
+            "dashboard_route": dashboard_route,
             "user": user_payload
         }
     }
+
 
 @router.post("/google/signup", status_code=status.HTTP_201_CREATED)
 async def google_signup(req: GoogleAuthLoginRequest, response: Response):
-    """Explicitly register a new user via Google OAuth 2.0."""
-    db = get_database()
-    if not req.code and not req.access_token and not req.id_token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Please provide 'code', 'access_token', or 'id_token'."
-        )
-
-    redirect_uri = req.redirect_uri or req.redirectUri
-    account_type = req.accountType or req.account_type or "business"
-    user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
-        db=db,
-        code=req.code,
-        access_token=req.access_token,
-        id_token=req.id_token,
-        redirect_uri=redirect_uri,
-        account_type=account_type,
-        mode="signup",
-    )
-    set_refresh_cookie(response, refresh_token_jwt)
-
-    user_payload = {
-        "id": str(user.id),
-        "fullName": user.fullName,
-        "firstName": user.firstName,
-        "lastName": user.lastName,
-        "email": user.email,
-        "phone": user.phone,
-        "contactNumber": user.contactNumber,
-        "accountType": user.accountType,
-        "role": getattr(user, "role", "user") or "user",
-        "name": getattr(user, "name", user.fullName) or user.fullName,
-        "emailVerified": bool(user.emailVerified),
-        "email_verified": bool(user.emailVerified),
-        "isVerified": bool(user.emailVerified),
-        "profileImageUrl": user.profileImageUrl,
-        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
-        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
-        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
-    }
-
-    return {
-        "success": True,
-        "message": "Google registration successful",
-        "access_token": access_token_jwt,
-        "accessToken": access_token_jwt,
-        "token": access_token_jwt,
-        "user": user_payload,
-        "data": {
-            "access_token": access_token_jwt,
-            "accessToken": access_token_jwt,
-            "token": access_token_jwt,
-            "user": user_payload
-        }
-    }
+    """Explicitly register a new user via Google OAuth 2.0 (delegates to canonical google_login)."""
+    req.mode = "signup"
+    return await google_login(req, response)
 
 @router.get("/google/callback")
 async def google_callback(

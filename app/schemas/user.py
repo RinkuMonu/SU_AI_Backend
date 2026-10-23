@@ -52,6 +52,11 @@ class UserCreate(BaseModel):
     target_location: str | None = None
     customer_type: str | None = None
 
+    verification_token: str | None = None
+    otp: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
+
     @field_validator('password')
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -74,6 +79,8 @@ class UserLogin(BaseModel):
     phone: str | None = None
     mobile: str | None = None
     username: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
     email: EmailStr | str | None = None
     Email: EmailStr | str | None = None
     password: str | None = None
@@ -111,13 +118,29 @@ class UserResponse(BaseModel):
     @classmethod
     def populate_response_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            fn = data.get("fullName") or data.get("name")
-            data["fullName"] = fn
+            fn = data.get("name") or data.get("fullName")
             data["name"] = fn
+            data["fullName"] = fn
             pn = data.get("phone_number") or data.get("phone") or data.get("contactNumber")
             data["phone_number"] = pn
             data["phone"] = pn
             data["contactNumber"] = pn
+            ev = data.get("email_verified", data.get("emailVerified", False))
+            data["email_verified"] = ev
+            data["emailVerified"] = ev
+        elif hasattr(data, "__dict__") or hasattr(data, "model_dump"):
+            d = data.model_dump() if hasattr(data, "model_dump") else dict(data)
+            fn = d.get("name") or getattr(data, "fullName", None) or getattr(data, "name", None)
+            d["name"] = fn
+            d["fullName"] = fn
+            pn = d.get("phone_number") or getattr(data, "phone", None) or getattr(data, "contactNumber", None)
+            d["phone_number"] = pn
+            d["phone"] = pn
+            d["contactNumber"] = pn
+            ev = d.get("email_verified", getattr(data, "emailVerified", False))
+            d["email_verified"] = ev
+            d["emailVerified"] = ev
+            return d
         return data
 
 
@@ -172,6 +195,8 @@ class OTPVerifyRequest(BaseModel):
     phone_number: str | None = None
     phone: str | None = None
     mobile: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
     email: EmailStr | str | None = None
     otp: str
 
@@ -180,6 +205,8 @@ class OTPResendRequest(BaseModel):
     phone_number: str | None = None
     phone: str | None = None
     mobile: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
     email: EmailStr | str | None = None
 
 

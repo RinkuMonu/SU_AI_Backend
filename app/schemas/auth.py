@@ -206,6 +206,11 @@ class GoogleAuthLoginRequest(BaseModel):
     accountType: Optional[str] = 'business'
     account_type: Optional[str] = 'business'
     mode: Optional[str] = 'login'
+    phone_number: Optional[str] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    country_code: Optional[str] = None
+    countryCode: Optional[str] = None
 
 
 class LinkedInAuthLoginRequest(BaseModel):

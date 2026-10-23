@@ -29,9 +29,11 @@ uploads/reels/
 uploads/fashion/
 uploads/enhanced/
 uploads/test/
+uploads/brand/
 uploads/post_*.jpg
 
 # ── Scratch / temporary files dropped in backend ───────────────
+scratch/
 frontend_*.tsx
 frontend_*.ts
 temp_*.tsx

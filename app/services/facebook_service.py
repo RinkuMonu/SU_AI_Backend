@@ -578,10 +578,9 @@ class FacebookService:
             }
             if picture_url and not existing_user.get("profileImageUrl"):
                 update_data["profileImageUrl"] = picture_url
-            if not existing_user.get("emailVerified"):
-                update_data["emailVerified"] = True
+            if not existing_user.get("email_verified") and not existing_user.get("emailVerified"):
                 update_data["email_verified"] = True
-                update_data["emailVerifiedAt"] = now
+                update_data["email_verified_at"] = now
 
             await db["users"].update_one({"_id": existing_user["_id"]}, {"$set": update_data})
             user_doc = await db["users"].find_one({"_id": existing_user["_id"]})
@@ -592,7 +591,7 @@ class FacebookService:
             eff_account_type = "user" if account_type in (None, "", "user", "individual") else account_type
             random_pwd = get_password_hash(f"fb_{uuid.uuid4()}_{secrets.token_hex(8)}")
             user = User(
-                fullName=full_name,
+                name=full_name,
                 firstName=first_name,
                 lastName=last_name,
                 email=email,
@@ -600,9 +599,8 @@ class FacebookService:
                 accountType=eff_account_type,
                 role="user",
                 authProviders=["facebook"],
-                emailVerified=True,
                 email_verified=True,
-                emailVerifiedAt=now,
+                email_verified_at=now,
                 termsAcceptedAt=now,
                 profileImageUrl=picture_url,
             )

@@ -166,10 +166,9 @@ class InstagramService:
             }
             if picture_url and not existing_user.get("profileImageUrl"):
                 update_data["profileImageUrl"] = picture_url
-            if not existing_user.get("emailVerified"):
-                update_data["emailVerified"] = True
+            if not existing_user.get("email_verified") and not existing_user.get("emailVerified"):
                 update_data["email_verified"] = True
-                update_data["emailVerifiedAt"] = now
+                update_data["email_verified_at"] = now
 
             providers = existing_user.get("authProviders", [])
             if "instagram" not in providers:
@@ -204,7 +203,6 @@ class InstagramService:
                 first_name = name.split()[0] if name else username
                 last_name = " ".join(name.split()[1:]) if len(name.split()) > 1 else ""
                 user = User(
-                    fullName=name,
                     name=name,
                     firstName=first_name,
                     lastName=last_name,
@@ -212,9 +210,8 @@ class InstagramService:
                     hashed_password=random_pwd,
                     accountType=account_type or "business",
                     authProviders=["instagram"],
-                    emailVerified=True,
                     email_verified=True,
-                    emailVerifiedAt=now,
+                    email_verified_at=now,
                     termsAcceptedAt=now,
                     profileImageUrl=picture_url,
                     role="user",

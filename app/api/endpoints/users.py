@@ -31,19 +31,24 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
     if "hashed_password" in doc:
         del doc["hashed_password"]
 
-    # Provide field normalization & compatibility
-    if not doc.get("name") and doc.get("fullName"):
-        doc["name"] = doc["fullName"]
-    if not doc.get("fullName") and doc.get("name"):
-        doc["fullName"] = doc["name"]
+    # Provide field normalization & compatibility in response
+    canonical_name = doc.get("name") or doc.get("fullName") or "User"
+    doc["name"] = canonical_name
+    doc["fullName"] = canonical_name
+
+    canonical_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
+    doc["phone_number"] = canonical_phone
+    doc["phone"] = canonical_phone
+    doc["contactNumber"] = canonical_phone
+
+    canonical_email_verified = doc.get("email_verified", doc.get("emailVerified", False))
+    doc["email_verified"] = canonical_email_verified
+    doc["emailVerified"] = canonical_email_verified
+
     if not doc.get("image") and doc.get("profileImageUrl"):
         doc["image"] = doc["profileImageUrl"]
     if not doc.get("profileImageUrl") and doc.get("image"):
         doc["profileImageUrl"] = doc["image"]
-    if not doc.get("contactNumber") and doc.get("phone"):
-        doc["contactNumber"] = doc["phone"]
-    if not doc.get("phone") and doc.get("contactNumber"):
-        doc["phone"] = doc["contactNumber"]
     if not doc.get("role"):
         doc["role"] = "user"
 
@@ -59,7 +64,7 @@ async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_cur
     update_data = req.model_dump(exclude_unset=True)
 
     if update_data:
-        # Reconstruct fullName / name if firstName or lastName provided
+        # Reconstruct name if firstName or lastName provided
         first = update_data.get("firstName")
         last = update_data.get("lastName")
         if first is not None or last is not None:
@@ -74,19 +79,18 @@ async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_cur
             cur_last = last if last is not None else (user_doc.get("lastName") if user_doc else "")
             full = f"{cur_first or ''} {cur_last or ''}".strip()
             if full:
-                update_data["fullName"] = full
                 update_data["name"] = full
+        elif "name" in update_data or "fullName" in update_data:
+            update_data["name"] = update_data.get("name") or update_data.get("fullName")
+        update_data.pop("fullName", None)
 
-        if "name" in update_data and not update_data.get("fullName"):
-            update_data["fullName"] = update_data["name"]
-        elif "fullName" in update_data and not update_data.get("name"):
-            update_data["name"] = update_data["fullName"]
-
-        # Reconcile phone & contactNumber
-        if "contactNumber" in update_data and "phone" not in update_data:
-            update_data["phone"] = update_data["contactNumber"]
-        elif "phone" in update_data and "contactNumber" not in update_data:
-            update_data["contactNumber"] = update_data["phone"]
+        # Reconcile phone & contactNumber to canonical phone_number
+        if "phone" in update_data or "contactNumber" in update_data or "phone_number" in update_data:
+            p_val = update_data.get("phone_number") or update_data.get("phone") or update_data.get("contactNumber")
+            if p_val:
+                update_data["phone_number"] = p_val
+            update_data.pop("phone", None)
+            update_data.pop("contactNumber", None)
 
         # Reconcile image & profileImageUrl
         if "image" in update_data and "profileImageUrl" not in update_data:
@@ -128,10 +132,19 @@ async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_cur
     if "hashed_password" in doc:
         del doc["hashed_password"]
 
-    if not doc.get("name") and doc.get("fullName"):
-        doc["name"] = doc["fullName"]
-    if not doc.get("fullName") and doc.get("name"):
-        doc["fullName"] = doc["name"]
+    canonical_name = doc.get("name") or doc.get("fullName") or "User"
+    doc["name"] = canonical_name
+    doc["fullName"] = canonical_name
+
+    canonical_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
+    doc["phone_number"] = canonical_phone
+    doc["phone"] = canonical_phone
+    doc["contactNumber"] = canonical_phone
+
+    canonical_email_verified = doc.get("email_verified", doc.get("emailVerified", False))
+    doc["email_verified"] = canonical_email_verified
+    doc["emailVerified"] = canonical_email_verified
+
     if not doc.get("image") and doc.get("profileImageUrl"):
         doc["image"] = doc["profileImageUrl"]
     if not doc.get("profileImageUrl") and doc.get("image"):

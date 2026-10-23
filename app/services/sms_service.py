@@ -35,7 +35,7 @@ class SMSService:
         if not auth_key or not tpl_id:
             if settings.ENVIRONMENT == "development":
                 logger.warning(
-                    f"[DEV MODE] SMS provider unconfigured. Simulated OTP delivery to {mask_phone_number(phone_number)}: {otp}"
+                    f"[DEV MODE] SMS provider unconfigured. Simulated OTP delivery to {mask_phone_number(phone_number)}"
                 )
                 return {"type": "success", "simulated": True, "request_id": "simulated_dev_id"}
             else:
@@ -48,21 +48,38 @@ class SMSService:
         recipient = get_msg91_recipient(phone_number)
         headers = {
             "authkey": auth_key,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "accept": "application/json"
         }
-        payload = {
+        
+        # MSG91 SendOTP v5 expects routing parameters as query parameters:
+        params = {
             "template_id": tpl_id,
             "mobile": recipient,
+            "otp": otp,
+            "otp_length": str(len(otp)),
+            "otp_expiry": "10",
+            "realTimeResponse": "1"
+        }
+        
+        # Pass body variables for DLT template variable replacement (##OTP## / custom placeholders)
+        payload = {
+            "OTP": otp,
             "otp": otp
         }
 
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.post(cls.MSG91_OTP_URL, headers=headers, json=payload)
+                response = await client.post(
+                    cls.MSG91_OTP_URL,
+                    headers=headers,
+                    params=params,
+                    json=payload
+                )
                 
                 if response.status_code != 200:
                     logger.error(
-                        f"MSG91 API returned HTTP {response.status_code} for {mask_phone_number(phone_number)}: {response.text}"
+                        f"MSG91 API returned HTTP {response.status_code} for {mask_phone_number(phone_number)}"
                     )
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
