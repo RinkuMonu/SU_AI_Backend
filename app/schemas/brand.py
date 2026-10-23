@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import re
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from app.models.base import PyObjectId
 
 HEX_COLOR_REGEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -67,6 +67,7 @@ class BrandBase(BaseModel):
     selling_model: Optional[str] = None
     business_category: Optional[str] = None
     business_description: Optional[str] = None
+    brand_description: Optional[str] = None
     logo_url: Optional[str] = None
     logo_metadata: Optional[Dict[str, Any]] = None
     tagline: Optional[str] = None
@@ -92,6 +93,18 @@ class BrandBase(BaseModel):
     contact: Optional[ContactInfo] = None
     location: Optional[LocationInfo] = None
     social_style: Optional[str] = None
+
+    @model_validator(mode="after")
+    def sync_description_and_name(self):
+        desc = self.business_description or self.brand_description
+        if desc:
+            self.business_description = desc
+            self.brand_description = desc
+        name = self.business_name or self.brand_name
+        if name:
+            self.business_name = name
+            self.brand_name = name
+        return self
 
     @field_validator("primary_color", "secondary_color", "accent_color")
     @classmethod
@@ -140,9 +153,54 @@ class BrandKitActionResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-class AILogoGenerateRequest(BaseModel):
+class AILogoVariationItem(BaseModel):
+    logo_url: str
+    seed: int
+    style: str
+
+
+class AILogoGenerateResponse(BaseModel):
+    logo_url: str
     business_name: str
+    style: str
+    prompt: str
+    seed: Optional[int] = None
+    variations: Optional[List[AILogoVariationItem]] = []
+
+
+class AILogoGenerateRequest(BaseModel):
+    business_name: Optional[str] = None
+    brand_name: Optional[str] = None
     business_category: Optional[str] = None
-    style: Optional[str] = "modern luxury minimalist vector emblem"
+    style: Optional[str] = "minimalist_modern"
     preferred_colors: Optional[List[str]] = None
+    prompt: Optional[str] = None
+    tagline: Optional[str] = None
+    brand_voice: Optional[str] = None
+    personality: Optional[str] = None
+    font: Optional[str] = None
+    transparent_background: Optional[bool] = False
+    variation_seed: Optional[int] = None
+    num_variations: Optional[int] = Field(default=1, ge=1, le=4)
+    save_to_brand_kit: Optional[bool] = False
+
+    @field_validator("preferred_colors")
+    @classmethod
+    def clean_colors(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if not v:
+            return v
+        cleaned = []
+        for c in v:
+            if not isinstance(c, str):
+                continue
+            s = c.strip()
+            if not s:
+                continue
+            try:
+                norm = validate_and_normalize_hex(s)
+                if norm:
+                    cleaned.append(norm)
+            except Exception:
+                cleaned.append(s)
+        return cleaned
 
