@@ -80,6 +80,84 @@ class ReelScriptService:
     def __init__(self):
         self.provider = AIProviderFactory.get_provider()
 
+    @staticmethod
+    def _extract_and_parse_json(content: str) -> Optional[Dict[str, Any]]:
+        if not content:
+            return None
+        content = content.strip()
+
+        # 1. Try json_repair directly
+        try:
+            import json_repair
+            parsed = json_repair.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+                return parsed[0]
+        except Exception:
+            pass
+
+        # 2. Standard json.loads
+        try:
+            parsed = json.loads(content)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # 3. Extract markdown code fences ```json ... ```
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+        candidate = match.group(1).strip() if match else content
+
+        try:
+            import json_repair
+            parsed = json_repair.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+                return parsed[0]
+        except Exception:
+            pass
+
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # 4. Extract from first '{' to last '}'
+        start_idx = candidate.find('{')
+        end_idx = candidate.rfind('}')
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            slice_text = candidate[start_idx:end_idx+1]
+            try:
+                import json_repair
+                parsed = json_repair.loads(slice_text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+            try:
+                parsed = json.loads(slice_text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        # 5. If truncated, repair from first '{' to end
+        if start_idx != -1:
+            tail_text = candidate[start_idx:]
+            try:
+                import json_repair
+                parsed = json_repair.loads(tail_text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except Exception:
+                pass
+
+        return None
+
     async def generate_script(
         self,
         product: dict,
@@ -124,42 +202,9 @@ class ReelScriptService:
             
             content = response.get("text", "").strip()
             
-            # Safe JSON parsing with json_repair for maximum resilience
-            parsed_json = None
-            try:
-                import json_repair
-                parsed_json = json_repair.loads(content)
-            except Exception:
-                try:
-                    parsed_json = json.loads(content)
-                except Exception:
-                    pass
-
-            if not parsed_json or not isinstance(parsed_json, dict):
-                import re
-                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
-                candidate = json_match.group(1).strip() if json_match else content
-                try:
-                    try:
-                        import json_repair
-                        parsed_json = json_repair.loads(candidate)
-                    except Exception:
-                        parsed_json = json.loads(candidate)
-                except Exception:
-                    start_idx = candidate.find('{')
-                    end_idx = candidate.rfind('}')
-                    if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        try:
-                            import json_repair
-                            parsed_json = json_repair.loads(candidate[start_idx:end_idx+1])
-                        except Exception:
-                            try:
-                                parsed_json = json.loads(candidate[start_idx:end_idx+1])
-                            except Exception:
-                                pass
-
-            if not parsed_json or not isinstance(parsed_json, dict):
-                raise ValueError(f"Could not parse valid JSON from AI response: {content[:150]}")
+            parsed_json = self._extract_and_parse_json(content)
+            if not parsed_json:
+                raise ValueError(f"Could not parse valid JSON from AI response: {content[:200]}")
             # Validate with Pydantic
             script = ReelScript(**parsed_json)
 

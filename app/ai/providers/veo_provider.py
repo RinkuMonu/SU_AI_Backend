@@ -60,11 +60,13 @@ class VeoVideoProvider:
         if os.path.exists(image_url_or_path):
             return image_url_or_path
 
-        # If it's a relative URL to our media directory
-        if image_url_or_path.startswith("/media/") or image_url_or_path.startswith("media/"):
-            clean_rel = image_url_or_path.lstrip("/")
-            if os.path.exists(clean_rel):
-                return clean_rel
+        # If it references local uploads or media directory
+        for dir_name in ["uploads", "media"]:
+            if f"/{dir_name}/" in image_url_or_path or image_url_or_path.startswith(f"{dir_name}/") or image_url_or_path.startswith(f"/{dir_name}/"):
+                rel_part = image_url_or_path.split(f"{dir_name}/")[-1].split("?")[0]
+                local_candidate = os.path.join(dir_name, rel_part)
+                if os.path.exists(local_candidate):
+                    return local_candidate
 
         # If it's a remote URL, download to temporary file
         if image_url_or_path.startswith("http://") or image_url_or_path.startswith("https://"):

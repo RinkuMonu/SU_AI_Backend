@@ -8,12 +8,12 @@ def detect_product_domain(product_name: str, category: str = "", description: st
         return "laptop_computer"
     if any(k in combined for k in ["earbuds", "headphone", "smartwatch", "watch", "tablet", "ipad", "gadget", "charger", "audio", "drone", "camera"]):
         return "electronics_tech"
-    if any(k in combined for k in ["sofa", "couch", "chair", "bed", "wardrobe", "table", "desk", "dining table", "recliner", "bookshelf", "cabinet", "furniture", "living room", "bedroom", "mattress", "cushion", "velvet", "upholstery"]):
-        return "furniture_interior"
-    if any(k in combined for k in ["saree", "sari", "banarasi", "kanjivaram", "chanderi", "paithani", "silk"]):
-        return "saree_ethnic"
     if any(k in combined for k in ["lehenga", "choli", "anarkali", "sherwani", "kurta", "ethnic wear", "bridal wear"]):
         return "lehenga_ethnic"
+    if any(k in combined for k in ["saree", "sari", "banarasi", "kanjivaram", "chanderi", "paithani"]):
+        return "saree_ethnic"
+    if any(k in combined for k in ["sofa", "couch", "chair", "bed", "wardrobe", "table", "desk", "dining table", "recliner", "bookshelf", "cabinet", "furniture", "living room", "bedroom", "mattress", "cushion", "upholstery"]):
+        return "furniture_interior"
     if any(k in combined for k in ["hoodie", "tshirt", "t-shirt", "jacket", "jeans", "streetwear", "sneaker", "shoes", "pants", "suit", "blazer", "dress", "clothing"]):
         return "fashion_streetwear"
     if any(k in combined for k in ["serum", "cream", "lotion", "moisturizer", "skincare", "skin care", "sunscreen", "cleanser", "toner", "face wash"]):

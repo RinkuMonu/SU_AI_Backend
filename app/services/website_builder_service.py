@@ -839,20 +839,41 @@ CRITICAL REQUIREMENTS:
                     raw_text = cleaned
                     break
                     
-        first_bracket = raw_text.find("[")
-        last_bracket = raw_text.rfind("]")
-        if first_bracket != -1 and last_bracket != -1:
-            raw_text = raw_text[first_bracket:last_bracket+1]
-            
+        revised_pages = None
         try:
-            revised_pages = json.loads(raw_text)
-            if isinstance(revised_pages, dict) and "pages" in revised_pages:
-                revised_pages = revised_pages["pages"]
-            elif isinstance(revised_pages, dict):
-                revised_pages = [revised_pages]
-            elif not isinstance(revised_pages, list):
-                revised_pages = []
-        except:
+            import json_repair
+            revised_pages = json_repair.loads(raw_text)
+        except Exception:
+            pass
+
+        if revised_pages is None:
+            first_bracket = raw_text.find("[")
+            last_bracket = raw_text.rfind("]")
+            if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
+                candidate = raw_text[first_bracket:last_bracket+1]
+                try:
+                    import json_repair
+                    revised_pages = json_repair.loads(candidate)
+                except Exception:
+                    try:
+                        revised_pages = json.loads(candidate)
+                    except Exception:
+                        pass
+
+        if revised_pages is None:
+            try:
+                revised_pages = json.loads(raw_text)
+            except Exception:
+                pass
+
+        if isinstance(revised_pages, dict) and "pages" in revised_pages:
+            revised_pages = revised_pages["pages"]
+        elif isinstance(revised_pages, dict):
+            revised_pages = [revised_pages]
+        elif not isinstance(revised_pages, list):
+            revised_pages = []
+
+        if not revised_pages:
             raise Exception("Failed to parse AI revision")
             
         for page in revised_pages:
@@ -945,10 +966,14 @@ Return ONLY valid JSON with the modification."""
                         
             first_brace = raw.find("{")
             last_brace = raw.rfind("}")
-            if first_brace != -1 and last_brace != -1:
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
                 raw = raw[first_brace:last_brace + 1]
                 
-            data = json.loads(raw)
+            try:
+                import json_repair
+                data = json_repair.loads(raw)
+            except Exception:
+                data = json.loads(raw)
             return data
             
         except Exception as e:
