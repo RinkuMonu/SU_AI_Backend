@@ -32,7 +32,11 @@ def connect_to_mongo():
 def close_mongo_connection():
     if db_manager.client:
         db_manager.client.close()
+        db_manager.client = None
+        db_manager.db = None
         print("Closed MongoDB connection.")
 
 def get_database() -> AsyncIOMotorDatabase:
+    if db_manager.db is None or db_manager.client is None:
+        connect_to_mongo()
     return db_manager.db
