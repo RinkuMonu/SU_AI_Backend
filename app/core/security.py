@@ -147,6 +147,21 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
 
     user_phone = user_doc.get("phone_number")
     user_role = user_doc.get("role")
+    account_type = user_doc.get("accountType")
+    
+    # Auto-resolve influencer role if marked in accountType or has influencer profile
+    if account_type == "influencer" or user_role == "influencer":
+        user_role = "influencer"
+        account_type = "influencer"
+    else:
+        inf_exists = await db["influencer_profiles"].find_one({"user_id": str(user_doc["_id"])})
+        if inf_exists:
+            user_role = "influencer"
+            account_type = "influencer"
+        elif not user_role or user_role == "user":
+            user_role = "businessman"
+            account_type = account_type or "business"
+
     phone_verified = user_doc.get("phone_verified", False)
     if not user_phone or user_role in ["businessman", "influencer", "admin"]:
         phone_verified = True
@@ -159,7 +174,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         "phone_verified": phone_verified,
         "email": user_doc.get("email", ""),
         "role": user_role,
-        "accountType": user_doc.get("accountType", "personal"),
+        "accountType": account_type or "business",
         "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", True)),
         "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", True)),
         "onboardingCompleted": user_doc.get("onboardingCompleted", False),

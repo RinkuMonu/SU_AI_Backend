@@ -292,7 +292,21 @@ async def login(request: Request, response: Response):
                 user, access_token, refresh_token = await AuthService.login(login_req)
                 set_refresh_cookie(response, refresh_token)
                 u_phone = getattr(user, "phone", None) or getattr(user, "phone_number", None)
-                u_role = getattr(user, "role", "user")
+                db_inst = get_database()
+                is_influencer = (
+                    getattr(user, "role", None) == "influencer"
+                    or getattr(user, "accountType", None) == "influencer"
+                )
+                if not is_influencer:
+                    inf_exists = await db_inst["influencer_profiles"].find_one({"user_id": str(user.id)})
+                    if inf_exists:
+                        is_influencer = True
+
+                u_role = "influencer" if is_influencer else (getattr(user, "role", None) or "businessman")
+                if u_role == "user":
+                    u_role = "businessman"
+                account_type = "influencer" if is_influencer else "business"
+                dashboard_route = "/influencer" if is_influencer else "/dashboard"
                 u_pv = getattr(user, "phone_verified", False)
                 if not u_phone or u_role in ["businessman", "influencer", "admin"]:
                     u_pv = True
@@ -304,6 +318,7 @@ async def login(request: Request, response: Response):
                     "email": getattr(user, "email", None),
                     "phone": u_phone,
                     "phone_number": u_phone,
+                    "accountType": account_type,
                     "role": u_role,
                     "email_verified": getattr(user, "email_verified", True),
                     "phone_verified": u_pv,
@@ -315,11 +330,17 @@ async def login(request: Request, response: Response):
                     "accessToken": access_token,
                     "token": access_token,
                     "user": user_dict,
+                    "role": u_role,
+                    "accountType": account_type,
+                    "dashboard_route": dashboard_route,
                     "data": {
                         "access_token": access_token,
                         "accessToken": access_token,
                         "token": access_token,
-                        "user": user_dict
+                        "user": user_dict,
+                        "role": u_role,
+                        "accountType": account_type,
+                        "dashboard_route": dashboard_route
                     }
                 }
             except Exception:
@@ -328,7 +349,23 @@ async def login(request: Request, response: Response):
 
     access_token = create_access_token(subject=str(user.id))
     u_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
-    u_role = getattr(user, "role", None)
+    
+    db_inst = get_database()
+    is_influencer = (
+        getattr(user, "role", None) == "influencer"
+        or getattr(user, "accountType", None) == "influencer"
+    )
+    if not is_influencer:
+        inf_exists = await db_inst["influencer_profiles"].find_one({"user_id": str(user.id)})
+        if inf_exists:
+            is_influencer = True
+
+    u_role = "influencer" if is_influencer else (getattr(user, "role", None) or "businessman")
+    if u_role == "user":
+        u_role = "businessman"
+    account_type = "influencer" if is_influencer else "business"
+    dashboard_route = "/influencer" if is_influencer else "/dashboard"
+    
     u_pv = getattr(user, "phone_verified", False)
     if not u_phone or u_role in ["businessman", "influencer", "admin"]:
         u_pv = True
@@ -343,8 +380,8 @@ async def login(request: Request, response: Response):
         "phone": u_phone,
         "phone_number": u_phone,
         "contactNumber": getattr(user, "contactNumber", None) or u_phone,
-        "accountType": getattr(user, "accountType", None) or ("influencer" if u_role == "influencer" else "business"),
-        "role": u_role or getattr(user, "role", "user") or "user",
+        "accountType": account_type,
+        "role": u_role,
         "phone_verified": u_pv,
         "emailVerified": True,
         "email_verified": True,
@@ -356,10 +393,6 @@ async def login(request: Request, response: Response):
         set_refresh_cookie(response, refresh_token)
     except Exception:
         pass
-        
-    role = getattr(user, "role", None)
-    requires_role = role is None or role in ["user", ""]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
 
     return {
         "success": True,
@@ -367,16 +400,18 @@ async def login(request: Request, response: Response):
         "accessToken": access_token,
         "token_type": "bearer",
         "user": user_dict,
-        "role": role,
-        "requires_role_selection": requires_role,
+        "role": u_role,
+        "accountType": account_type,
+        "requires_role_selection": False,
         "dashboard_route": dashboard_route,
         "data": {
             "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
             "user": user_dict,
-            "role": role,
-            "requires_role_selection": requires_role,
+            "role": u_role,
+            "accountType": account_type,
+            "requires_role_selection": False,
             "dashboard_route": dashboard_route
         }
     }
@@ -461,17 +496,17 @@ async def get_dashboard_route(current_user: CurrentUser = Depends(get_current_us
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Role selection required before accessing dashboard."
         )
-    if role == "businessman":
+    if role in ["businessman", "user", "business"]:
         return DashboardRouteResponse(
             role="businessman",
-            dashboard_route="/dashboard/business",
+            dashboard_route="/dashboard",
             dashboard_name="Business Dashboard"
         )
     elif role == "influencer":
         return DashboardRouteResponse(
             role="influencer",
-            dashboard_route="/dashboard/creator",
-            dashboard_name="Influencer/Creator Dashboard"
+            dashboard_route="/influencer",
+            dashboard_name="Influencer Dashboard"
         )
     elif role == "admin":
         return DashboardRouteResponse(
