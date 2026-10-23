@@ -33,6 +33,10 @@ class MockAIProvider(AIProvider):
                     ],
                     "theme": {"primary": "#000000"}
                 }
+            elif "revise" in prompt.lower() or "revised" in prompt.lower() or "revision" in prompt.lower():
+                mock_response = [
+                    {"name": "Home", "sections": [{"type": "hero", "title": "Welcome to Our Store", "subtitle": "Premium quality products"}]}
+                ]
             elif "Extract structured fields" in prompt:
                 mock_response = {
                     "Business Name": "Sharma Fashion",

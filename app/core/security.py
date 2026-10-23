@@ -145,15 +145,23 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         
     business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
+    user_phone = user_doc.get("phone_number")
+    user_role = user_doc.get("role")
+    phone_verified = user_doc.get("phone_verified", False)
+    if not user_phone or user_role in ["businessman", "influencer", "admin"]:
+        phone_verified = True
+
     return CurrentUser({
         "id": str(user_doc["_id"]),
         "name": user_doc.get("name") or user_doc.get("fullName", "Unknown"),
         "fullName": user_doc.get("fullName") or user_doc.get("name", "Unknown"),
+        "phone_number": user_phone,
+        "phone_verified": phone_verified,
         "email": user_doc.get("email", ""),
-        "role": user_doc.get("role", "user"),
+        "role": user_role,
         "accountType": user_doc.get("accountType", "personal"),
-        "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", False)),
-        "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", False)),
+        "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", True)),
+        "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", True)),
         "onboardingCompleted": user_doc.get("onboardingCompleted", False),
         "is_pending": is_pending,
         "business_id": str(business["_id"]) if business else None
@@ -188,12 +196,20 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
             if not user_doc:
                 return None
         business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
+        user_phone = user_doc.get("phone_number")
+        user_role = user_doc.get("role")
+        phone_verified = user_doc.get("phone_verified", False)
+        if not user_phone or user_role in ["businessman", "influencer", "admin"]:
+            phone_verified = True
+
         return CurrentUser({
             "id": str(user_doc["_id"]),
             "name": user_doc.get("name") or user_doc.get("fullName", "Unknown"),
             "fullName": user_doc.get("fullName") or user_doc.get("name", "Unknown"),
+            "phone_number": user_phone,
+            "phone_verified": phone_verified,
             "email": user_doc.get("email", ""),
-            "role": user_doc.get("role", "user"),
+            "role": user_role,
             "accountType": user_doc.get("accountType", "personal"),
             "onboardingCompleted": user_doc.get("onboardingCompleted", False),
             "is_pending": is_pending,
@@ -201,5 +217,31 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
         })
     except Exception:
         return None
+
+def require_role(*allowed_roles: str):
+    async def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+        user_role = current_user.get("role")
+        if not user_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Role selection required before accessing this resource."
+            )
+        if user_role == "admin" or user_role in allowed_roles:
+            return current_user
+
+        detail_msg = f"Access denied. Required role: {', '.join(allowed_roles)}."
+        if "businessman" in allowed_roles and "influencer" not in allowed_roles:
+            detail_msg = "Access denied. Businessman role required."
+        elif "influencer" in allowed_roles and "businessman" not in allowed_roles:
+            detail_msg = "Access denied. Influencer/Creator role required."
+
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail_msg
+        )
+    return dependency
+
+require_businessman = require_role("businessman")
+require_influencer = require_role("influencer")
 
 

@@ -136,21 +136,30 @@ class ReelScriptService:
                     pass
 
             if not parsed_json or not isinstance(parsed_json, dict):
+                import re
                 json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
                 candidate = json_match.group(1).strip() if json_match else content
                 try:
-                    import json_repair
-                    parsed_json = json_repair.loads(candidate)
+                    try:
+                        import json_repair
+                        parsed_json = json_repair.loads(candidate)
+                    except Exception:
+                        parsed_json = json.loads(candidate)
                 except Exception:
                     start_idx = candidate.find('{')
                     end_idx = candidate.rfind('}')
                     if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                        import json_repair
-                        parsed_json = json_repair.loads(candidate[start_idx:end_idx+1])
+                        try:
+                            import json_repair
+                            parsed_json = json_repair.loads(candidate[start_idx:end_idx+1])
+                        except Exception:
+                            try:
+                                parsed_json = json.loads(candidate[start_idx:end_idx+1])
+                            except Exception:
+                                pass
 
             if not parsed_json or not isinstance(parsed_json, dict):
                 raise ValueError(f"Could not parse valid JSON from AI response: {content[:150]}")
-
             # Validate with Pydantic
             script = ReelScript(**parsed_json)
 

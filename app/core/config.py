@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     DEV_MODE: bool = True
     NODE_ENV: str = "development"
     FRONTEND_URL: str = "http://localhost:3000"
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173,https://dhandagrow.com,https://www.dhandagrow.com,https://api.dhandagrow.com"
     PORT: int = 8000
 
     MONGO_URI: str = "mongodb+srv://rinkuyadav9460_db_user:PJrNGHmujot6YovI@cluster0.wrmtwnk.mongodb.net/"
@@ -27,8 +28,14 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-flash-lite-latest"
     GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
     VIDEO_PROVIDER: str = "veo"
+    VOICE_PROVIDER: str = "gtts"
+    VIDEO_API_KEY: Optional[str] = None
+    IMAGE_API_KEY: Optional[str] = None
+    IMAGE_API_URL: Optional[str] = None
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    JWT_SECRET: Optional[str] = None
+    MONGODB_URI: Optional[str] = None
 
     FASHION_IMAGE_PROVIDER: str = "gemini"
     FASHION_IMAGE_API_KEY: str | None = None
@@ -46,11 +53,22 @@ class Settings(BaseSettings):
     FACEBOOK_APP_ID: str | None = None
     FACEBOOK_APP_SECRET: str | None = None
     FACEBOOK_API_VERSION: str = "v19.0"
-    FACEBOOK_REDIRECT_URI: str = "http://localhost:8000/api/facebook/callback"
+    FACEBOOK_REDIRECT_URI: str = "https://api.dhandagrow.com/api/facebook/callback"
     FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "http://localhost:3000/login/user"
+    GOOGLE_REDIRECT_URI: str = "https://dhandagrow.com/login/user"
+    google_client_id: Optional[str] = None
+    google_client_secret: Optional[str] = None
+    NEXT_PUBLIC_GOOGLE_CLIENT_ID: Optional[str] = None
+    # LinkedIn OAuth
+    LINKEDIN_CLIENT_ID: Optional[str] = None
+    LINKEDIN_CLIENT_SECRET: Optional[str] = None
+    Linkedin_client_id: Optional[str] = None
+    Linkedin_client_secret: Optional[str] = None
+    LINKEDIN_REDIRECT_URI: str = "https://dhandagrow.com/login/user"
+    LINKEDIN_SCOPES: str = "openid profile email w_member_social"
+
     BACKEND_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_API_URL: str | None = None
 
@@ -74,10 +92,14 @@ class Settings(BaseSettings):
         """Converts a local media path into a fully qualified public URL using BACKEND_URL."""
         if not path:
             return ""
+        import re
+        base = (self.BACKEND_URL or "https://untapped-petite-shallot.ngrok-free.dev").rstrip("/")
+        # If path points to localhost/127.0.0.1, rewrite to public BACKEND_URL
+        if "localhost" in path or "127.0.0.1" in path:
+            return re.sub(r"^https?://(localhost|127\.0\.0\.1)(:\d+)?", base, path)
         if path.startswith("http://") or path.startswith("https://"):
             return path
         clean_path = path if path.startswith("/") else f"/{path}"
-        base = (self.BACKEND_URL or "").rstrip("/")
         if base:
             return f"{base}{clean_path}"
         return clean_path
@@ -98,6 +120,12 @@ class Settings(BaseSettings):
             self.SMTP_FROM_EMAIL = self.SMTP_FROM
         elif self.SMTP_USERNAME and self.SMTP_FROM_EMAIL == "noreply@dhandagrow.com":
             self.SMTP_FROM_EMAIL = self.SMTP_USERNAME
+                # Resolve LinkedIn settings
+        if not self.LINKEDIN_CLIENT_ID and self.Linkedin_client_id:
+            self.LINKEDIN_CLIENT_ID = self.Linkedin_client_id
+        if not self.LINKEDIN_CLIENT_SECRET and self.Linkedin_client_secret:
+            self.LINKEDIN_CLIENT_SECRET = self.Linkedin_client_secret
+
         if self.NEXT_PUBLIC_API_URL and self.BACKEND_URL == "http://localhost:8000":
             self.BACKEND_URL = self.NEXT_PUBLIC_API_URL
         if not self.INSTAGRAM_APP_ID and self.INSTAGRAM_APPID:
@@ -106,8 +134,28 @@ class Settings(BaseSettings):
             self.INSTAGRAM_APP_SECRET = self.INSTAGRAM_SECTRET or self.INSTAGRAM_SECRET
         if not self.GOOGLE_MAPS_API_KEY and self.GOOGLE_MAP_API_KEY:
             self.GOOGLE_MAPS_API_KEY = self.GOOGLE_MAP_API_KEY
+        if not self.JWT_SECRET_KEY and self.JWT_SECRET:
+            self.JWT_SECRET_KEY = self.JWT_SECRET
+        if self.JWT_SECRET and self.JWT_ACCESS_SECRET == "development_access_secret":
+            self.JWT_ACCESS_SECRET = self.JWT_SECRET
+        if not self.GOOGLE_CLIENT_ID:
+            self.GOOGLE_CLIENT_ID = self.google_client_id or self.NEXT_PUBLIC_GOOGLE_CLIENT_ID
+        if not self.GOOGLE_CLIENT_SECRET and self.google_client_secret:
+            self.GOOGLE_CLIENT_SECRET = self.google_client_secret
+        if self.MONGODB_URI and (not self.MONGO_URI or self.MONGO_URI == "mongodb://localhost:27017"):
+            self.MONGO_URI = self.MONGODB_URI
         return self
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    # SMS / MSG91 Configuration
+    SMS_PROVIDER: str = "msg91"
+    MSG91_AUTH_KEY: str | None = None
+    MSG91_TEMPLATE_ID_N_REG: str | None = None
+    MSG91_TEMPLATE_ID_FOR_LOG: str | None = None
+    MSG91_TEMPLATE_ID_FOR_FORGET_PASWORD: str | None = None
+    MSG91_TEMPLATE_ID_FOR_RESET_MPIN: str | None = None
+
+    _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
+    model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="ignore")
+
 
 settings = Settings()

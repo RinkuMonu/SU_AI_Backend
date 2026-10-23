@@ -14,6 +14,7 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import RedirectResponse, PlainTextResponse
@@ -24,6 +25,7 @@ import urllib.parse
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.instagram_service import InstagramService
+from app.services.social_connectivity_service import sync_business_social_status
 
 from app.schemas.instagram import (
     InstagramConnectResponse,
@@ -79,13 +81,13 @@ DEMO_MEDIA_ID = "17900000000000001"
 
 def _should_use_demo(db_conn) -> bool:
     """
-    Returns True when we should return demo/mock responses:
-    - No Instagram App credentials configured, OR
-    - Credentials configured but no user has connected yet (dev environment)
+    Returns True ONLY when explicitly configured in demo mode and no real credentials exist.
     """
+    if db_conn and db_conn.get("encrypted_access_token") and db_conn.get("instagram_user_id") not in (None, "", "17841400000000001"):
+        return False
+    if db_conn and db_conn.get("ig_access_token") and db_conn.get("instagram_user_id") not in (None, "", "17841400000000001"):
+        return False
     if InstagramService.is_demo_mode():
-        return True
-    if db_conn is None and settings.ENVIRONMENT == "development":
         return True
     return False
 
@@ -118,12 +120,7 @@ async def instagram_connect(
     })
 
     custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
-    effective_scopes = custom_scopes or [
-        "instagram_basic",
-        "instagram_content_publish",
-        "instagram_manage_comments",
-        "instagram_manage_messages",
-    ]
+    effective_scopes = InstagramService.normalize_scopes(custom_scopes)
 
     if InstagramService.is_demo_mode():
         logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
@@ -141,6 +138,7 @@ async def instagram_connect(
 
 
 @router.get("/callback")
+@router.get("/callback/")
 async def instagram_callback(
     code: str = Query(None),
     state: str = Query(None),
@@ -195,7 +193,6 @@ async def instagram_callback(
             "account_type": "BUSINESS",
             "profile_picture_url": "",
         }
-
         if demo_user_id == "pending_login":
             user, access_token_jwt, _ = await InstagramService.authenticate_instagram_user(
                 db=db,
@@ -214,6 +211,7 @@ async def instagram_callback(
             token_data={"access_token": demo_token, "expires_in": 5184000, "user_id": DEMO_IG_USER_ID},
             profile=demo_profile,
         )
+        await sync_business_social_status(db, demo_user_id)
 
         return RedirectResponse(
             url=build_instagram_redirect(
@@ -266,6 +264,7 @@ async def instagram_callback(
 
         # 4. Save connection across businesses, users, and instagram_connections
         await InstagramService.save_connection(db, user_id, token_data, profile)
+        await sync_business_social_status(db, user_id)
 
         ig_id = profile.get("id") or profile.get("user_id") or token_data.get("user_id") or ""
         ig_username = profile.get("username") or ""
@@ -465,6 +464,7 @@ async def instagram_disconnect(
     """Disconnect Instagram for the current user across businesses, users, and instagram_connections."""
     user_id = str(current_user.get("id") or current_user.get("_id"))
     success = await InstagramService.disconnect(db, user_id)
+    await sync_business_social_status(db, user_id)
 
     return InstagramDisconnectResponse(
         success=True,
@@ -570,10 +570,11 @@ async def instagram_post(
             message="[DEMO MODE] Image published to Instagram successfully",
         )
 
+    effective_image_url = request.get_effective_image_url()
     result = await InstagramService.publish_image(
         db=db,
         user_id=user_id,
-        image_url=request.image_url,
+        image_url=effective_image_url,
         caption=request.caption,
         content_id=request.content_id,
     )
@@ -619,10 +620,11 @@ async def instagram_reel(
             message="[DEMO MODE] Reel published to Instagram successfully",
         )
 
+    effective_video_url = request.get_effective_video_url()
     result = await InstagramService.publish_reel(
         db=db,
         user_id=user_id,
-        video_url=request.video_url,
+        video_url=effective_video_url,
         caption=request.caption,
         content_id=request.content_id,
         share_to_feed=request.share_to_feed,
@@ -1131,3 +1133,16 @@ async def webhook_receive(
 
     result = await InstagramService.process_webhook_event(db, body)
     return result
+
+
+@router.get("/signup-url")
+@router.get("/create-account-url")
+async def instagram_signup_url():
+    """Returns official Instagram account signup URL."""
+    return {
+        "platform": "instagram",
+        "url": "https://www.instagram.com/accounts/emailsignup/",
+        "official_signup_url": "https://www.instagram.com/accounts/emailsignup/",
+        "instructions": "Create your Instagram account on the official website, then return and connect it."
+    }
+

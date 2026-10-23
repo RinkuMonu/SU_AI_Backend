@@ -12,11 +12,14 @@ class SocialService:
         """
         from app.services.instagram_service import InstagramService
 
-        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
+        query = {"_id": ObjectId(content_id)} if ObjectId.is_valid(content_id) else {"_id": content_id}
+        content = await db["contents"].find_one(query)
+        if not content and ObjectId.is_valid(content_id):
+            content = await db["contents"].find_one({"_id": str(content_id)})
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
 
-        image_url = content.get("image_url")
+        image_url = content.get("image_url") or content.get("media_url") or content.get("imageUrl")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
         if isinstance(hashtags, list):
@@ -24,16 +27,20 @@ class SocialService:
         full_caption = f"{caption}\n\n{hashtags}".strip()
 
         if not image_url:
-            import urllib.parse
-            # Fallback image generation
-            fallback_prompt = f"Professional product showcase representing: {hashtags} {caption[:50]}"
-            prompt_encoded = urllib.parse.quote(fallback_prompt)
-            image_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=1080&height=1080&nologo=true"
+            image_url = "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1080&q=80"
 
-        user_id = content.get("user_id") or business_id
+                # Check active user connection first, then content user_id
+        effective_user_id = str(business_id)
+        conn = await InstagramService.get_connection(db, effective_user_id)
+        if not conn and content.get("user_id"):
+            content_user_id = str(content.get("user_id"))
+            conn_content = await InstagramService.get_connection(db, content_user_id)
+            if conn_content:
+                effective_user_id = content_user_id
+
         return await InstagramService.publish_image(
             db=db,
-            user_id=str(user_id),
+            user_id=effective_user_id,
             image_url=image_url,
             caption=full_caption,
             content_id=content_id,
@@ -43,11 +50,14 @@ class SocialService:
     async def publish_to_facebook(db, business_id: str, content_id: str):
         from app.services.facebook_service import FacebookService
         
-        content = await db["contents"].find_one({"_id": ObjectId(content_id)}) if ObjectId.is_valid(content_id) else None
+        query = {"_id": ObjectId(content_id)} if ObjectId.is_valid(content_id) else {"_id": content_id}
+        content = await db["contents"].find_one(query)
+        if not content and ObjectId.is_valid(content_id):
+            content = await db["contents"].find_one({"_id": str(content_id)})
         if not content:
             raise HTTPException(status_code=404, detail="Content not found")
             
-        image_url = content.get("image_url")
+        image_url = content.get("image_url") or content.get("media_url") or content.get("imageUrl")
         caption = content.get("caption", "")
         hashtags = content.get("hashtags", "")
         if isinstance(hashtags, list):
@@ -72,8 +82,23 @@ class SocialService:
         linkedin_author_id = business.get("linkedin_author_id")
         linkedin_access_token = business.get("linkedin_access_token")
         
+        # Fallback to users or linkedin_connections
         if not linkedin_author_id or not linkedin_access_token:
-            raise HTTPException(status_code=400, detail="LinkedIn is not connected for this business.")
+            owner_id = business.get("ownerId") or business.get("owner_id") or business_id
+            oid = ObjectId(owner_id) if ObjectId.is_valid(str(owner_id)) else str(owner_id)
+            user_doc = await db["users"].find_one({"_id": oid})
+            if user_doc:
+                linkedin_author_id = linkedin_author_id or user_doc.get("linkedin_author_id")
+                linkedin_access_token = linkedin_access_token or user_doc.get("linkedin_access_token")
+            
+            if not linkedin_author_id or not linkedin_access_token:
+                conn = await db["linkedin_connections"].find_one({"connected": True})
+                if conn:
+                    linkedin_author_id = linkedin_author_id or conn.get("author_id")
+                    linkedin_access_token = linkedin_access_token or conn.get("access_token")
+
+        if not linkedin_author_id or not linkedin_access_token:
+            raise HTTPException(status_code=400, detail="LinkedIn is not connected. Please connect LinkedIn in Settings > Social Platforms or Login with LinkedIn.")
             
         content = await db["contents"].find_one({
             "_id": ObjectId(content_id),

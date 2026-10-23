@@ -36,23 +36,27 @@ def detect_product_domain(product_name: str, category: str = "", description: st
     ]):
         return "festive_cultural"
 
-    # 5. Ethnic Fashion (Sarees, Lehengas, Kurtas)
+    # 5. Furniture & Interior
+    if any(k in combined for k in ["sofa", "couch", "chair", "bed", "wardrobe", "table", "desk", "dining table", "recliner", "bookshelf", "cabinet", "furniture", "living room", "bedroom", "mattress", "cushion", "velvet", "upholstery"]):
+        return "furniture_interior"
+
+    # 6. Ethnic Fashion (Sarees, Lehengas, Kurtas)
     if any(k in combined for k in ["saree", "sari", "banarasi", "kanjivaram", "chanderi", "paithani", "silk saree", "zari"]):
         return "saree_ethnic"
     if any(k in combined for k in ["lehenga", "choli", "anarkali", "sherwani", "kurta", "ethnic wear", "bridal wear", "garment", "dupatta"]):
         return "lehenga_ethnic"
 
-    # 6. Skincare & Beauty
+    # 7. Skincare & Beauty
     if any(k in combined for k in ["serum", "cream", "lotion", "moisturizer", "skincare", "skin care", "sunscreen", "cleanser", "toner", "face wash"]):
         return "skincare_beauty"
     if any(k in combined for k in ["lipstick", "foundation", "eyeliner", "mascara", "makeup", "cosmetic", "blush", "perfume", "fragrance", "cologne"]):
         return "cosmetics_fragrance"
 
-    # 7. Luxury Jewellery (STRICT full terms - NEVER raw 'gold' or 'ring' substring)
+    # 8. Luxury Jewellery (STRICT full terms - NEVER raw 'gold' or 'ring' substring)
     if any(k in combined for k in [
         "jewelry", "jewellery", "necklace", "choker", "earrings", "jhumka",
         "diamond ring", "gold ring", "wedding ring", "finger ring", "bangles", "bracelet",
-        "diamond jewelry", "gold jewelry", "polki", "kundan", "precious gems", "diamond facet"
+        "diamond jewelry", "gold jewelry", "polki", "kundan", "precious gems", "diamond facet", "pendant"
     ]):
         return "jewellery_luxury"
 
@@ -170,6 +174,17 @@ def get_reel_script_prompt(
 - The hero product is strictly '{prod_name}'.
 - ALLOWED VISUALS: Precious metal luster, gemstone/diamond facet sparkle, velvet pedestal presentation, delicate neck/wrist placement, optical light sweeps.
 - FORBIDDEN VISUALS: Strictly DO NOT show laptops, computers, casual clothes, or food.
+"""
+    elif domain == "furniture_interior":
+        domain_directives = f"""
+# DOMAIN FOCUS: LUXURY FURNITURE & INTERIOR DESIGN
+- The hero product is strictly '{prod_name}'.
+- ALLOWED VISUALS & CAMERA DIRECTIVES:
+  * SCENE 1 (Wide Establishing Shot): Elegant modern architectural living room or sunlit luxury penthouse with herringbone hardwood floors, natural ambient daylight, tasteful minimalist decor. Camera: lateral dolly tracking glide showing '{prod_name}' as the majestic centerpiece.
+  * SCENE 2 (Three-Quarter Perspective): Three-quarter depth angle revealing the refined profile, comfortable deep cushions, tailored armrests, brass/solid-wood legs, and structural silhouette of '{prod_name}'. Camera: smooth controlled push-in reveal.
+  * SCENE 3 (Macro Craftsmanship & Material Texture): Extreme macro close-up showcasing authentic fabric texture (rich velvet pile, grain, tailored seams, double-piped upholstery stitches), with soft grazing light and shallow depth of field. Camera: diagonal macro texture drift.
+  * SCENE 4 (Hero Commercial Finale): High-impact low-angle hero showcase of '{prod_name}' in warm golden hour sunlight, exuding comfort, timeless craftsmanship, and luxury lifestyle, with clean breathing space for brand logo and CTA.
+- FORBIDDEN VISUALS: Strictly DO NOT show laptops, sarees, lehengas, cosmetics, food, or clutter. The commercial must look like an official high-end European furniture commercial (e.g., West Elm, B&B Italia, Restoration Hardware).
 """
     else:
         domain_directives = f"""

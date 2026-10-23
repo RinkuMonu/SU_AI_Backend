@@ -1,7 +1,7 @@
 import json
+import re
 import logging
-import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import httpx
 
 from app.ai.base import AIProvider
@@ -12,45 +12,94 @@ logger = logging.getLogger(__name__)
 
 class GeminiProvider(AIProvider):
     """
-    Google Gemini AI provider using asynchronous REST API with automatic multi-model fallback.
+    Google Gemini AI provider supporting both the new google-genai SDK
+    and asynchronous HTTP REST fallback with multi-model redundancy.
     """
 
-    def __init__(self, api_key: str = None, model: str = None):
-        primary_key = api_key or settings.GEMINI_API_KEY
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
+        primary_key = api_key or getattr(settings, "GEMINI_API_KEY", None)
         backup_key = getattr(settings, "GEMINI_BACKUP_API_KEY", None)
 
         self.api_keys_to_try = [k for k in [primary_key, backup_key] if k]
         if not self.api_keys_to_try:
             raise ValueError("GEMINI_API_KEY is missing from configuration.")
 
-        configured_model = model or settings.GEMINI_MODEL or "gemini-flash-lite-latest"
-        
-        # Priority list of models with proven Gemini API availability
+        self.api_key = self.api_keys_to_try[0]
+        configured_model = model or getattr(settings, "GEMINI_MODEL", None) or "gemini-3.8-flash"
+        self._model_name = configured_model
+        self._provider_name = "gemini"
+
+        # Try to initialize google.genai client if installed
+        self._genai_client = None
+        try:
+            from google import genai
+            self._genai_client = genai.Client(api_key=self.api_key)
+        except Exception:
+            self._genai_client = None
+
         fallback_models = [
             configured_model,
             "gemini-flash-lite-latest",
             "gemini-flash-latest",
             "gemini-3.8-flash",
+            "gemini-2.0-flash",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
             "gemini-3.5-flash-lite",
             "gemini-3-flash-preview",
         ]
         seen = set()
-        self.models_to_try = []
+        self.models_to_try: List[str] = []
         for m in fallback_models:
             if m not in seen:
                 seen.add(m)
                 self.models_to_try.append(m)
 
-    async def generate_text(self, prompt: str, system_prompt: str = None, **kwargs) -> Dict[str, Any]:
+    async def generate_text(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
         """
-        Generates text using Google Gemini REST API.
+        Generates text using Google Gemini REST API or google-genai SDK.
         Supports system instructions, temperature, max tokens, and JSON mode.
         Automatically fails over across models and configured API keys upon 402, 429, or 404.
         """
-        is_json = False
-        if "response_format" in kwargs and kwargs["response_format"].get("type") == "json_object":
-            is_json = True
+        full_prompt = prompt
+        if system_prompt:
+            full_prompt = f"{system_prompt}\n\n{prompt}"
 
+        is_json = kwargs.get("response_format", {}).get("type") == "json_object"
+        if is_json:
+            full_prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation, no code fences."
+
+        # Attempt SDK call first if client is available
+        if self._genai_client:
+            try:
+                from google.genai import types
+
+                response = await self._genai_client.aio.models.generate_content(
+                    model=self._model_name,
+                    contents=full_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=kwargs.get("temperature", 0.7),
+                        max_output_tokens=kwargs.get("max_tokens", 2048),
+                    ),
+                )
+                content = response.text if response.text else ""
+                return {
+                    "text": content,
+                    "metadata": {
+                        "provider": self._provider_name,
+                        "model": self._model_name,
+                        "usage": {},
+                    },
+                }
+            except Exception as e:
+                logger.warning(f"Google GenAI SDK call failed: {e}. Falling back to REST API.")
+
+        # Fallback to direct REST API via httpx
         temperature = kwargs.get("temperature", 0.7)
         max_tokens = kwargs.get("max_tokens", 8192)
 
@@ -138,3 +187,31 @@ class GeminiProvider(AIProvider):
 
         logger.error(f"All Gemini models and keys failed: {last_error}")
         raise RuntimeError(f"Gemini generation failed: {last_error}")
+
+    async def generate_json(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """Override to ensure robust JSON parsing."""
+        kwargs["response_format"] = {"type": "json_object"}
+        result = await self.generate_text(prompt, system_prompt, **kwargs)
+        text = result.get("text", "").strip()
+
+        # Strip markdown code fences if model ignores instructions
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+        if match:
+            text = match.group(1).strip()
+
+        # Fallback: find first JSON object/array
+        if not text.startswith("{") and not text.startswith("["):
+            obj_match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
+            if obj_match:
+                text = obj_match.group(0)
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as exc:
+            logger.error(f"Gemini JSON parse error: {exc}\nRaw: {text[:500]}")
+            return {"error": "Failed to parse JSON", "raw_text": text}

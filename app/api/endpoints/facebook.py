@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 import secrets
 import logging
+import re
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -11,6 +12,8 @@ from app.core.security import get_current_user, get_current_user_optional
 from app.core.database import get_database
 from app.core.config import settings
 from app.services.facebook_service import FacebookService, FACEBOOK_LOGIN_PERMISSIONS
+from app.services.social_connectivity_service import sync_business_social_status
+from app.services.instagram_service import encrypt_token
 from app.schemas.facebook import (
     FacebookSaveTokenRequest,
     FacebookConnectResponse,
@@ -61,6 +64,57 @@ def resolve_frontend_url(state_doc: Optional[Dict[str, Any]] = None) -> str:
 
     return "http://localhost:3000"
 
+
+def sanitize_facebook_error(err_code: Optional[str] = None, err_desc: Optional[str] = None) -> str:
+    """
+    Sanitize Facebook OAuth error messages.
+    Converts localized (Hindi / Devanagari) error strings and raw technical codes
+    into clean, friendly, actionable English messages.
+    """
+    raw = (err_desc or err_code or "").strip()
+    raw_lower = raw.lower()
+    code_lower = (err_code or "").lower()
+    has_devanagari = bool(re.search(r'[ऀ-ॿ]', raw))
+
+    # 1. User denied or cancelled
+    if "access_denied" in code_lower or "user_denied" in raw_lower or "अस्वीकार" in raw or "अनुमति" in raw:
+        return "Facebook permission request was declined or cancelled. Please log in again and allow access to your Facebook Page."
+
+    # 2. App in Development mode / tester required
+    if "विकास" in raw or "मोड" in raw or "development" in raw_lower:
+        return "The Facebook App is currently in Development Mode. Your Facebook account must be added as a Tester/Admin in Meta for Developers."
+
+    # 3. Invalid scopes / feature unavailable
+    if "invalid_scope" in code_lower or "scope" in raw_lower or "अनुपलब्ध" in raw:
+        return "Some requested Facebook permissions are unavailable. Please use Safe Connect."
+
+    # 4. Redirect URI mismatch
+    if "redirect_uri_mismatch" in code_lower or "redirect_uri" in raw_lower:
+        return "Facebook OAuth redirect URL mismatch. Please verify callback URL in Meta App settings."
+
+    # 5. Missing code / state
+    if "missing_code" in code_lower or raw_lower == "missing_code":
+        return "Facebook did not return an authorization code. Please try logging in again."
+
+    if "invalid_state" in code_lower or raw_lower == "invalid_state":
+        return "Your Facebook login session expired. Please click 'Login with Facebook' to connect."
+
+    # 6. Single character / truncated error (like ?error=T)
+    if raw in ("T", "true", "True", "1"):
+        return "Facebook connection attempt was interrupted. Please click 'Login with Facebook' to connect."
+
+    # 7. Fallback for any other Hindi / Devanagari text
+    if has_devanagari:
+        return "Facebook authorization could not be completed. Please click 'Login with Facebook' to try again."
+
+    # 8. Token exchange failed
+    if "token exchange failed" in raw_lower or "error validating verification code" in raw_lower:
+        return "Facebook authorization expired or was already used. Please click 'Login with Facebook' again."
+
+    if raw and len(raw) < 140 and not has_devanagari:
+        return raw
+
+    return "Facebook authorization failed. Please try connecting again."
 
 @router.get("/connect", response_model=FacebookConnectResponse)
 async def facebook_connect(
@@ -131,9 +185,9 @@ async def facebook_callback(
     frontend_url = resolve_frontend_url(oauth_state)
 
     if error:
-        err_msg = error_description or error
-        logger.warning(f"Facebook OAuth callback error: {err_msg}")
-        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(err_msg))}"))
+        friendly_err = sanitize_facebook_error(error, error_description)
+        logger.warning(f"Facebook OAuth callback error: {error} - {error_description} -> {friendly_err}")
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(friendly_err)}"))
 
     if not code:
         return RedirectResponse(build_facebook_redirect(frontend_url, f"error=missing_code"))
@@ -181,9 +235,29 @@ async def facebook_callback(
             token_data={"access_token": demo_token, "expires_in": 5184000},
             pages_data=demo_pages,
         )
+        now_demo = datetime.now(timezone.utc)
+        demo_conn = {
+            "user_id": demo_user_id,
+            "platform": "facebook",
+            "fb_page_id": "100000000000001",
+            "account_id": "100000000000001",
+            "fb_page_name": "Demo Business Page",
+            "account_name": "Demo Business Page",
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(demo_token),
+            "connected": True,
+            "created_at": now_demo,
+            "updated_at": now_demo,
+        }
+        await db["facebook_connections"].update_one(
+            {"user_id": demo_user_id, "platform": "facebook"},
+            {"$set": demo_conn},
+            upsert=True
+        )
+        await sync_business_social_status(db, demo_user_id)
 
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={demo_token}&fb_page_id=100000000000001")
+            url=build_facebook_redirect(frontend_url, "facebook_connected=true&fb_page_id=100000000000001")
         )
 
     # Validate state parameter
@@ -204,7 +278,7 @@ async def facebook_callback(
             user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
                 db=db,
                 access_token=access_token,
-                account_type="business"
+                account_type="user"
             )
             user_id = str(user.id)
             token_param = f"&token={access_token_jwt}"
@@ -218,6 +292,29 @@ async def facebook_callback(
 
         # 3. Save connection into database
         await FacebookService.save_connection(db, user_id, token_data, pages_data)
+        now_cb = datetime.now(timezone.utc)
+        first_p = (pages_data.get("pages") or [{}])[0]
+        p_id = first_p.get("page_id", "100000000000001")
+        p_name = first_p.get("page_name", "Demo Business Page")
+        conn_doc = {
+            "user_id": user_id,
+            "platform": "facebook",
+            "fb_page_id": p_id,
+            "account_id": p_id,
+            "fb_page_name": p_name,
+            "account_name": p_name,
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(access_token),
+            "connected": True,
+            "created_at": now_cb,
+            "updated_at": now_cb,
+        }
+        await db["facebook_connections"].update_one(
+            {"user_id": user_id, "platform": "facebook"},
+            {"$set": conn_doc},
+            upsert=True
+        )
+        await sync_business_social_status(db, user_id)
 
         pages = pages_data.get("pages") or []
         first_page = pages[0] if pages else {}
@@ -229,14 +326,16 @@ async def facebook_callback(
         ig_param = f"&ig_username={ig_account.get('username')}" if ig_account else ""
 
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&fb_access_token={effective_token}&user_access_token={access_token}{page_param}{ig_param}{token_param}")
+            url=build_facebook_redirect(frontend_url, f"facebook_connected=true{page_param}{ig_param}{token_param}")
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")
-        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(e.detail))}"))
+        friendly_err = sanitize_facebook_error("http_exception", str(e.detail))
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(friendly_err)}"))
     except Exception as e:
         logger.error(f"Unexpected error in Facebook callback: {e}", exc_info=True)
-        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(str(e))}"))
+        friendly_err = sanitize_facebook_error("exception", str(e))
+        return RedirectResponse(build_facebook_redirect(frontend_url, f"error={urllib.parse.quote(friendly_err)}"))
 
 @router.post("/exchange-token", response_model=FacebookTokenResponse)
 async def exchange_facebook_code(
@@ -393,6 +492,18 @@ async def facebook_disconnect(
         },
     )
 
+    # 3. Update facebook_connections and sync onboarding status
+    now_dis = datetime.now(timezone.utc)
+    await db["facebook_connections"].update_one(
+        {"user_id": user_id, "platform": "facebook"},
+        {"$set": {
+            "connected": False,
+            "encrypted_access_token": None,
+            "updated_at": now_dis,
+        }}
+    )
+    await sync_business_social_status(db, user_id)
+
     return FacebookDisconnectResponse(
         success=True,
         message="Facebook connection disconnected successfully",
@@ -496,6 +607,25 @@ async def facebook_quick_connect(
         token_data={"access_token": demo_token, "expires_in": 5184000},
         pages_data=demo_pages,
     )
+    now_qc = datetime.now(timezone.utc)
+    await db["facebook_connections"].update_one(
+        {"user_id": user_id, "platform": "facebook"},
+        {"$set": {
+            "user_id": user_id,
+            "platform": "facebook",
+            "fb_page_id": "104928371902834",
+            "account_id": "104928371902834",
+            "fb_page_name": "SevenUnique AI Official Page",
+            "account_name": "SevenUnique AI Official Page",
+            "account_type": "PAGE",
+            "encrypted_access_token": encrypt_token(demo_token),
+            "connected": True,
+            "created_at": now_qc,
+            "updated_at": now_qc,
+        }},
+        upsert=True
+    )
+    await sync_business_social_status(db, user_id)
 
     return FacebookTokenResponse(
         success=True,
@@ -545,3 +675,14 @@ async def facebook_verify_token(
     result = await FacebookService.verify_page_token_permissions(db, user_id)
     return FacebookVerifyTokenResponse(**result)
 
+
+@router.get("/signup-url")
+@router.get("/create-account-url")
+async def facebook_signup_url():
+    """Returns official Facebook account/page signup URL."""
+    return {
+        "platform": "facebook",
+        "url": "https://www.facebook.com/r.php",
+        "official_signup_url": "https://www.facebook.com/r.php",
+        "instructions": "Create your Facebook account or Page on the official website, then return and connect it."
+    }

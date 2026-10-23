@@ -291,7 +291,7 @@ class WebsiteBuilderService:
         await WebsiteBuilderService.save_session(session)
 
     @staticmethod
-    async def process_chat(session_id: str, user_id: str, message: str, language: str = None):
+    async def process_chat(session_id: str, user_id: str, message: str, language: str = None, data: dict = None):
         session = await WebsiteBuilderService.get_session(session_id, user_id)
         if not session:
             raise Exception("Session not found")
@@ -303,23 +303,54 @@ class WebsiteBuilderService:
         })
         
         lower_msg = message.lower()
-        if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]):
-            return await WebsiteBuilderService.generate_recommendations(session)
-            
-        if any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
-            return await WebsiteBuilderService.generate_website(session)
+        if ("website" in lower_msg and any(x in lower_msg for x in ["build", "generate", "create", "make"])) or any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
+            if session.collected_data.get("Business Name"):
+                return await WebsiteBuilderService.generate_website(session)
             
         if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
             return await WebsiteBuilderService.generate_website(session)
             
+        if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]) and not data:
+            return await WebsiteBuilderService.generate_recommendations(session)
+
         ai = AIProviderFactory.get_provider(preferred="gemini")
-        extract_prompt = f"Extract structured fields from user message: '{message}'. Current collected data: {json.dumps(session.collected_data, default=str)}. Do NOT invent fake data. Return JSON with extracted fields using exactly these keys: 'Business Name', 'Business Category', 'Location', 'Phone', 'Products'."
-        extracted = await ai.generate_json(extract_prompt, system_prompt="Extract business details from user messages using strict keys.")
-        if extracted and not extracted.get("error"):
-            for k, v in extracted.items():
-                if v and str(v).strip() not in ["None", "null", ""]:
-                    session.collected_data[k] = str(v).strip()
-                    
+        
+        # 1. Fetch Business Profile if not checked yet
+        if not session.collected_data.get("profile_checked"):
+            try:
+                from app.core.database import get_database
+                db = get_database()
+                business_profile = await db.business.find_one({"owner_id": user_id})
+                if business_profile:
+                    session.collected_data["Business Name"] = business_profile.get("name")
+                    session.collected_data["Business Category"] = business_profile.get("category")
+                    session.collected_data["Location"] = business_profile.get("location")
+                    session.collected_data["Description"] = business_profile.get("description")
+                    session.collected_data["Website"] = business_profile.get("website")
+                    session.collected_data["Target Audience"] = business_profile.get("target_customer")
+                    session.collected_data["Email"] = business_profile.get("contact_email")
+                    session.collected_data["Phone"] = business_profile.get("contact_phone")
+                    session.collected_data["Instagram"] = business_profile.get("instagram")
+                    session.collected_data["profile_found"] = True
+            except:
+                pass
+            session.collected_data["profile_checked"] = True
+
+        # 2. Extract fields
+        extract_system = "Extract fields into JSON."
+        extract_prompt = f"""Extract from: '{message}'.
+Data: {json.dumps(session.collected_data, default=str)}
+Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'WhatsApp', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
+        
+        try:
+            extracted = await ai.generate_json(extract_prompt, system_prompt=extract_system)
+            if extracted and not extracted.get("error"):
+                for k, v in extracted.items():
+                    if v and str(v).strip() not in ["None", "null", ""]:
+                        session.collected_data[k] = str(v).strip()
+        except:
+            pass
+
         b_name = session.collected_data.get("Business Name")
         if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business", "A", "An", "The"]:
             b_cat = session.collected_data.get("Business Category")
@@ -331,19 +362,173 @@ class WebsiteBuilderService:
                     session.collected_data["Business Name"] = clean_msg
                     session.collected_data["Business Category"] = clean_msg
 
-        chat_prompt = f"User prompt: '{message}'. Collected details: {json.dumps(session.collected_data, default=str)}. Respond in {session.language or 'English'}. Acknowledge their website request, summarize what brand/topic will be built, and ask if they would like to 'Recommend' templates or 'Build My Website'."
-        chat_result = await ai.generate_text(chat_prompt, system_prompt="You are an expert AI website builder assistant. Keep it short, friendly, and enthusiastic.")
-        reply_msg = chat_result.get("text", f"Awesome! I will create your {session.collected_data.get('Business Name', 'website')}. Would you like me to recommend templates or build your website directly?")
-        
-        actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
-             
+        if session.collected_data.get("Language"):
+            session.language = session.collected_data.get("Language")
+            
+
+        # Logo Interception Flow
+        import urllib.parse
+        if data and data.get("action") == "upload_logo" and data.get("base64"):
+            session.collected_data["Logo"] = data.get("base64")
+            session.collected_data["logo_status"] = "finalized"
+            session.collected_data["logo_source"] = "uploaded"
+            reply_msg = "✅ Your logo has been uploaded. Is this logo okay, or would you like to modify it?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": data.get("base64")},
+                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") == "create_logo":
+            b_name = session.collected_data.get("Business Name", "Your Business")
+            urls = []
+            for style in ["modern", "elegant", "minimal"]:
+                prompt_encoded = urllib.parse.quote(f"{style} logo for {b_name} high quality")
+                urls.append(f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}")
+            
+            session.collected_data["generated_logos"] = urls
+            reply_msg = "Here are 3 logo options based on your business. Which one would you like to use?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"images": urls},
+                "options": [{"label": "Logo 1", "action": "select_logo_1"}, {"label": "Logo 2", "action": "select_logo_2"}, {"label": "Logo 3", "action": "select_logo_3"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") in ["select_logo_1", "select_logo_2", "select_logo_3"]:
+            idx = int(data.get("action")[-1]) - 1
+            selected = session.collected_data.get("generated_logos", [])[idx]
+            session.collected_data["Logo"] = selected
+            session.collected_data["logo_source"] = "generated"
+            reply_msg = "Great! You've selected this logo. Would you like to modify it?"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": selected},
+                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+
+        elif data and data.get("action") == "use_existing_logo":
+            session.collected_data["Logo"] = session.collected_data.get("Existing Logo")
+            session.collected_data["logo_source"] = "existing"
+            session.collected_data["logo_status"] = "finalized"
+            reply_msg = "Perfect! I'll use this logo on your website."
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": session.collected_data.get("Logo")},
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        elif data and data.get("action") == "keep_logo":
+            session.collected_data["logo_status"] = "finalized"
+            reply_msg = "Perfect! I'll use this logo on your website."
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+                "data": {"logo_url": session.collected_data.get("Logo")},
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        elif data and data.get("action") == "modify_logo":
+            reply_msg = "What would you like to change in the logo? (e.g., 'Make it blue', 'Change the font')"
+            session.collected_data["logo_status"] = "modifying"
+            msg_obj = {
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": reply_msg,
+                "type": "text",
+            }
+            session.messages.append(msg_obj)
+            await WebsiteBuilderService.save_session(session)
+            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+
+        if session.collected_data.get("logo_status") == "modifying":
+            try:
+                prompt_encoded = urllib.parse.quote(f"{message} logo for {session.collected_data.get('Business Name', 'business')} high quality")
+                new_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}"
+                session.collected_data["Logo"] = new_url
+                reply_msg = "Here's the modified version. Is this okay?"
+                msg_obj = {
+                    "id": str(uuid.uuid4()),
+                    "role": "ai",
+                    "content": reply_msg,
+                    "type": "text",
+                    "data": {"logo_url": new_url},
+                    "options": [{"label": "Yes, keep this logo", "action": "keep_logo"}, {"label": "Modify again", "action": "modify_logo"}]
+                }
+                session.messages.append(msg_obj)
+                await WebsiteBuilderService.save_session(session)
+                return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
+            except:
+                pass
+        # 3. Consultant Response
+        consultant_system = """You are an AI Website Builder Consultant. 
+Keep your response EXTREMELY short, punchy, and direct (max 1 or 2 short sentences). 
+Ask EXACTLY ONE missing question based on the collected data. 
+If all essential data is collected, ask if they want to 'Recommend templates' or 'Build My Website'. Do NOT write long paragraphs."""
+
+        consultant_prompt = f"""Data: {json.dumps(session.collected_data, default=str)}
+User Message: '{message}'
+Language: {session.language or 'English'}
+Respond very briefly."""
+
+        try:
+            chat_result = await ai.generate_text(consultant_prompt, system_prompt=consultant_system)
+            reply_msg = chat_result.get("text", "Got it! What else would you like to add?")
+        except:
+            reply_msg = "Could you tell me more about your business?"
+
+        # 4. Quick Actions
+        actions = []
+        lower_reply = reply_msg.lower()
+        if "language" in lower_reply and not session.language:
+            actions = [{"label": "English", "action": "lang_en"}, {"label": "Hindi", "action": "lang_hi"}, {"label": "Hinglish", "action": "lang_hin"}]
+        elif "existing website" in lower_reply:
+            actions = [{"label": "Yes", "action": "has_website"}, {"label": "No", "action": "no_website"}]
+        elif "google maps" in lower_reply:
+            actions = [{"label": "Yes", "action": "yes_maps"}, {"label": "No", "action": "no_maps"}]
+        elif "recommend" in lower_reply and "build" in lower_reply:
+            actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
+        elif session.collected_data.get("profile_found") and "correct" in lower_reply:
+            actions = [{"label": "Yes, continue", "action": "yes_continue"}, {"label": "Edit information", "action": "edit_info"}]
+            session.collected_data["profile_found"] = False
+
+        if any(x in lower_msg for x in ["you decide", "recommend"]) and ("template" in lower_msg or "recommend" in lower_msg):
+            return await WebsiteBuilderService.generate_recommendations(session)
+
         msg_obj = {
             "id": str(uuid.uuid4()),
             "role": "ai",
             "content": reply_msg,
-            "type": "confirmation",
-            "options": actions
+            "type": "confirmation" if actions else "text",
         }
+        if actions:
+            msg_obj["options"] = actions
             
         session.messages.append(msg_obj)
         await WebsiteBuilderService.save_session(session)
@@ -432,11 +617,12 @@ class WebsiteBuilderService:
 
         brand_guidelines = session.collected_data.get("Brand Guidelines") or {}
         theme_data = WebsiteBuilderService.resolve_palette(full_user_intent, b_cat, brand_guidelines)
-        logo_url = WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
+        logo_url = session.collected_data.get("Logo") or WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
 
         # Dynamic topic-aligned schema example with rich multi-sections
         schema_example = json.dumps({
             "theme": theme_data,
+            "logo": logo_url,
             "pages": [
                 {
                     "name": "Home",
@@ -662,11 +848,19 @@ CRITICAL REQUIREMENTS:
             revised_pages = json.loads(raw_text)
             if isinstance(revised_pages, dict) and "pages" in revised_pages:
                 revised_pages = revised_pages["pages"]
+            elif isinstance(revised_pages, dict):
+                revised_pages = [revised_pages]
+            elif not isinstance(revised_pages, list):
+                revised_pages = []
         except:
             raise Exception("Failed to parse AI revision")
             
         for page in revised_pages:
+            if not isinstance(page, dict):
+                continue
             for s_idx, section in enumerate(page.get("sections", [])):
+                if not isinstance(section, dict):
+                    continue
                 if section.get("type") == "hero":
                     if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
                         section["image_url"] = WebsiteBuilderService.resolve_curated_image(
@@ -676,6 +870,8 @@ CRITICAL REQUIREMENTS:
                             is_hero=True
                         )
                 for i_idx, item in enumerate(section.get("items", [])):
+                    if not isinstance(item, dict):
+                        continue
                     if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
                         item["image_url"] = WebsiteBuilderService.resolve_curated_image(
                             category=site.business_name or "business",

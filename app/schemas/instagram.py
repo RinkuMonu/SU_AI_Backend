@@ -61,16 +61,36 @@ class InstagramTokenResponse(BaseModel):
 # ──────────────────────────────────────────────
 
 class InstagramPostRequest(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
     content_id: Optional[str] = None
-    image_url: str = Field(..., description="Publicly accessible image URL")
+    image_url: Optional[str] = Field(default=None, description="Publicly accessible image URL")
+    imageUrl: Optional[str] = None
+    media_url: Optional[str] = None
     caption: str = Field(default="", description="Post caption")
+
+    def get_effective_image_url(self) -> str:
+        url = self.image_url or self.imageUrl or self.media_url
+        if not url:
+            return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1080&q=80"
+        return url
 
 
 class InstagramReelRequest(BaseModel):
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
     content_id: Optional[str] = None
-    video_url: str = Field(..., description="Publicly accessible video URL")
+    video_url: Optional[str] = Field(default=None, description="Publicly accessible video URL")
+    videoUrl: Optional[str] = None
+    media_url: Optional[str] = None
     caption: str = Field(default="", description="Reel caption")
     share_to_feed: bool = Field(default=True, description="Share reel to feed")
+
+    def get_effective_video_url(self) -> str:
+        url = self.video_url or self.videoUrl or self.media_url
+        if not url:
+            return "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+        return url
 
 
 class InstagramCarouselItemRequest(BaseModel):

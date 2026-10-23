@@ -11,6 +11,8 @@ from app.api.endpoints import (
     onboarding,
     users,
     businesses,
+    linkedin,
+    brand,
 )
 
 api_router = APIRouter()
@@ -25,3 +27,5 @@ api_router.include_router(payments.router, prefix="/payments", tags=["payments"]
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
+api_router.include_router(brand.router, prefix="/brands", tags=["Brand Kit"])
+api_router.include_router(linkedin.router, prefix="/linkedin", tags=["LinkedIn"])

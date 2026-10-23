@@ -5,6 +5,8 @@ __pycache__/
 
 # Environments
 .env
+.env.*
+!.env.example
 venv/
 env/
 ENV/
@@ -19,11 +21,25 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Uploaded generated media & temporary caches
+# ── Uploads / runtime-generated media & temporary caches ──────
+uploads/temp/
+uploads/videos/
 uploads/audio/
 uploads/reels/
-uploads/temp/
 uploads/fashion/
+uploads/enhanced/
+uploads/test/
+uploads/brand/
 uploads/post_*.jpg
+
+# ── Scratch / temporary files dropped in backend ───────────────
+scratch/
+frontend_*.tsx
+frontend_*.ts
+temp_*.tsx
+temp_*.ts
+temp_*.txt
+*_temp.*
+*_scratch.*
 scratch_*.py
 scratch_*.js

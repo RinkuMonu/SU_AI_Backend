@@ -15,7 +15,9 @@ async def create_payment(
 ):
     user_id = str(current_user["id"])
     user_email = current_user.get("email", "user@example.com")
-    result = await PayinService.create_payment(db, user_id, user_email, request.plan_id)
+    result = await PayinService.create_payment(
+        db, user_id, user_email, request.plan_id, billing_cycle=request.billing_cycle
+    )
     return result
 
 @router.post("/payin/callback", response_model=PaymentCallbackResponse)

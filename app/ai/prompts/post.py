@@ -6,6 +6,7 @@ def build_post_prompt(
     objective: str,
     language: str,
     additional_instruction: str | None = None,
+    products: list | None = None,
     has_reference_images: bool = False,
     extracted_subject: str | None = None,
     extracted_traits: str | None = None,
@@ -33,6 +34,10 @@ def build_post_prompt(
 - Description: {product.get('description', '')}
 - Price: {product.get('price', '')}
 """
+    if products and len(products) > 1:
+        prod_context += f"""ALL SELECTED PRODUCTS:
+{products}
+"""
 
     ref_note = ""
     if has_reference_images:
@@ -51,9 +56,9 @@ The user uploaded a reference image.{subject_info}
 """
 
     lang_instruction = "Write in fluent, engaging English."
-    if language.lower() == "hinglish":
+    if language and language.lower() == "hinglish":
         lang_instruction = "Write in natural, trendy Hinglish (contemporary Hindi written in Roman script mixed seamlessly with English, widely used by top Indian social media creators)."
-    elif language.lower() == "hindi":
+    elif language and language.lower() == "hindi":
         lang_instruction = "Write in authentic, elegant Hindi (Devanagari script)."
 
     subject_instruction = f"featuring {extracted_subject}" if extracted_subject else "matching the prompt and reference image"
@@ -89,10 +94,13 @@ Generate the complete post package. Return ONLY valid JSON in this exact structu
     "image_prompt": "Raw authentic 35mm photograph of {extracted_subject or 'authentic Indian person'}, {extracted_traits or ''}, authentic South Asian Indian facial features, natural warm wheatish Indian skin tone, dark brown eyes, realistic human skin pores and authentic textures, 8k resolution, true-to-life documentary photography, strictly no Chinese face, no East Asian face, no Caucasian face, no porcelain doll skin, no anime, no cartoon, no 3d render, no illustration, no drawing, no CGI, no watermark."
 }}
 
-Guidelines:
-1. Make the caption lively, persuasive, and tailored to the requested mood and subject.
-2. The image_prompt must describe a single real-life, photorealistic photograph of the primary subject {subject_instruction}.
-3. ETHNICITY MANDATE: When human beings, models, portraits, or festival celebrations (like Holi, Diwali, weddings, fashion) are depicted, they MUST have authentic Indian faces (natural South Asian facial features, authentic warm Indian skin tone, natural dark hair and eyes).
-4. Strictly forbid any Chinese faces, East Asian facial features, Caucasian faces, porcelain doll faces, anime, cartoon, illustration, painting, 3D CGI or fantasy styling.
-5. Output STRICTLY JSON without any conversational text or markdown code fence headers.
+Guidelines & Rules:
+1. Make the caption lively, persuasive, and tailored to the requested mood, product, and subject.
+2. Follow the brand tone and keep the caption suitable for {platform}. Make the CTA relevant.
+3. Do not invent product specifications. Use only the provided product information.
+4. If multiple products are provided, find a creative way to feature all of them or focus on their relationship.
+5. The image_prompt must describe a single real-life, photorealistic photograph of the primary subject {subject_instruction}.
+6. ETHNICITY MANDATE: When human beings, models, portraits, or festival celebrations (like Holi, Diwali, weddings, fashion) are depicted, they MUST have authentic Indian faces (natural South Asian facial features, authentic warm Indian skin tone, natural dark hair and eyes).
+7. Strictly forbid any Chinese faces, East Asian facial features, Caucasian faces, porcelain doll faces, anime, cartoon, illustration, painting, 3D CGI or fantasy styling.
+8. Output STRICTLY JSON without any conversational text or markdown code fence headers.
 """

@@ -17,14 +17,31 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo'
 
 class GoogleService:
     @staticmethod
+    def get_credentials() -> Tuple[Optional[str], Optional[str]]:
+        import os
+        cid = (
+            settings.GOOGLE_CLIENT_ID
+            or getattr(settings, 'google_client_id', None)
+            or os.getenv('GOOGLE_CLIENT_ID')
+            or os.getenv('NEXT_PUBLIC_GOOGLE_CLIENT_ID')
+        )
+        secret = (
+            settings.GOOGLE_CLIENT_SECRET
+            or getattr(settings, 'google_client_secret', None)
+            or os.getenv('GOOGLE_CLIENT_SECRET')
+        )
+        return cid, secret
+
+    @staticmethod
     def is_configured() -> bool:
-        return bool(settings.GOOGLE_CLIENT_ID and settings.GOOGLE_CLIENT_SECRET)
+        cid, secret = GoogleService.get_credentials()
+        return bool(cid and secret)
 
     @staticmethod
     def get_authorization_url(redirect_uri: Optional[str] = None, state: Optional[str] = None) -> str:
-        client_id = settings.GOOGLE_CLIENT_ID
+        client_id, _ = GoogleService.get_credentials()
         if not client_id:
-            raise HTTPException(status_code=500, detail='Google Client ID not configured.')
+            raise HTTPException(status_code=500, detail='Google Client ID not configured. Please set GOOGLE_CLIENT_ID in server environment.')
         final_redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
         final_state = state or secrets.token_urlsafe(16)
         params = {
@@ -41,11 +58,13 @@ class GoogleService:
 
     @staticmethod
     async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
-        client_id = settings.GOOGLE_CLIENT_ID
-        client_secret = settings.GOOGLE_CLIENT_SECRET
+        client_id, client_secret = GoogleService.get_credentials()
         final_redirect = redirect_uri or settings.GOOGLE_REDIRECT_URI
         if not client_id or not client_secret:
-            raise HTTPException(status_code=500, detail='Google credentials not configured.')
+            raise HTTPException(
+                status_code=500,
+                detail='Google credentials not configured. Please add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in your server environment variables.'
+            )
         payload = {
             'code': code,
             'client_id': client_id,
@@ -78,12 +97,19 @@ class GoogleService:
         id_token: Optional[str] = None,
         redirect_uri: Optional[str] = None,
         account_type: str = 'business',
-        mode: str = 'login'
+        mode: str = 'login',
+        phone_number: Optional[str] = None,
+        country_code: Optional[str] = None
     ) -> Tuple[User, str, str]:
         user_info = None
+        client_id, _ = GoogleService.get_credentials()
+
         if code:
             token_data = await GoogleService.exchange_code_for_token(code, redirect_uri)
             access_token = token_data.get('access_token')
+            if not id_token and token_data.get('id_token'):
+                id_token = token_data.get('id_token')
+
         if access_token:
             user_info = await GoogleService.get_user_info(access_token)
         elif id_token:
@@ -91,11 +117,17 @@ class GoogleService:
                 r = await client.get(f'https://oauth2.googleapis.com/tokeninfo?id_token={id_token}')
                 if r.status_code == 200:
                     user_info = r.json()
+                    # Validate Google ID Token issuer and audience
+                    token_iss = user_info.get('iss', '')
+                    if token_iss not in ['accounts.google.com', 'https://accounts.google.com']:
+                        raise HTTPException(status_code=400, detail='Invalid Google ID Token issuer.')
+                    if client_id and user_info.get('aud') and user_info.get('aud') != client_id:
+                        logger.warning(f"Google ID token audience mismatch: {user_info.get('aud')} vs {client_id}")
                 else:
                     raise HTTPException(status_code=400, detail='Invalid Google ID Token.')
 
         if not user_info or not user_info.get('email'):
-            raise HTTPException(status_code=400, detail='Unable to retrieve email from Google.')
+            raise HTTPException(status_code=400, detail='Unable to retrieve verified email from Google.')
 
         email = user_info['email'].lower().strip()
         google_id = user_info.get('sub')
@@ -105,40 +137,25 @@ class GoogleService:
         picture_url = user_info.get('picture')
         now = datetime.now(timezone.utc)
 
-        # Normalize mode (login vs signup)
-        auth_mode = (mode or 'login').lower().strip()
+        # Normalize phone number if supplied by user during registration
+        norm_phone = None
+        if phone_number and str(phone_number).strip():
+            from app.utils.phone import normalize_phone_number, InvalidPhoneNumberException
+            try:
+                norm_phone = normalize_phone_number(str(phone_number).strip(), country_code=country_code)
+            except InvalidPhoneNumberException as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-        # Check if user already exists in active users collection
+        # Check if user already exists in canonical 'users' collection
         existing = await db['users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
 
-        if auth_mode == 'login':
-            if not existing:
-                # Check if user exists in pending_users
-                pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
-                if pending_existing:
-                    user_id = str(pending_existing['_id'])
-                    user = User.from_mongo(pending_existing)
-                    user.id = user_id
-                    user.onboardingCompleted = False
-                    jwt_access_token = AuthService.create_token(
-                        user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-                    )
-                    jwt_refresh_token = AuthService.create_token(
-                        user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-                    )
-                    return user, jwt_access_token, jwt_refresh_token
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No account found with this Google email. Please sign up first."
-                )
-
+        if existing:
             user_id = str(existing['_id'])
-            user = User.from_mongo(existing)
-            update_data = {
+            update_data: Dict[str, Any] = {
                 'googleId': google_id,
-                'emailVerified': True,
                 'email_verified': True,
-                'emailVerifiedAt': existing.get('emailVerifiedAt') or now
+                'email_verified_at': existing.get('email_verified_at') or existing.get('emailVerifiedAt') or now,
+                'updated_at': now
             }
             if picture_url and not existing.get('profileImageUrl'):
                 update_data['profileImageUrl'] = picture_url
@@ -147,65 +164,97 @@ class GoogleService:
                 providers.append('google')
                 update_data['authProviders'] = providers
 
+            # If existing user does not yet have a phone, persist supplied phone as unverified
+            if norm_phone and not existing.get('phone_number'):
+                # Check for collision with another user
+                conflict = await db['users'].find_one({'phone_number': norm_phone, '_id': {'$ne': existing['_id']}})
+                if conflict:
+                    raise HTTPException(status_code=400, detail='Mobile phone number is already registered to another account.')
+                update_data['phone_number'] = norm_phone
+                update_data['phone_verified'] = False
+
             await db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': update_data})
-            user.emailVerified = True
-            user.email_verified = True
+            user_doc = await db['users'].find_one({'_id': ObjectId(user_id)})
+            user = User.from_mongo(user_doc)
             user.id = user_id
-
-        elif auth_mode == 'signup':
-            if existing:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="An account with this email already exists. Please log in instead."
-                )
-
-            # Clear any abandoned previous pending registration
-            await db['pending_users'].delete_many({'$or': [{'email': email}, {'googleId': google_id}]})
-
-            random_pwd = get_password_hash(secrets.token_urlsafe(32))
-            user = User(
-                fullName=full_name,
-                name=full_name,
-                firstName=first_name,
-                lastName=last_name,
-                email=email,
-                hashed_password=random_pwd,
-                accountType=account_type or 'business',
-                authProviders=['google'],
-                emailVerified=True,
-                email_verified=True,
-                emailVerifiedAt=now,
-                termsAcceptedAt=now,
-                profileImageUrl=picture_url,
-                role='user',
-                onboardingCompleted=False,
-                onboarding_step=1
-            )
-            doc = user.model_dump(by_alias=True, exclude={'id'})
-            doc['googleId'] = google_id
-            doc['onboardingCompleted'] = False
-            doc['onboarding_step'] = 1
-
-            # Save to pending_users ONLY (do NOT save into users collection until onboarding is completed)
-            result = await db['pending_users'].insert_one(doc)
-            user.id = str(result.inserted_id)
-
+            logger.info(f"Existing user {user_id} logged in with Google (email={email}).")
         else:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid auth mode: {mode}. Allowed modes are 'login' or 'signup'."
-            )
+            # Check if user existed in legacy pending_users
+            pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
+            if pending_existing:
+                user_id = str(pending_existing['_id'])
+                pending_existing['googleId'] = google_id
+                pending_existing['email_verified'] = True
+                pending_existing['email_verified_at'] = now
+                providers = pending_existing.get('authProviders', [])
+                if 'google' not in providers:
+                    providers.append('google')
+                    pending_existing['authProviders'] = providers
+                if norm_phone and not pending_existing.get('phone_number'):
+                    pending_existing['phone_number'] = norm_phone
+                    pending_existing['phone_verified'] = False
 
-        jwt_access_token = AuthService.create_token(
-            user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        )
-        jwt_refresh_token = AuthService.create_token(
-            user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        rs = RefreshSession(
-            userId=str(user.id),
-            hashedToken=get_password_hash(hashlib.sha256(jwt_refresh_token.encode()).hexdigest()),
-            expiresAt=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        await db['refresh_sessions'].insert_one(rs.model_dump(by_alias=True, exclude={'id'}))
+                # Migrate from pending_users into canonical users collection
+                pending_existing['updated_at'] = now
+                await db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': pending_existing}, upsert=True)
+                try:
+                    await db['pending_users'].delete_one({'_id': ObjectId(user_id)})
+                except Exception:
+                    pass
+                user = User.from_mongo(pending_existing)
+                user.id = user_id
+                logger.info(f"Pending user {user_id} migrated to canonical users via Google auth.")
+            else:
+                # Separate Login vs Registration behavior:
+                # Login must not silently create an account for an unregistered Google user.
+                if mode == "login":
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="No account found with this Google email. Please register first."
+                    )
+
+                # Brand new user -> register directly into canonical 'users' collection
+                if norm_phone:
+                    conflict = await db['users'].find_one({'phone_number': norm_phone})
+                    if conflict:
+                        raise HTTPException(status_code=400, detail='Mobile phone number is already registered to another account.')
+
+                random_pwd = get_password_hash(secrets.token_urlsafe(32))
+                user = User(
+                    name=full_name,
+                    firstName=first_name,
+                    lastName=last_name,
+                    email=email,
+                    phone_number=norm_phone,
+                    phone_verified=False,  # Unverified until verified via OTP
+                    hashed_password=random_pwd,
+                    accountType=account_type or 'business',
+                    authProviders=['google'],
+                    googleId=google_id,
+                    email_verified=True,
+                    email_verified_at=now,
+                    termsAcceptedAt=now,
+                    profileImageUrl=picture_url,
+                    role=None,  # Requires role selection on first login
+                    onboardingCompleted=False,
+                    onboarding_step=1,
+                    created_at=now,
+                    updated_at=now
+                )
+                doc = user.model_dump(by_alias=True, exclude={'id'})
+
+                result = await db['users'].insert_one(doc)
+                user.id = str(result.inserted_id)
+
+                # Provision default Free subscription
+                try:
+                    from app.services.credit_service import CreditService
+                    await CreditService.get_or_create_subscription(db, user.id)
+                except Exception as e:
+                    logger.warning(f"Could not provision subscription for Google user {user.id}: {e}")
+
+                logger.info(f"New user registered directly into users via Google: id={user.id}, email={email}, phone={norm_phone}")
+
+        # Issue access & refresh tokens via canonical session creator
+        jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
         return user, jwt_access_token, jwt_refresh_token

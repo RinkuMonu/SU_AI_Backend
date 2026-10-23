@@ -1,14 +1,24 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
+from enum import Enum
 import re
 from app.models.base import PyObjectId
+
+class UserRole(str, Enum):
+    BUSINESSMAN = "businessman"
+    INFLUENCER = "influencer"
+    ADMIN = "admin"
+
 
 class UserCreate(BaseModel):
     name: str | None = None
     fullName: str | None = None
     full_name: str | None = None
-    email: EmailStr
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    email: EmailStr | str
     password: str
     confirmPassword: str | None = None
     role: str | None = "business"
@@ -42,6 +52,11 @@ class UserCreate(BaseModel):
     target_location: str | None = None
     customer_type: str | None = None
 
+    verification_token: str | None = None
+    otp: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
+
     @field_validator('password')
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -50,33 +65,46 @@ class UserCreate(BaseModel):
         return v
 
     @model_validator(mode='after')
-    def check_passwords_match(self) -> 'UserCreate':
+    def validate_registration_fields(self) -> 'UserCreate':
         if self.confirmPassword is not None and self.password != self.confirmPassword:
             raise ValueError('Passwords do not match')
+        if not (self.phone_number or self.phone or self.mobile):
+            raise ValueError('Mobile phone number is required for registration')
+        if not self.email or not str(self.email).strip():
+            raise ValueError('Email address is required for registration')
         return self
 
 class UserLogin(BaseModel):
-    email: EmailStr | None = None
-    Email: EmailStr | None = None
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    username: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
+    email: EmailStr | str | None = None
+    Email: EmailStr | str | None = None
     password: str | None = None
     Password: str | None = None
+    otp: str | None = None
 
 
 class UserResponse(BaseModel):
     id: str
-    fullName: str
+    name: Optional[str] = None
+    fullName: Optional[str] = None
     firstName: Optional[str] = None
     lastName: Optional[str] = None
-    email: EmailStr
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
     phone: Optional[str] = None
     contactNumber: Optional[str] = None
+    phone_verified: bool = False
+    role: Optional[str] = None
     accountType: str = "business"
     authProviders: List[str] = Field(default_factory=lambda: ["email"])
     emailVerified: bool = False
-    email_verified: bool = False
+    email_verified: bool = True
     isVerified: bool = False
-    name: Optional[str] = None
-    role: Optional[str] = "user"
     termsAcceptedAt: Optional[datetime] = None
     profileImageUrl: Optional[str] = None
     image: Optional[str] = None
@@ -85,14 +113,52 @@ class UserResponse(BaseModel):
     businessCategory: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
-    name: Optional[str] = None
-    role: Optional[str] = "user"
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_response_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            fn = data.get("name") or data.get("fullName")
+            data["name"] = fn
+            data["fullName"] = fn
+            pn = data.get("phone_number") or data.get("phone") or data.get("contactNumber")
+            data["phone_number"] = pn
+            data["phone"] = pn
+            data["contactNumber"] = pn
+            ev = data.get("email_verified", data.get("emailVerified", False))
+            data["email_verified"] = ev
+            data["emailVerified"] = ev
+        elif hasattr(data, "__dict__") or hasattr(data, "model_dump"):
+            d = data.model_dump() if hasattr(data, "model_dump") else dict(data)
+            fn = d.get("name") or getattr(data, "fullName", None) or getattr(data, "name", None)
+            d["name"] = fn
+            d["fullName"] = fn
+            pn = d.get("phone_number") or getattr(data, "phone", None) or getattr(data, "contactNumber", None)
+            d["phone_number"] = pn
+            d["phone"] = pn
+            d["contactNumber"] = pn
+            ev = d.get("email_verified", getattr(data, "emailVerified", False))
+            d["email_verified"] = ev
+            d["emailVerified"] = ev
+            return d
+        return data
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Optional[UserResponse] = None
+    role: Optional[str] = None
+    requires_role_selection: bool = False
+    dashboard_route: Optional[str] = None
+
 
 class UserPreferencesUpdate(BaseModel):
     preferredLanguage: Optional[str] = None
     primaryGoal: Optional[str] = None
     targetPlatforms: Optional[List[str]] = None
     onboardingCompleted: Optional[bool] = None
+
 
 class UserUpdate(BaseModel):
     fullName: Optional[str] = None
@@ -118,7 +184,44 @@ class UserUpdate(BaseModel):
         "extra": "allow"
     }
 
+
 class ChangePasswordRequest(BaseModel):
     currentPassword: str
     newPassword: str
     confirmPassword: Optional[str] = None
+
+
+class OTPVerifyRequest(BaseModel):
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
+    email: EmailStr | str | None = None
+    otp: str
+
+
+class OTPResendRequest(BaseModel):
+    phone_number: str | None = None
+    phone: str | None = None
+    mobile: str | None = None
+    country_code: str | None = None
+    countryCode: str | None = None
+    email: EmailStr | str | None = None
+
+
+class RoleSelectRequest(BaseModel):
+    role: str
+    user_id: Optional[str] = None
+
+
+class RoleSelectResponse(UserResponse):
+    success: bool = True
+    message: str = "Role selected successfully."
+    user: Optional[UserResponse] = None
+
+
+class DashboardRouteResponse(BaseModel):
+    role: Optional[str] = None
+    dashboard_route: str
+    dashboard_name: str
