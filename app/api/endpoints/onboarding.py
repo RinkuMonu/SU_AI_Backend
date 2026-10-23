@@ -37,8 +37,6 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
             connected_platforms.append("instagram")
         if user_doc.get("facebook_access_token"):
             connected_platforms.append("facebook")
-        if user_doc.get("whatsapp_access_token"):
-            connected_platforms.append("whatsapp")
 
     social_completed = len(connected_platforms) > 0
 

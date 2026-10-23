@@ -4,8 +4,8 @@ from datetime import datetime
 
 class CampaignAsset(BaseModel):
     id: str
-    type: str  # "post", "reel", "ad", "whatsapp"
-    platform: str  # "instagram", "facebook", "whatsapp"
+    type: str  # "post", "reel", "ad", "story"
+    platform: str  # "instagram", "facebook", "linkedin"
     content: Dict[str, Any]  # e.g., {"text": "Happy Diwali!", "image_prompt": "..."}
     scheduled_date: str  # ISO string or relative day
 

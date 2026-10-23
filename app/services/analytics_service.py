@@ -36,7 +36,7 @@ Marketing Score (deterministic, 0–100)
     score             = min(sum, 100)
 
 This score reflects INTERNAL platform activity only.
-It does NOT represent Instagram/Facebook/WhatsApp performance.
+It does NOT represent Instagram/Facebook/LinkedIn performance.
 """
 
 import logging

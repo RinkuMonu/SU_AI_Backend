@@ -101,6 +101,12 @@ async def root():
     return {"message": "Welcome to Dhanda Grow API"}
 
 
+@app.get("/health")
+@app.get("/api/v1/health")
+async def health():
+    return {"status": "healthy", "service": "Dhanda Grow API"}
+
+
 from fastapi.responses import JSONResponse
 from fastapi import Request
 import traceback

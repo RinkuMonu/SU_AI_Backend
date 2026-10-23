@@ -3,7 +3,7 @@ Analytics response schemas for GET /api/v1/analytics/overview.
 
 All models use explicit types; no dynamic or unvalidated fields.
 External metrics are typed as Optional[int] because the required
-social integrations (Instagram, Facebook, WhatsApp) do not exist yet.
+social integrations (Instagram, Facebook, LinkedIn) do not exist yet.
 """
 
 from pydantic import BaseModel, Field
@@ -53,7 +53,7 @@ class ExternalAnalytics(BaseModel):
     reach: Optional[int] = None
     engagement: Optional[int] = None
     leads: Optional[int] = None
-    whatsapp_enquiries: Optional[int] = None
+    direct_enquiries: Optional[int] = None
     followers: Optional[int] = None
     impressions: Optional[int] = None
     status: str = "not_connected"

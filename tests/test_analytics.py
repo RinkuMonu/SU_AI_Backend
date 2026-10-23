@@ -26,8 +26,14 @@ from bson import ObjectId
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
-from app.core.database import get_database
+from app.core.database import get_database, connect_to_mongo, close_mongo_connection
 from app.core.security import create_access_token
+
+@pytest.fixture(autouse=True)
+async def setup_db():
+    connect_to_mongo()
+    yield
+    close_mongo_connection()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -305,7 +311,7 @@ async def test_external_metrics_null():
     assert ext["reach"] is None
     assert ext["engagement"] is None
     assert ext["leads"] is None
-    assert ext["whatsapp_enquiries"] is None
+    assert ext["direct_enquiries"] is None
     assert ext["status"] == "not_connected"
 
 

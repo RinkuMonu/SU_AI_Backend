@@ -98,7 +98,7 @@ class SocialAnalyticsService:
                 "reach": None,
                 "engagement": None,
                 "leads": None,
-                "whatsapp_enquiries": None,
+                "direct_enquiries": None,
                 "followers": None,
                 "impressions": None,
                 "status": "not_connected",
@@ -109,7 +109,7 @@ class SocialAnalyticsService:
             "reach": real_metrics.get("reach"),
             "engagement": real_metrics.get("engagement"),
             "leads": real_metrics.get("leads"),
-            "whatsapp_enquiries": real_metrics.get("whatsapp_enquiries"),
+            "direct_enquiries": real_metrics.get("direct_enquiries"),
             "followers": real_metrics.get("followers"),
             "impressions": real_metrics.get("impressions"),
             "status": platform_connected,
@@ -186,7 +186,7 @@ class SocialAnalyticsService:
                 "engagement": engagement,
                 "followers": followers,
                 "leads": None,  # Not available from Instagram Insights
-                "whatsapp_enquiries": None,
+                "direct_enquiries": None,
             }
 
         except httpx.HTTPStatusError as e:
@@ -243,7 +243,7 @@ class SocialAnalyticsService:
                 "engagement": engagement,
                 "followers": followers,
                 "leads": None,
-                "whatsapp_enquiries": None,
+                "direct_enquiries": None,
             }
 
         except httpx.HTTPStatusError as e:

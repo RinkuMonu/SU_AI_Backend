@@ -106,7 +106,7 @@ def get_upcoming_festivals(days_ahead: int = 30) -> List[dict]:
 async def generate_festival_campaign(db, business_id: str, festival: dict) -> Optional[dict]:
     """
     Fetches business context and prompts the AI to generate a full
-    festival marketing campaign (5 Posts + 3 Reels + 2 Ads + WhatsApp + Offer).
+    festival marketing campaign (5 Posts + 3 Reels + 2 Ads + Stories + Offer).
     Returns the campaign dict ready to be saved in MongoDB.
     """
     from app.ai.factory import AIProviderFactory

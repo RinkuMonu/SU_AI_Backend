@@ -340,7 +340,7 @@ class WebsiteBuilderService:
         extract_system = "Extract fields into JSON."
         extract_prompt = f"""Extract from: '{message}'.
 Data: {json.dumps(session.collected_data, default=str)}
-Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'WhatsApp', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
+Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'Contact', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
         
         try:
             extracted = await ai.generate_json(extract_prompt, system_prompt=extract_system)
