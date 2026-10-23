@@ -42,9 +42,13 @@ class AuthService:
     @staticmethod
     async def get_collection():
         db = get_database()
-        # Sparse unique index on phone_number to prevent collisions while preserving legacy users without phones
+        # Unique index on phone_number where value is a string to prevent collisions while allowing multiple null/legacy accounts
         try:
-            await db["users"].create_index("phone_number", unique=True, sparse=True)
+            await db["users"].create_index(
+                "phone_number",
+                unique=True,
+                partialFilterExpression={"phone_number": {"$type": "string"}}
+            )
         except Exception:
             pass
         return db["users"]

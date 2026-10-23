@@ -360,6 +360,7 @@ class InstagramService:
         Supports both Instagram OAuth and Facebook Dialog flows.
         """
         app_id = settings.INSTAGRAM_APP_ID or settings.FACEBOOK_APP_ID
+        app_secret = settings.INSTAGRAM_APP_SECRET or settings.FACEBOOK_APP_SECRET
         effective_redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
         if not redirect_uri and settings.BACKEND_URL and "ngrok" not in settings.BACKEND_URL and "localhost" not in settings.BACKEND_URL and "127.0.0.1" not in settings.BACKEND_URL:
             if not settings.INSTAGRAM_REDIRECT_URI or "ngrok" in effective_redirect_uri or "localhost" in effective_redirect_uri or "loca.lt" in effective_redirect_uri:
