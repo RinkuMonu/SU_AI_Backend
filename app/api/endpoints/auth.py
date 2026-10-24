@@ -70,79 +70,6 @@ def set_refresh_cookie(response: Response, refresh_token: str):
     )
 
 
-@router.post("/signup", status_code=status.HTTP_201_CREATED)
-@router.post("/register", status_code=status.HTTP_201_CREATED)
-async def signup(request: Request, response: Response):
-    body = await request.json()
-    
-    raw_phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("contactNumber")
-    raw_email = (body.get("email") or "").lower().strip()
-    raw_otp = body.get("otp")
-    
-    db = get_database()
-    
-    # Check duplicate email
-    if raw_email:
-        existing = await db["users"].find_one({"email": raw_email})
-        if existing and (existing.get("emailVerified") or existing.get("email_verified") or existing.get("phone_verified") or existing.get("hashed_password")):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this email is already registered. Please log in."
-            )
-            
-    # If raw_otp is provided or firstName+lastName without phone OTP requirement
-    if raw_otp or (body.get("firstName") and body.get("lastName")) or (body.get("fullName") and not raw_phone):
-        from app.schemas.auth import SignupRequest
-        try:
-            req = SignupRequest(**body)
-            user, access_token, refresh_token = await AuthService.signup(req)
-            set_refresh_cookie(response, refresh_token)
-            user_dict = {
-                "id": str(user.id),
-                "fullName": user.fullName or user.name or "User",
-                "name": user.fullName or user.name or "User",
-                "firstName": user.firstName,
-                "lastName": user.lastName,
-                "email": user.email,
-                "phone": user.phone or user.contactNumber,
-                "contactNumber": user.contactNumber or user.phone,
-                "accountType": user.accountType,
-                "role": getattr(user, "role", "user") or "user",
-                "emailVerified": bool(user.emailVerified),
-                "email_verified": bool(user.emailVerified),
-                "isVerified": bool(user.emailVerified)
-            }
-            response.status_code = status.HTTP_200_OK
-            return {
-                "success": True,
-                "message": "User registered successfully.",
-                "access_token": access_token,
-                "accessToken": access_token,
-                "token": access_token,
-                "user": user_dict,
-                "data": {
-                    "access_token": access_token,
-                    "accessToken": access_token,
-                    "token": access_token,
-                    "user": user_dict
-                }
-            }
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.warning(f"Fallback to UserCreate for signup: {e}")
-
-    # Phone signup flow
-    from pydantic import ValidationError
-    from fastapi.exceptions import RequestValidationError
-    try:
-        user_in = UserCreate(**body)
-    except ValidationError as ve:
-        raise RequestValidationError(ve.errors())
-    result = await AuthService.handle_signup(user_in)
-    return result
-
-
 @router.post("/send-otp")
 @router.post("/resend-otp")
 @router.post("/otp/send-phone")
@@ -193,7 +120,8 @@ async def send_otp(request: SendOTPRequest):
         })
 
     user_exists = existing_user is not None
-    next_step = "dashboard" if user_exists else "signup"
+    has_role = user_exists and (existing_user.get("role") in ["business", "influencer"])
+    next_step = "dashboard" if (user_exists and has_role) else "role_selection"
 
     import random
     otp = f"{random.randint(100000, 999999)}"
@@ -237,7 +165,10 @@ async def send_otp(request: SendOTPRequest):
         "exists": user_exists,
         "is_existing_user": user_exists,
         "user_exists": user_exists,
+        "has_role": has_role,
         "next_step": next_step,
+        "role": existing_user.get("role") if user_exists else None,
+        "requires_role_selection": not has_role,
         "phone_number": phone_e164,
         "canonical_phone_number": phone_e164,
         "clean_phone": clean_10,
@@ -349,83 +280,89 @@ async def verify_otp(request: OTPVerifyRequest):
     import secrets
     verification_token = secrets.token_urlsafe(32)
 
-    if user_doc:
+    if not user_doc:
+        # User does not exist yet: auto-register on login verification
+        new_user = {
+            "fullName": f"User {clean_10[-4:]}" if clean_10 else "User",
+            "name": f"User {clean_10[-4:]}" if clean_10 else "User",
+            "phone_number": phone_e164,
+            "phone": clean_10,
+            "contactNumber": clean_10,
+            "email": clean_target if is_email else None,
+            "phone_verified": True,
+            "email_verified": is_email,
+            "role": None,
+            "accountType": "business",
+            "onboardingCompleted": False,
+            "onboarding_step": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        insert_res = await db["users"].insert_one(new_user)
+        user_id = str(insert_res.inserted_id)
+        new_user["_id"] = user_id
+        new_user["id"] = user_id
+        user_doc = new_user
+        is_existing_user = False
+    else:
+        is_existing_user = True
         user_id = str(user_doc["_id"])
         await db["users"].update_one(
             {"_id": user_doc["_id"]},
             {"$set": {"phone_verified": True, "updated_at": now}}
         )
         user_doc["phone_verified"] = True
-        access_token = create_access_token(subject=user_id)
-        role = user_doc.get("role") or "user"
-        requires_role = role in (None, "", "user")
-        dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
 
-        user_payload = {
-            "id": user_id,
-            "_id": user_id,
-            "name": user_doc.get("fullName") or user_doc.get("name") or "User",
-            "fullName": user_doc.get("fullName") or user_doc.get("name") or "User",
-            "email": user_doc.get("email"),
-            "phone_number": user_doc.get("phone_number") or phone_e164,
-            "phone": user_doc.get("phone") or clean_10,
-            "phone_verified": True,
-            "role": role,
-            "accountType": user_doc.get("accountType") or "business",
-            "onboardingCompleted": bool(user_doc.get("onboardingCompleted", False)),
-        }
+    access_token = create_access_token(subject=user_id)
+    role = user_doc.get("role")
+    has_role = role in ("business", "influencer")
+    requires_role = not has_role
+    next_step = "dashboard" if (is_existing_user and has_role) else "role_selection"
+    dashboard_route = ("/influencer" if role == "influencer" else "/dashboard") if (is_existing_user and has_role) else "/select-role"
 
-        return {
-            "success": True,
-            "status": "success",
-            "message": "Phone number verified successfully. Logging in...",
-            "exists": True,
-            "is_existing_user": True,
-            "user_exists": True,
-            "next_step": "dashboard",
-            "dashboard_route": dashboard_route,
+    user_payload = {
+        "id": user_id,
+        "_id": user_id,
+        "name": user_doc.get("fullName") or user_doc.get("name") or "User",
+        "fullName": user_doc.get("fullName") or user_doc.get("name") or "User",
+        "email": user_doc.get("email"),
+        "phone_number": user_doc.get("phone_number") or phone_e164,
+        "phone": user_doc.get("phone") or clean_10,
+        "phone_verified": True,
+        "role": role,
+        "accountType": user_doc.get("accountType") or "business",
+        "onboardingCompleted": bool(user_doc.get("onboardingCompleted", False)),
+    }
+
+    return {
+        "success": True,
+        "status": "success",
+        "message": "Login successful" if (is_existing_user and has_role) else "Account verified. Please select your role to continue.",
+        "exists": is_existing_user,
+        "is_existing_user": is_existing_user,
+        "user_exists": is_existing_user,
+        "has_role": has_role,
+        "next_step": next_step,
+        "dashboard_route": dashboard_route,
+        "access_token": access_token,
+        "accessToken": access_token,
+        "token": access_token,
+        "user": user_payload,
+        "data": {
             "access_token": access_token,
             "accessToken": access_token,
             "token": access_token,
             "user": user_payload,
-            "data": {
-                "access_token": access_token,
-                "accessToken": access_token,
-                "token": access_token,
-                "user": user_payload
-            },
             "role": role,
             "requires_role_selection": requires_role,
-            "verification_token": verification_token
-        }
-    else:
-        # New user: record phone verification and instruct client to complete signup
-        await db["phone_verifications"].update_one(
-            {"phone_number": phone_e164 or clean_target},
-            {"$set": {
-                "phone_number": phone_e164 or clean_target,
-                "clean_phone": clean_10,
-                "verification_token": verification_token,
-                "verified_at": now,
-                "expires_at": now + timedelta(minutes=30),
-                "used": False
-            }},
-            upsert=True
-        )
-
-        return {
-            "success": True,
-            "status": "success",
-            "message": "Phone number verified successfully. Please complete your registration to sign up.",
-            "exists": False,
-            "is_existing_user": False,
-            "user_exists": False,
-            "next_step": "signup",
-            "requires_signup": True,
-            "phone_number": phone_e164,
-            "clean_phone": clean_10,
-            "verification_token": verification_token
-        }
+            "next_step": next_step,
+            "dashboard_route": dashboard_route,
+            "is_existing_user": is_existing_user,
+        },
+        "role": role,
+        "requires_role_selection": requires_role,
+        "verification_token": verification_token
+    }
 
 
 @router.post("/login")
@@ -1509,12 +1446,6 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
     }
 
 
-@router.post("/google/signup", status_code=status.HTTP_201_CREATED)
-async def google_signup(req: GoogleAuthLoginRequest, response: Response):
-    """Explicitly register a new user via Google OAuth 2.0 (delegates to canonical google_login)."""
-    req.mode = "signup"
-    return await google_login(req, response)
-
 @router.get("/google/callback")
 async def google_callback(
     code: Optional[str] = Query(None),
@@ -1600,13 +1531,6 @@ async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
             "user": user_payload
         }
     }
-
-
-@router.post("/linkedin/signup", status_code=status.HTTP_201_CREATED)
-async def linkedin_signup(req: LinkedInAuthLoginRequest, response: Response):
-    """Register user using LinkedIn Login."""
-    req.mode = "signup"
-    return await linkedin_login(req, response)
 
 
 @router.get("/linkedin/callback")
