@@ -124,30 +124,24 @@ class SignupRequest(BaseModel):
         return self
 
 class SendOTPRequest(BaseModel):
-    email: EmailStr = Field(description="Email address to receive 6-digit OTP", json_schema_extra={"example": "sejalgupta1838@gmail.com"})
+    phone_number: Optional[str] = Field(default=None, description="Mobile number to receive OTP", json_schema_extra={"example": "+91 98765 43210"})
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = Field(default=None, description="Email address to receive 6-digit OTP", json_schema_extra={"example": "sejalgupta1838@gmail.com"})
+    channel: Optional[str] = Field(default="sms", description="Delivery channel: sms, whatsapp, or email", json_schema_extra={"example": "sms"})
     name: Optional[str] = Field(default=None, description="Recipient name", json_schema_extra={"example": "Sejal Gupta"})
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "email": "sejalgupta1838@gmail.com",
-                "name": "Sejal Gupta"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
 class VerifyOTPRequest(BaseModel):
-    email: EmailStr = Field(description="Email address", json_schema_extra={"example": "sejalgupta1838@gmail.com"})
+    phone_number: Optional[str] = None
+    phone: Optional[str] = None
+    mobile: Optional[str] = None
+    email: Optional[str] = Field(default=None, description="Email address", json_schema_extra={"example": "sejalgupta1838@gmail.com"})
     otp: str = Field(description="6-digit verification code", json_schema_extra={"example": "123456"})
+    channel: Optional[str] = Field(default="sms", description="Delivery channel: sms, whatsapp, or email")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "email": "sejalgupta1838@gmail.com",
-                "otp": "123456"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True, extra="allow")
 
 class LoginRequest(BaseModel):
     email: EmailStr = Field(description="Account email address", json_schema_extra={"example": "sejalgupta1838@gmail.com"})

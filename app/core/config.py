@@ -140,8 +140,10 @@ class Settings(BaseSettings):
             self.MONGO_URI = self.MONGODB_URI
         return self
 
-    # SMS / MSG91 Configuration
-    SMS_PROVIDER: str = "msg91"
+    # SMS / Fast2SMS Configuration
+    SMS_PROVIDER: str = "fast2sms"
+    FAST2SMS_API_KEY: str = "8Ke0teaW2mo5i6yh7A06YzMookM9RjGrTKSsd5AlJEm2gOozuql50GOqKm4e"
+    FAST2SMS_OTP_ID: str = ""
     MSG91_AUTH_KEY: str | None = None
     MSG91_TEMPLATE_ID_N_REG: str | None = None
     MSG91_TEMPLATE_ID_FOR_LOG: str | None = None
