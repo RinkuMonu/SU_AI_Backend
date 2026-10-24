@@ -173,6 +173,7 @@ async def facebook_connect(
 
 @router.get("/callback")
 async def facebook_callback(
+    request: Request,
     code: str = Query(None),
     state: str = Query(None),
     error: str = Query(None),
@@ -186,6 +187,8 @@ async def facebook_callback(
     discovers Facebook Pages and linked Instagram Professional Account,
     and updates business/user connection state.
     """
+    if request.query_params.get("hub.mode"):
+        return await facebook_webhook_verify(request=request, db=db)
     oauth_state = None
     if state:
         oauth_state = await db["facebook_oauth_states"].find_one_and_delete({"state": state})
@@ -695,7 +698,6 @@ async def facebook_verify_token(
 # ──────────────────────────────────────────────
 
 @router.get("/webhook")
-@router.get("/callback")
 async def facebook_webhook_verify(
     request: Request,
     db=Depends(get_database),

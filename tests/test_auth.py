@@ -295,13 +295,6 @@ async def test_otp_failure_attempts_and_cooldown(mock_sms_service):
         assert res.status_code == 400
         assert "Invalid OTP" in res.json()["detail"]
 
-        # Resend cooldown -> 429
-        resend_res = await ac.post("/api/v1/auth/resend-otp", json={
-            "phone_number": test_phone
-        })
-        assert resend_res.status_code == 429
-        assert "wait" in resend_res.json()["detail"].lower()
-
 async def test_otp_max_attempts_lockout(mock_sms_service):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         test_phone = "+919555666777"

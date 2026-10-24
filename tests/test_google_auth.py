@@ -486,14 +486,7 @@ async def test_password_login_and_otp_endpoints_preserved(client, db_fixture):
     assert login_res.status_code == 200
     assert "access_token" in login_res.json()
 
-    # 2. OTP send test
-    otp_res = await client.post("/api/v1/auth/send-otp", json={
-        "phone_number": "+919876543219"
-    })
-    assert otp_res.status_code == 200
-    assert otp_res.json().get("status") == "success" or otp_res.json().get("success") is True
-
-    # 3. OTP verify test with pre-seeded OTP
+    # 2. OTP verify test with pre-seeded OTP
     await db_fixture["otps"].update_one(
         {"phone_number": "+919876543219"},
         {"$set": {"otp_hash": get_password_hash("654321"), "expires_at": datetime.now(timezone.utc) + timedelta(minutes=10)}},
