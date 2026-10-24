@@ -168,4 +168,15 @@ class User(MongoBaseModel):
                 data["verification_token"] = vtoken
             data.pop("verificationToken", None)
 
+            # Canonicalize role: only 'business' and 'influencer'
+            r = data.get("role")
+            if r:
+                r_clean = str(r).strip().lower()
+                if r_clean in ["business", "businessman", "merchant"]:
+                    data["role"] = "business"
+                    data["accountType"] = "business"
+                elif r_clean in ["influencer", "creator", "user_creator"]:
+                    data["role"] = "influencer"
+                    data["accountType"] = "influencer"
+
         return data

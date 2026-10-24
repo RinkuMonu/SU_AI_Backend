@@ -13,6 +13,11 @@ from app.api.endpoints import (
     businesses,
     linkedin,
     brand,
+    business_profile,
+)
+from app.api.endpoints.influencer_profile import (
+    router as influencer_profile_router,
+    legacy_router as influencer_legacy_router,
 )
 
 api_router = APIRouter()
@@ -25,6 +30,9 @@ api_router.include_router(website_builder.router, prefix="/website-builder", tag
 api_router.include_router(subscription.router)
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(business_profile.router)
+api_router.include_router(influencer_profile_router)
+api_router.include_router(influencer_legacy_router)
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
 api_router.include_router(brand.router, prefix="/brands", tags=["Brand Kit"])

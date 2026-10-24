@@ -1334,15 +1334,15 @@ class AuthService:
                 detail="Unauthorized: Cannot assign administrative role."
             )
 
-        # Canonicalize supported roles
-        if normalized_input in ["businessman", "business", "merchant"]:
-            canonical_role = "businessman"
-        elif normalized_input in ["influencer", "creator"]:
+        # Canonicalize supported roles (strictly 'business' and 'influencer')
+        if normalized_input in ["business", "businessman", "merchant"]:
+            canonical_role = "business"
+        elif normalized_input in ["influencer", "creator", "user_creator"]:
             canonical_role = "influencer"
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid role. Supported roles are 'businessman' and 'influencer'."
+                detail="Invalid role. Supported roles are 'business' and 'influencer'."
             )
 
         # 3. Fetch user by user_id

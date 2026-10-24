@@ -173,14 +173,22 @@ def require_role(*allowed_roles: str):
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Role selection required before accessing this resource."
             )
-        if user_role == "admin" or user_role in allowed_roles:
+        
+        # Treat "business" and "businessman" interchangeably for full backward & forward compatibility
+        effective_roles = set(allowed_roles)
+        if "businessman" in effective_roles:
+            effective_roles.add("business")
+        if "business" in effective_roles:
+            effective_roles.add("businessman")
+
+        if user_role == "admin" or user_role in effective_roles:
             return current_user
 
         detail_msg = f"Access denied. Required role: {', '.join(allowed_roles)}."
-        if "businessman" in allowed_roles and "influencer" not in allowed_roles:
-            detail_msg = "Access denied. Businessman role required."
-        elif "influencer" in allowed_roles and "businessman" not in allowed_roles:
-            detail_msg = "Access denied. Influencer/Creator role required."
+        if any(r in effective_roles for r in ["business", "businessman"]) and "influencer" not in effective_roles:
+            detail_msg = "Access denied. Business role required."
+        elif "influencer" in effective_roles and not any(r in effective_roles for r in ["business", "businessman"]):
+            detail_msg = "Access denied. Influencer role required."
 
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -188,7 +196,9 @@ def require_role(*allowed_roles: str):
         )
     return dependency
 
-require_businessman = require_role("businessman")
+require_business = require_role("business", "businessman")
+require_businessman = require_business
 require_influencer = require_role("influencer")
+
 
 
