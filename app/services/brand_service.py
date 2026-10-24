@@ -1,10 +1,12 @@
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import httpx
+from PIL import Image
 from bson import ObjectId
 from fastapi import HTTPException, status
 
@@ -176,7 +178,7 @@ async def get_or_create_business_for_owner(db, owner_id: str, data: dict) -> dic
             "registration_number": data.get("registration_number"),
             "business_model": data.get("business_model"),
             "selling_model": data.get("selling_model"),
-            "description": data.get("business_description"),
+            "description": data.get("business_description") or data.get("brand_description"),
             "target_customer": data.get("customer_type"),
             "brand_kit_status": "not_started",
             "brand_kit_completed": False,
@@ -250,6 +252,12 @@ async def save_brand_kit_submission(
         brand_dict["brand_name"] = brand_dict["business_name"]
     elif brand_dict.get("brand_name") and not brand_dict.get("business_name"):
         brand_dict["business_name"] = brand_dict["brand_name"]
+
+    # Also sync business_description and brand_description
+    if brand_dict.get("business_description") and not brand_dict.get("brand_description"):
+        brand_dict["brand_description"] = brand_dict["business_description"]
+    elif brand_dict.get("brand_description") and not brand_dict.get("business_description"):
+        brand_dict["business_description"] = brand_dict["brand_description"]
 
     # 5. Upsert BrandKit document
     collection = db["brand_kits"]
@@ -379,60 +387,197 @@ async def get_onboarding_status(db, current_user) -> BrandKitStatusResponse:
     )
 
 
+LOGO_STYLE_MAP = {
+    "minimalist_modern": "minimalist modern vector logo symbol, clean geometric lines, iconic silhouette, flat 2D graphic design, solid white background, high contrast, professional corporate branding",
+    "luxury_premium": "ultra-luxurious premium brand emblem, elegant refined gold and platinum accents, high-end boutique aesthetic, exquisite symmetry, prestigious royal heraldic motif, clean solid studio background, master craftsmanship",
+    "geometric_abstract": "abstract geometric logo mark, mathematical precision, golden ratio composition, modern isometric vector symbol, sharp architectural lines, centered, clean solid background, timeless minimalist tech branding",
+    "3d_dimensional": "premium 3D dimensional brand logo icon, smooth ceramic, glass and metallic textures, subtle soft ambient occlusion shadow, centered isometric perspective, modern app icon aesthetic, clean solid studio background, 8k render",
+    "tech_futuristic": "futuristic technology cybernetic logo mark, sleek neon gradients, circuit and neural nodes, cutting-edge AI software branding, centered vector emblem, clean dark solid background, silicon valley startup aesthetic",
+    "elegant_monogram": "sophisticated luxury monogram emblem featuring stylized initials, timeless haute-couture typography, interlocking ligatures, classic luxury fashion house crest, centered, clean solid background",
+    "mascot_illustrated": "modern friendly brand character mascot logo, distinctive vector illustration, bold outlines, expressive personality, esports and modern lifestyle brand aesthetic, centered emblem, clean solid background",
+    "organic_natural": "organic botanical eco-friendly logo symbol, elegant leaf and sprout motifs, flowing natural curves, sustainable green lifestyle brand aesthetic, harmonious earth tones, clean vector graphic, solid clean background",
+    "bold_playful": "bold vibrant playful brand logo mark, dynamic pop-art geometry, energetic friendly curves, creative agency aesthetic, high contrast colorful shapes, centered, clean solid background",
+    "emblem_badge": "vintage modern heritage seal badge emblem, circular crest with delicate engraving details, artisanal craft insignia, authentic stamp logo, centered, clean solid background",
+}
+
+
 async def generate_and_save_ai_logo(
     db,
     owner_id: str,
     req: AILogoGenerateRequest
 ) -> dict:
     """
-    Generates a logo with AI and persists it directly into /uploads/brand/.
+    Generates a professional business logo using AI, verifies the image asset,
+    persists it directly to /uploads/brand/, and returns verified URLs and variations.
     Guarantees asset storage and prevents returning fake URLs on generation failures.
     """
+    import random
+    import shutil
+
+    # 1. Resolve business name gracefully (from payload, business entity, or brand kit)
+    b_name = (req.business_name or req.brand_name or "").strip()
+    if not b_name:
+        biz = await db["businesses"].find_one({"owner_id": owner_id})
+        if biz and biz.get("name"):
+            b_name = str(biz["name"]).strip()
+        else:
+            brand_doc = await db["brand_kits"].find_one({"owner_id": owner_id})
+            if brand_doc and (brand_doc.get("business_name") or brand_doc.get("brand_name")):
+                b_name = str(brand_doc.get("business_name") or brand_doc.get("brand_name")).strip()
+
+    if not b_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide a business name to generate your brand logo."
+        )
+
+    # 2. Build detailed, style-specific logo prompt
+    style_key = req.style or "minimalist_modern"
+    style_desc = LOGO_STYLE_MAP.get(style_key, style_key)
+
     color_desc = ""
-    if req.preferred_colors:
-        color_desc = f", using colors: {', '.join(req.preferred_colors)}"
+    if req.preferred_colors and len(req.preferred_colors) > 0:
+        color_desc = f", incorporating brand colors ({', '.join(req.preferred_colors)})"
+
+    guidance_desc = ""
+    if req.prompt and req.prompt.strip():
+        guidance_desc = f", visual theme: {req.prompt.strip()}"
+
+    tagline_desc = ""
+    if req.tagline and req.tagline.strip():
+        tagline_desc = f", reflecting brand essence '{req.tagline.strip()}'"
+
+    voice_desc = ""
+    if req.brand_voice or req.personality:
+        voice_desc = f", brand tone: {req.brand_voice or req.personality}"
+
+    if req.transparent_background:
+        bg_clause = "isolated vector asset, pure solid flat white background, easy to extract with transparent backdrop, no scene clutter"
+    else:
+        bg_clause = "isolated vector symbol, centered on clean solid background, uncluttered studio backdrop"
 
     prompt = (
-        f"Minimalist modern professional brand logo for '{req.business_name}', "
-        f"category: {req.business_category or 'business'}, {req.style}{color_desc}. "
-        f"Clean vector graphic logo icon, centered on solid white background, 8k resolution, flat vector logo symbol"
+        f"Professional brand logo for '{b_name}', category: {req.business_category or 'business'}, {style_desc}{color_desc}{guidance_desc}{tagline_desc}{voice_desc}. "
+        f"{bg_clause}, 8k resolution, flat vector logo symbol, sharp crisp lines, master designer emblem, "
+        f"strictly no human photo, no face, no skin pores, no t-shirt mockup, no 3D wall mockup, no blurry elements, no watermark"
     )
+
+    primary_seed = req.variation_seed if req.variation_seed is not None else random.randint(10000, 999999)
 
     image_gen = ImageGenerator(
         api_url=getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations"),
         api_key=getattr(settings, "IMAGE_API_KEY", "your_api_key_here")
     )
 
+    upload_dir = Path("uploads") / "brand"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    primary_filename = f"{uuid.uuid4().hex}.png"
+    primary_file_path = upload_dir / primary_filename
+
     try:
-        gen_res = await image_gen.generate(prompt=prompt)
+        gen_res = await image_gen.generate(prompt=prompt, seed=primary_seed)
         temp_url = gen_res.get("image_url")
-        if not temp_url:
+        gen_local_path = gen_res.get("local_path")
+
+        # Case A: Generated image already saved locally by generator
+        if gen_local_path and os.path.exists(gen_local_path):
+            shutil.copy2(gen_local_path, primary_file_path)
+        # Case B: Generator returned remote URL
+        elif temp_url and temp_url.startswith("http"):
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.get(temp_url)
+                if resp.status_code != 200 or not resp.content:
+                    raise HTTPException(
+                        status_code=status.HTTP_502_BAD_GATEWAY,
+                        detail="Failed to retrieve generated logo from AI provider."
+                    )
+                with open(primary_file_path, "wb") as f:
+                    f.write(resp.content)
+        # Case C: Generator returned relative path
+        elif temp_url and os.path.exists(temp_url.lstrip("/")):
+            shutil.copy2(temp_url.lstrip("/"), primary_file_path)
+        else:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail="Logo generation provider failed to return an image URL."
+                detail="Logo generation provider failed to produce a valid image asset."
             )
 
-        # Download image bytes and persist to local /uploads/brand/
-        filename = f"{uuid.uuid4().hex}.png"
-        upload_dir = Path("uploads") / "brand"
-        upload_dir.mkdir(parents=True, exist_ok=True)
-        file_path = upload_dir / filename
+        # Verify image format and integrity using PIL
+        try:
+            with Image.open(primary_file_path) as verified_img:
+                verified_img.verify()
+        except Exception as img_err:
+            logger.warning(f"Generated logo image format check warning: {img_err}")
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(temp_url)
-            if resp.status_code != 200 or not resp.content:
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail="Failed to retrieve generated logo from AI provider."
-                )
-            with open(file_path, "wb") as f:
-                f.write(resp.content)
+        local_logo_url = f"/uploads/brand/{primary_filename}"
 
-        local_logo_url = f"/uploads/brand/{filename}"
+        # Build variations list
+        variations = [
+            {
+                "logo_url": local_logo_url,
+                "seed": primary_seed,
+                "style": style_key
+            }
+        ]
+
+        # Generate additional variations if requested
+        requested_variations = req.num_variations or 1
+        if requested_variations > 1:
+            for v_idx in range(1, requested_variations):
+                v_seed = primary_seed + (v_idx * 7919)
+                v_filename = f"{uuid.uuid4().hex}.png"
+                v_file_path = upload_dir / v_filename
+                try:
+                    v_res = await image_gen.generate(prompt=prompt, seed=v_seed)
+                    v_url = v_res.get("image_url")
+                    v_local = v_res.get("local_path")
+                    if v_local and os.path.exists(v_local):
+                        shutil.copy2(v_local, v_file_path)
+                        variations.append({
+                            "logo_url": f"/uploads/brand/{v_filename}",
+                            "seed": v_seed,
+                            "style": style_key
+                        })
+                    elif v_url and v_url.startswith("http"):
+                        async with httpx.AsyncClient(timeout=25.0) as client:
+                            v_resp = await client.get(v_url)
+                            if v_resp.status_code == 200 and len(v_resp.content) > 1000:
+                                with open(v_file_path, "wb") as f_v:
+                                    f_v.write(v_resp.content)
+                                variations.append({
+                                    "logo_url": f"/uploads/brand/{v_filename}",
+                                    "seed": v_seed,
+                                    "style": style_key
+                                })
+                except Exception as v_err:
+                    logger.warning(f"Variation {v_idx} generation failed non-fatally: {v_err}")
+
+        # Optional auto-save to brand kit if requested
+        if req.save_to_brand_kit:
+            now = datetime.now(timezone.utc)
+            await db["brand_kits"].update_one(
+                {"owner_id": owner_id},
+                {
+                    "$set": {
+                        "logo_url": local_logo_url,
+                        "logo_metadata": {
+                            "prompt": prompt,
+                            "style": style_key,
+                            "seed": primary_seed,
+                            "generated_at": now.isoformat()
+                        },
+                        "updated_at": now
+                    }
+                }
+            )
+
         return {
             "logo_url": local_logo_url,
             "prompt": prompt,
-            "business_name": req.business_name
+            "business_name": b_name,
+            "style": style_key,
+            "seed": primary_seed,
+            "variations": variations
         }
 
     except HTTPException:

@@ -377,6 +377,71 @@ async def test_ai_logo_generation_flow():
                 assert res_data["success"] is True
                 assert "/uploads/brand/" in res_data["data"]["logo_url"]
                 assert res_data["data"]["business_name"] == "Quantum Flow Tech"
+                assert len(res_data["data"]["variations"]) >= 1
+
+
+async def test_ai_logo_generation_name_fallback_and_failure_resilience():
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Logo Resilience User")
+
+    # Set up existing business with registered name and existing logo
+    await db["businesses"].insert_one({
+        "owner_id": user_id,
+        "name": "Auto Resolved Corp",
+        "category": "Technology"
+    })
+    await db["brand_kits"].insert_one({
+        "owner_id": user_id,
+        "business_name": "Auto Resolved Corp",
+        "logo_url": "/uploads/brand/existing_logo.png"
+    })
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. Request WITHOUT business_name - must automatically resolve to registered business name
+        fake_png_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+        mock_result = {
+            "image_url": "https://fake-ai-cdn.com/resilience_logo.png",
+            "prompt": "vector logo for Auto Resolved Corp",
+            "model": "imagen-3"
+        }
+
+        with patch.object(ImageGenerator, "generate", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = mock_result
+            with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.content = fake_png_data
+                mock_get.return_value = mock_resp
+
+                res = await ac.post("/api/v1/brands/generate-logo", json={
+                    "style": "minimalist_modern",
+                    "prompt": "geometric node icon",
+                    "preferred_colors": ["#BE32FF", "#F0449B"],
+                    "save_to_brand_kit": True
+                }, headers=headers)
+
+                assert res.status_code == 200
+                res_data = res.json()["data"]
+                assert res_data["business_name"] == "Auto Resolved Corp"
+                assert "/uploads/brand/" in res_data["logo_url"]
+
+                # Verified auto-saved to brand kit
+                saved_brand = await db["brand_kits"].find_one({"owner_id": user_id})
+                assert saved_brand["logo_url"] == res_data["logo_url"]
+
+        # 2. Test failure preservation: When AI provider fails, existing logo is preserved
+        with patch.object(ImageGenerator, "generate", side_effect=Exception("Provider timeout")):
+            fail_res = await ac.post("/api/v1/brands/generate-logo", json={
+                "business_name": "Auto Resolved Corp",
+                "save_to_brand_kit": True
+            }, headers=headers)
+
+            assert fail_res.status_code == 502
+            # Previous logo must remain intact in database!
+            brand_after_fail = await db["brand_kits"].find_one({"owner_id": user_id})
+            assert brand_after_fail["logo_url"] == res_data["logo_url"]
 
 
 # --------------------------------------------------------------------------
@@ -555,3 +620,52 @@ async def test_businessman_vs_influencer_behavior():
         # 3. Influencer attempting to complete brand kit -> 403 Forbidden
         comp_res = await ac.post("/api/v1/brands/complete", json={"business_name": "Influencer Biz"}, headers=headers)
         assert comp_res.status_code == 403
+
+
+# --------------------------------------------------------------------------
+# 16. Brand Description Field Alias Acceptance Test
+# --------------------------------------------------------------------------
+async def test_brand_kit_submission_with_brand_description_alias():
+    """
+    Verifies that when a frontend submits `brand_description` (or `business_description`),
+    the schema accepts it, normalizes both fields, and completes the brand kit without
+    raising a 422 Business description required error.
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Deepar Car Owner")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        payload = {
+            "business_name": "Deepar Car",
+            "business_type": "private_limited",
+            "business_model": "b2c",
+            "selling_model": "retail_store",
+            "business_category": "automotive",
+            "brand_description": "Premium automotive luxury detailing and car customization services.",
+            "logo_url": "http://localhost:8000/uploads/brand/test_logo.png",
+            "primary_color": "#111827",
+            "secondary_color": "#3B82F6",
+            "accent_color": "#F59E0B",
+            "font": "Poppins",
+            "tone": "Professional & Trustworthy",
+            "age_group": "25-35",
+            "customer_type": "All",
+            "location_focus": "Pan-India",
+        }
+
+        # Test POST /api/v1/brands (unified endpoint)
+        res = await ac.post("/api/v1/brands", json=payload, headers=headers)
+        assert res.status_code == 201, f"Expected 201, got {res.status_code}: {res.text}"
+        data = res.json()
+        assert data["success"] is True
+        assert data["brand_kit_completed"] is True
+        assert data["data"]["business_description"] == "Premium automotive luxury detailing and car customization services."
+        assert data["data"]["brand_description"] == "Premium automotive luxury detailing and car customization services."
+
+        # Verify database business entity has description
+        biz = await db["businesses"].find_one({"owner_id": str(user_id)})
+        assert biz is not None
+        assert biz["description"] == "Premium automotive luxury detailing and car customization services."
+

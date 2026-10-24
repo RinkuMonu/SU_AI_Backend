@@ -211,7 +211,12 @@ class ImageGenerator:
         local_filename = f"gen_{uuid.uuid4().hex[:12]}.jpg"
         local_path = os.path.join(self.temp_dir, local_filename)
 
-        # 2. Build strictly photorealistic prompt with authentic Indian ethnicity
+        # Check if the prompt is for a brand logo, emblem, or vector icon
+        is_logo_scene = any(w in clean_prompt.lower() for w in ["logo", "emblem", "monogram", "brand mark", "vector icon", "brand crest", "minimalist icon"])
+        if is_logo_scene:
+            return await self.generate_logo(prompt=clean_prompt, seed=seed, width=width, height=height, target_path=local_path)
+
+        # 2. Build strictly photorealistic prompt with authentic Indian ethnicity for human/scene images
         filtered_prompt = re.sub(r'\b(cartoon|anime|illustration|drawing|sketch|painting|vector|3d render|cgi)\b', '', clean_prompt, flags=re.IGNORECASE)
 
         human_terms = [
@@ -263,8 +268,8 @@ class ImageGenerator:
         # 5. Non-human / General Fallback via Clean Watermark-Free Pipeline
         safe_prompt = urllib.parse.quote(final_prompt)
         candidate_urls = [
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width={width}&height={height}",
             f"https://image.pollinations.ai/prompt/{safe_prompt}?width=768&height=768",
-            f"https://image.pollinations.ai/prompt/{safe_prompt}?width={width}&height={height}&model=flux",
             f"https://image.pollinations.ai/prompt/{safe_prompt}",
         ]
 
@@ -287,5 +292,90 @@ class ImageGenerator:
         if chosen_curated.startswith("/uploads/"):
             return {"image_url": settings.get_public_url(chosen_curated), "provider": "curated-fallback"}
         return {"image_url": chosen_curated, "provider": "curated-fallback"}
+
+    async def generate_logo(
+        self,
+        prompt: str,
+        seed: int = 42,
+        width: int = 1024,
+        height: int = 1024,
+        target_path: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Dedicated, high-quality AI logo generation engine.
+        Bypasses photographic human camera clauses and category photo intercepts.
+        Produces clean vector, 3D emblem, and brand logo artwork.
+        """
+        clean_prompt = prompt.replace('\n', ' ').strip()
+        local_filename = f"logo_{uuid.uuid4().hex[:12]}.png"
+        local_path = target_path or os.path.join(self.temp_dir, local_filename)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
+        # 1. Attempt Gemini direct generation if configured
+        gemini_result_path = await self._try_gemini_image_generation(
+            prompt=clean_prompt,
+            pil_refs=None,
+            local_path=local_path
+        )
+        if gemini_result_path and os.path.exists(gemini_result_path):
+            public_url = settings.get_public_url(f"/uploads/brand/{os.path.basename(local_path)}")
+            return {"image_url": public_url, "local_path": local_path, "provider": "gemini"}
+
+        # 2. Pollinations vector logo pipeline
+        safe_prompt = urllib.parse.quote(clean_prompt)
+        candidate_urls = [
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width={width}&height={height}&seed={seed}",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width=768&height=768&seed={seed}",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?seed={seed}",
+        ]
+
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+            for render_url in candidate_urls:
+                try:
+                    res = await client.get(render_url, follow_redirects=True)
+                    if res.status_code == 200 and len(res.content) > 3000:
+                        # Crop any bottom watermark bar and save crisp PNG
+                        cleaned_ok = self._crop_watermark_and_save(res.content, local_path, (width, height))
+                        if not cleaned_ok or not os.path.exists(local_path):
+                            img = Image.open(io.BytesIO(res.content))
+                            img.save(local_path, format="PNG", optimize=True)
+
+                        if os.path.exists(local_path):
+                            rel_url = f"/uploads/brand/{os.path.basename(local_path)}"
+                            logger.info(f"Generated AI Logo saved to: {local_path}")
+                            return {
+                                "image_url": rel_url,
+                                "local_path": local_path,
+                                "provider": "ai-logo-engine"
+                            }
+                except Exception as e:
+                    logger.warning(f"Logo candidate failed for {render_url}: {e}")
+                    continue
+
+        # 3. High-Quality Vector Emblem Synthesis Fallback
+        try:
+            from app.ai.image.logo_designer import generate_artistic_brand_logo
+            b_name = "Brand"
+            if "'" in clean_prompt:
+                b_name = clean_prompt.split("'")[1]
+            elif "for " in clean_prompt.lower():
+                b_name = clean_prompt.lower().split("for ")[1].split(",")[0].strip().title()
+
+            art_path = generate_artistic_brand_logo(
+                business_name=b_name,
+                target_path=local_path,
+                seed=seed
+            )
+            rel_url = f"/uploads/brand/{os.path.basename(art_path)}"
+            logger.info(f"Generated artistic brand logo fallback saved: {rel_url}")
+            return {
+                "image_url": rel_url,
+                "local_path": art_path,
+                "provider": "artistic-logo-designer"
+            }
+        except Exception as fallback_err:
+            logger.error(f"Artistic fallback failed: {fallback_err}")
+            raise Exception("AI Logo generation engine timed out or was temporarily unavailable. Please try again.")
 
 

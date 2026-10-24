@@ -120,7 +120,7 @@ PLANS = {
         ],
         "features": [
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "whatsapp_ai", "instagram_ai", "analytics"
+            "ads", "website_builder", "instagram_ai", "analytics"
         ],
         "watermark": False,
         "multiple_businesses": False,
@@ -167,7 +167,7 @@ PLANS = {
         ],
         "features": [
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "whatsapp_ai", "instagram_ai",
+            "ads", "website_builder", "instagram_ai",
             "advanced_analytics", "crm"
         ],
         "watermark": False,
@@ -216,7 +216,7 @@ PLANS = {
         "features": [
             "influencer_discovery", "creator_audience", "brand_collaboration",
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "whatsapp_ai", "instagram_ai",
+            "ads", "website_builder", "instagram_ai",
             "advanced_analytics", "crm"
         ],
         "watermark": False,
