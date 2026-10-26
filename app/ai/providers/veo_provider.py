@@ -35,7 +35,7 @@ class VeoVideoProvider:
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or settings.GEMINI_API_KEY
-        self.model = model or getattr(settings, "GEMINI_VIDEO_MODEL", "veo-3.1-fast-generate-preview")
+        self.model = model or getattr(settings, "GEMINI_VIDEO_MODEL", "gemini-omni-1.1-flash")
         self._client = None
 
     def _get_client(self):

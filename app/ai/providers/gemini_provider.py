@@ -47,9 +47,9 @@ class GeminiProvider(AIProvider):
         if model:
             self._model_name = model
         elif self.tier == "reasoning":
-            self._model_name = getattr(settings, "GEMINI_REASONING_MODEL", "gemini-2.5-pro") or "gemini-2.5-pro"
+            self._model_name = getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro") or "gemini-3.8-pro"
         else:
-            self._model_name = getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+            self._model_name = getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash") or "gemini-3.8-flash"
 
         self._provider_name = "gemini"
 
@@ -65,20 +65,22 @@ class GeminiProvider(AIProvider):
         if self.tier == "reasoning":
             fallback_models = [
                 self._model_name,
-                "gemini-2.5-pro",
+                "gemini-3.8-pro",
+                "gemini-3.8-flash",
                 "gemini-pro-latest",
+                "gemini-2.5-pro",
                 "gemini-1.5-pro",
-                "gemini-2.5-flash",
                 "gemini-flash-latest",
             ]
         else:
             fallback_models = [
                 self._model_name,
-                "gemini-2.5-flash",
+                "gemini-3.8-flash",
                 "gemini-flash-latest",
                 "gemini-flash-lite-latest",
                 "gemini-1.5-flash",
-                "gemini-2.5-pro",
+                "gemini-3.8-pro",
+                "gemini-2.5-flash",
             ]
 
         seen = set()

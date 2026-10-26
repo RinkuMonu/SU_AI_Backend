@@ -1,7 +1,14 @@
 import os
+import warnings
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
+
+try:
+    from jwt.warnings import InsecureKeyLengthWarning
+    warnings.filterwarnings("ignore", category=InsecureKeyLengthWarning)
+except ImportError:
+    pass
 
 class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
@@ -24,11 +31,11 @@ class Settings(BaseSettings):
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
     GEMINI_BACKUP_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-2.5-flash"
-    GEMINI_FAST_MODEL: str = "gemini-2.5-flash"
-    GEMINI_REASONING_MODEL: str = "gemini-2.5-pro"
-    GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
-    VIDEO_PROVIDER: str = "veo"
+    GEMINI_MODEL: str = "gemini-3.8-flash"
+    GEMINI_FAST_MODEL: str = "gemini-3.8-flash"
+    GEMINI_REASONING_MODEL: str = "gemini-3.8-pro"
+    GEMINI_VIDEO_MODEL: str = "gemini-omni-1.1-flash"
+    VIDEO_PROVIDER: str = "mock"
     VOICE_PROVIDER: str = "gtts"
     VIDEO_API_KEY: Optional[str] = None
     IMAGE_API_KEY: Optional[str] = None

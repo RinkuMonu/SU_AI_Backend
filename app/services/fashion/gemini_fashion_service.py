@@ -82,7 +82,7 @@ class GeminiFashionService:
                 )
                 resp = await asyncio.to_thread(
                     client.models.generate_content,
-                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
                     contents=gemini_prompt
                 )
                 if resp and resp.text:

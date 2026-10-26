@@ -626,11 +626,14 @@ Return ONLY valid JSON strictly matching this schema with NO conversational text
                 import google.genai as genai
                 client = genai.Client(api_key=settings.GEMINI_API_KEY)
                 models = [
-                    getattr(settings, "GEMINI_REASONING_MODEL", "gemini-2.5-pro"),
-                    getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
-                    getattr(settings, "GEMINI_FAST_MODEL", "gemini-2.5-flash"),
-                    "gemini-2.5-flash",
+                    getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro"),
+                    getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
+                    getattr(settings, "GEMINI_FAST_MODEL", "gemini-3.8-flash"),
+                    "gemini-3.8-flash",
                     "gemini-flash-latest",
+                    "gemini-3.8-pro",
+                    "gemini-pro-latest",
+                    "gemini-2.5-flash",
                     "gemini-2.5-pro",
                 ]
                 for m in models:

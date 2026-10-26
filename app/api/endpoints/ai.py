@@ -290,7 +290,7 @@ async def generate_image_endpoint(request: ImageGenerationRequest, current_user:
                     "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
                 )
                 v_res = client.models.generate_content(
-                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
                     contents=[*pil_refs, vision_prompt]
                 )
                 if v_res and v_res.text:

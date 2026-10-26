@@ -341,7 +341,7 @@ async def test_veo_provider_quota_handling():
     """Test Veo quota handling and graceful exception management."""
     print("\n--- Test 8: Veo Provider Quota Resilience ---")
     provider = VeoVideoProvider()
-    assert provider.model in ("veo-3.1-fast-generate-preview", "veo-2.0-generate-001")
+    assert provider.model in ("gemini-omni-1.1-flash", "veo-3.1-fast-generate-preview", "veo-2.0-generate-001")
     print(f"[PASS] Veo provider configured with model: {provider.model}")
 
 

@@ -387,15 +387,15 @@ class ReelService:
                     )
 
             # -------------------------------------------------------------
-            # Stage D: Video Generation with Veo or Dynamic Motion
+            # Stage D: Video Generation with AI Engine or Dynamic Motion
             # -------------------------------------------------------------
             await self._update_job(job_id, {
                 "status": "rendering_video",
                 "progress": 55,
-                "stage": "Submitting video generation to Google Veo 3.1"
+                "stage": "Generating dynamic video scenes"
             })
 
-            # Formulate the best Veo prompt from the user prompt or Gemini creative plan
+            # Formulate the best video prompt from the user prompt or creative plan
             user_direct_prompt = getattr(request, "prompt", None) or getattr(request, "custom_prompt", None)
             v_style = getattr(request, "video_style", "")
             if user_direct_prompt:
@@ -412,58 +412,68 @@ class ReelService:
 
             veo_video_url = None
             veo_fallback_reason = None
+            video_provider_setting = getattr(settings, "VIDEO_PROVIDER", "mock").lower()
 
-            try:
-                veo_submission = await self.veo_provider.start_video_generation(
-                    prompt=veo_prompt,
-                    image_url_or_path=primary_image,
-                    duration_seconds=min(max(request.duration, 4), 8),
-                    aspect_ratio="9:16",
-                    negative_prompt=getattr(script, "negative_constraints", None)
-                )
+            if video_provider_setting != "mock":
+                try:
+                    veo_submission = await self.veo_provider.start_video_generation(
+                        prompt=veo_prompt,
+                        image_url_or_path=primary_image,
+                        duration_seconds=min(max(request.duration, 4), 8),
+                        aspect_ratio="9:16",
+                        negative_prompt=getattr(script, "negative_constraints", None)
+                    )
 
-                op_name = veo_submission.get("operation_name")
+                    op_name = veo_submission.get("operation_name")
+                    await self._update_job(job_id, {
+                        "progress": 65,
+                        "stage": "Rendering realistic video with AI Video Engine",
+                        "provider": "veo",
+                        "provider_operation_id": op_name,
+                        "provider_status": "generating"
+                    })
+
+                    async def _on_veo_progress(pct, stage_msg):
+                        await self._update_job(job_id, {"progress": pct, "stage": stage_msg})
+
+                    veo_video_url = await self.veo_provider.poll_operation(
+                        operation_name=op_name,
+                        max_wait_seconds=120,
+                        poll_interval=5,
+                        on_progress=_on_veo_progress
+                    )
+
+                    await self._update_job(job_id, {
+                        "provider_status": "completed"
+                    })
+                    logger.info(f"Video engine successfully produced video: {veo_video_url}")
+
+                except (VeoQuotaError, VeoModelError, VeoError) as veo_err:
+                    veo_fallback_reason = str(veo_err)
+                    logger.warning(f"Video generation note: {veo_fallback_reason}")
+                    await self._update_job(job_id, {
+                        "provider": "veo_fallback_composer",
+                        "provider_status": "quota_exhausted_fallback" if "429" in veo_fallback_reason else "fallback",
+                        "provider_error": veo_fallback_reason,
+                        "stage": "Rendering cinematic dynamic scenes"
+                    })
+
+                except Exception as unk_err:
+                    veo_fallback_reason = str(unk_err)
+                    logger.warning(f"Video call exception: {unk_err}")
+                    await self._update_job(job_id, {
+                        "provider": "veo_fallback_composer",
+                        "provider_status": "fallback",
+                        "provider_error": veo_fallback_reason,
+                        "stage": "Rendering cinematic dynamic scenes"
+                    })
+            else:
+                logger.info("VIDEO_PROVIDER is set to 'mock'. Using dynamic cinematic scene composer.")
                 await self._update_job(job_id, {
                     "progress": 65,
-                    "stage": "Rendering realistic video with Google Veo",
-                    "provider": "veo",
-                    "provider_operation_id": op_name,
-                    "provider_status": "generating"
-                })
-
-                async def _on_veo_progress(pct, stage_msg):
-                    await self._update_job(job_id, {"progress": pct, "stage": stage_msg})
-
-                veo_video_url = await self.veo_provider.poll_operation(
-                    operation_name=op_name,
-                    max_wait_seconds=120,
-                    poll_interval=5,
-                    on_progress=_on_veo_progress
-                )
-
-                await self._update_job(job_id, {
-                    "provider_status": "completed"
-                })
-                logger.info(f"Veo successfully produced video: {veo_video_url}")
-
-            except (VeoQuotaError, VeoModelError, VeoError) as veo_err:
-                veo_fallback_reason = str(veo_err)
-                logger.warning(f"Veo video generation note: {veo_fallback_reason}")
-                await self._update_job(job_id, {
+                    "stage": "Rendering cinematic dynamic scenes",
                     "provider": "veo_fallback_composer",
-                    "provider_status": "quota_exhausted_fallback" if "429" in veo_fallback_reason else "fallback",
-                    "provider_error": veo_fallback_reason,
-                    "stage": "Rendering cinematic dynamic scenes"
-                })
-
-            except Exception as unk_err:
-                veo_fallback_reason = str(unk_err)
-                logger.warning(f"Veo video call exception: {unk_err}")
-                await self._update_job(job_id, {
-                    "provider": "veo_fallback_composer",
-                    "provider_status": "fallback",
-                    "provider_error": veo_fallback_reason,
-                    "stage": "Rendering cinematic dynamic scenes"
+                    "provider_status": "mock_mode"
                 })
 
             # Assemble visual segments for composition:
