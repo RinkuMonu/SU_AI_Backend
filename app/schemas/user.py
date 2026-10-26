@@ -147,10 +147,17 @@ class UserResponse(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+    token: Optional[str] = None
     user: Optional[UserResponse] = None
     role: Optional[str] = None
+    phone_verified: bool = True
     requires_role_selection: bool = False
     dashboard_route: Optional[str] = None
+    phone_verification_token: Optional[str] = None
+    verification_token: Optional[str] = None
+    next_step: Optional[str] = None
+    success: bool = True
+    message: Optional[str] = None
 
 
 class UserPreferencesUpdate(BaseModel):
@@ -199,6 +206,8 @@ class OTPVerifyRequest(BaseModel):
     countryCode: str | None = None
     email: EmailStr | str | None = None
     otp: str
+    channel: Optional[str] = "sms"
+    mode: Optional[str] = None
 
 
 class OTPResendRequest(BaseModel):
@@ -208,6 +217,10 @@ class OTPResendRequest(BaseModel):
     country_code: str | None = None
     countryCode: str | None = None
     email: EmailStr | str | None = None
+    channel: Optional[str] = "sms"
+    mode: Optional[str] = None
+
+
 
 
 class RoleSelectRequest(BaseModel):

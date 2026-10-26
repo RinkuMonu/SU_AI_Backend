@@ -76,11 +76,13 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, with th
         client = self._get_gemini_client()
 
         models_to_try = [
-            getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
-            "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
+            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-2.5-pro"),
+            getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+            getattr(settings, "GEMINI_FAST_MODEL", "gemini-2.5-flash"),
+            "gemini-2.5-flash",
             "gemini-flash-latest",
             "gemini-2.5-pro",
+            "gemini-pro-latest",
         ]
 
         if client:
@@ -173,10 +175,11 @@ Instructions:
 
         if client:
             models = [
-                getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
-                "gemini-flash-lite-latest",
-                "gemini-3.8-flash",
+                getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+                "gemini-2.5-flash",
                 "gemini-flash-latest",
+                "gemini-2.5-pro",
+                "gemini-pro-latest",
             ]
             for m in models:
                 try:

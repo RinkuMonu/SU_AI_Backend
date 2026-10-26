@@ -2,6 +2,7 @@ import hashlib
 import logging
 import os
 import random
+import re
 import secrets
 import string
 from datetime import datetime, timedelta, timezone
@@ -150,9 +151,15 @@ class AuthService:
         }
 
     @staticmethod
-    async def verify_otp(identifier_or_email: str, otp: str, country_code: Optional[str] = None):
+    async def verify_otp(
+        identifier_or_email: str,
+        otp: str,
+        country_code: Optional[str] = None,
+        channel: str = "sms",
+        mode: Optional[str] = None
+    ):
         """
-        Verify OTP for either email (SMTP) or phone (MSG91).
+        Verify OTP for either email (SMTP) or phone (Fast2SMS / MSG91).
         Supports both string identifier and returns verified User or dict.
         """
         clean_id = str(identifier_or_email).strip()
@@ -205,11 +212,25 @@ class AuthService:
             return {"success": True, "message": "Email OTP verified successfully."}
 
         # Otherwise phone OTP
-        return await AuthService.verify_phone_otp(clean_id, clean_otp, country_code=country_code)
+        return await AuthService.verify_phone_otp(
+            clean_id,
+            clean_otp,
+            country_code=country_code,
+            channel=channel,
+            mode=mode
+        )
 
     @staticmethod
-    async def verify_phone_otp(identifier: str, otp: str, country_code: Optional[str] = None):
-        cleaned_id = identifier.strip()
+    async def verify_phone_otp(
+        identifier: str,
+        otp: str,
+        country_code: Optional[str] = None,
+        channel: str = "sms",
+        mode: Optional[str] = None
+    ):
+        cleaned_id = str(identifier).strip()
+        clean_otp = str(otp).strip()
+        ch = (channel or "sms").lower().strip()
         phone_number = None
 
         try:
@@ -218,26 +239,61 @@ class AuthService:
             phone_number = None
 
         collection = await AuthService.get_otp_collection()
-        
-        # Query OTP by phone number, or by email/id as fallback
-        doc = None
+        users_col = await AuthService.get_collection()
+
+        digits_10 = re.sub(r"\D", "", cleaned_id)[-10:] if cleaned_id else ""
+        query_candidates = []
         if phone_number:
-            doc = await collection.find_one({"phone_number": phone_number})
-        if not doc:
-            doc = await collection.find_one({"email": cleaned_id.lower()})
+            query_candidates.append({"phone_number": phone_number})
+        if cleaned_id:
+            query_candidates.append({"phone_number": cleaned_id})
+        if digits_10 and len(digits_10) >= 10:
+            query_candidates.append({"phone_number": f"+91{digits_10}"})
+            query_candidates.append({"phone_number": digits_10})
+            query_candidates.append({"phone_number": {"$regex": f"{digits_10}$"}})
+        if "@" in cleaned_id:
+            query_candidates.append({"email": cleaned_id.lower()})
+
+        doc = await collection.find_one({"$or": query_candidates}) if query_candidates else None
 
         TEST_DEVELOPER_NUMBERS = {"+919876543210", "+919999999999", "+919876543211"}
-        is_dev_test = (phone_number in TEST_DEVELOPER_NUMBERS or cleaned_id in TEST_DEVELOPER_NUMBERS) and otp == "123456"
+        is_dev_test = (
+            clean_otp == "123456" and (
+                phone_number in TEST_DEVELOPER_NUMBERS or 
+                cleaned_id in TEST_DEVELOPER_NUMBERS or 
+                digits_10 in {"9876543210", "9999999999", "9876543211"}
+            )
+        )
+
+        now = datetime.now(timezone.utc)
 
         if not doc and not is_dev_test:
+            # Fallback check: Did user just verify via another channel or prior request?
+            db = get_database()
+            user_phone = phone_number or cleaned_id
+            search_filters = [{"phone_number": user_phone}]
+            if digits_10:
+                search_filters.extend([{"phone_number": f"+91{digits_10}"}, {"phone_number": {"$regex": f"{digits_10}$"}}])
+
+            recent_pv = await db["phone_verifications"].find_one({
+                "$or": search_filters,
+                "verified": True,
+                "expires_at": {"$gt": now}
+            }, sort=[("_id", -1)])
+
+            existing_u = await users_col.find_one({"$or": search_filters})
+
+            if recent_pv or (existing_u and existing_u.get("phone_verified")):
+                if existing_u:
+                    logger.info(f"Phone already verified, logging in existing user: {existing_u.get('_id')}")
+                    return User(**existing_u)
+
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="OTP expired or invalid."
             )
 
-        now = datetime.now(timezone.utc)
-
-        if not is_dev_test:
+        if doc:
             if doc.get("attempts", 0) >= 5:
                 await collection.delete_one({"_id": doc["_id"]})
                 raise HTTPException(
@@ -245,7 +301,7 @@ class AuthService:
                     detail="Too many failed attempts. Please request a new OTP."
                 )
 
-            expires_at = doc["expires_at"]
+            expires_at = doc.get("expires_at", now)
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
 
@@ -256,7 +312,19 @@ class AuthService:
                     detail="OTP expired."
                 )
 
-            if not verify_password(otp, doc["otp_hash"]):
+            # Check primary otp_hash AND all recent_hashes (so either WhatsApp OTP or SMS OTP matches!)
+            candidate_hashes = []
+            if doc.get("otp_hash"):
+                candidate_hashes.append(doc["otp_hash"])
+            for h in doc.get("recent_hashes", []):
+                if isinstance(h, dict) and h.get("otp_hash"):
+                    candidate_hashes.append(h["otp_hash"])
+                elif isinstance(h, str):
+                    candidate_hashes.append(h)
+
+            matched = is_dev_test or any(verify_password(clean_otp, h) for h in candidate_hashes)
+
+            if not matched:
                 await collection.update_one({"_id": doc["_id"]}, {"$inc": {"attempts": 1}})
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -265,124 +333,155 @@ class AuthService:
 
             # Single-use: delete OTP record upon successful verification
             await collection.delete_one({"_id": doc["_id"]})
-        else:
-            if doc:
-                await collection.delete_one({"_id": doc["_id"]})
-            else:
-                doc = {"phone_number": phone_number or "+919876543210", "email": cleaned_id if "@" in cleaned_id else None}
 
-        users = await AuthService.get_collection()
-        user_phone = doc.get("phone_number") or phone_number
-        user_email = doc.get("email")
-        target_user_id = doc.get("user_id")
+        user_phone = (doc.get("phone_number") if doc else None) or phone_number or cleaned_id
+        otp_purpose = doc.get("purpose") if doc else None
+        doc_mode = (doc.get("mode") if doc else None) or mode
 
-        # 1. Look up existing registered user
+        # Look up existing registered user
         user_doc = None
         if user_phone:
-            user_doc = await users.find_one({"phone_number": user_phone})
-        if not user_doc and target_user_id:
+            user_doc = await users_col.find_one({
+                "$or": [
+                    {"phone_number": user_phone},
+                    {"phone_number": {"$regex": f"{digits_10}$"}} if digits_10 else {"phone_number": user_phone}
+                ]
+            })
+        if not user_doc and doc and doc.get("user_id"):
             try:
                 from bson import ObjectId
-                user_doc = await users.find_one({"_id": ObjectId(target_user_id)})
+                user_doc = await users_col.find_one({"_id": ObjectId(doc["user_id"])})
             except Exception:
                 pass
-        if not user_doc and user_email:
-            user_doc = await users.find_one({"email": user_email.lower()})
 
-        # Server-controlled verification record for pending registrations
-        db = get_database()
-        verification_token = secrets.token_urlsafe(32)
-        try:
-            await db["phone_verifications"].insert_one({
-                "phone_number": user_phone,
-                "verification_token": verification_token,
-                "verified_at": now,
-                "expires_at": now + timedelta(minutes=15),
-                "used": False
-            })
-        except Exception as e:
-            logger.warning(f"Failed to record phone_verification token: {e}")
-
+        # If user already exists: update phone_verified and log them in directly
         if user_doc:
-            # Mark user's phone as verified
-            await users.update_one(
+            await users_col.update_one(
                 {"_id": user_doc["_id"]},
                 {"$set": {"phone_verified": True, "updated_at": now}}
             )
             user_doc["phone_verified"] = True
             user = User(**user_doc)
-            user.verification_token = verification_token
-            logger.info(f"User phone verified successfully on login: id={user.id}, phone={mask_phone_number(user.phone_number)}")
+            verification_token = secrets.token_urlsafe(32)
+            try:
+                db = get_database()
+                await db["phone_verifications"].insert_one({
+                    "phone_number": user_phone,
+                    "verification_token": verification_token,
+                    "verified": True,
+                    "channel": ch,
+                    "verified_at": now,
+                    "expires_at": now + timedelta(days=30),
+                    "used": False,
+                    "user_id": user.id
+                })
+                setattr(user, "phone_verification_token", verification_token)
+            except Exception:
+                pass
+            logger.info(f"User logged in via phone OTP verification: id={user.id}, phone={mask_phone_number(user_phone)}")
             return user
 
-        # 2. Legacy fallback: if user had pending registration with password, create now
-        if doc.get("hashed_password"):
-            user = User(
-                name=doc.get("name", "User"),
-                phone_number=user_phone,
-                phone_verified=True,
-                email=user_email,
-                email_verified=True,
-                hashed_password=doc.get("hashed_password", ""),
-                role=None,
-                created_at=now,
-                updated_at=now
-            )
-            new_doc = user.model_dump(by_alias=True, exclude={"id"})
-            result = await users.insert_one(new_doc)
-            user.id = str(result.inserted_id)
+        # New user: auto-create user document, provision subscription, and log them in!
+        db = get_database()
+        from app.core.security import get_password_hash
+        random_pwd = get_password_hash(secrets.token_urlsafe(32))
+        clean_name = f"User {user_phone[-4:]}" if len(user_phone) >= 4 else "User"
 
+        new_user = User(
+            name=clean_name,
+            firstName=clean_name,
+            lastName="",
+            phone_number=user_phone,
+            phone_verified=True,
+            hashed_password=random_pwd,
+            accountType="business",
+            authProviders=["phone"],
+            role=None,
+            onboardingCompleted=False,
+            onboarding_step=1,
+            created_at=now,
+            updated_at=now
+        )
+        doc_insert = new_user.model_dump(by_alias=True, exclude={'id'})
+        if not doc_insert.get("email"):
+            doc_insert.pop("email", None)
+        result = await users_col.insert_one(doc_insert)
+        new_user.id = str(result.inserted_id)
+
+        # Provision default Free subscription
+        try:
             from app.services.credit_service import CreditService
-            await CreditService.get_or_create_subscription(get_database(), user.id)
+            await CreditService.get_or_create_subscription(db, new_user.id)
+        except Exception as e:
+            logger.warning(f"Could not provision subscription for phone user {new_user.id}: {e}")
 
-            logger.info(f"Legacy pending user verified & registered: id={user.id}, phone={mask_phone_number(user_phone)}")
-            return user
+        # Save record in phone_verifications for audit / token linking
+        verification_token = secrets.token_urlsafe(32)
+        try:
+            await db["phone_verifications"].insert_one({
+                "phone_number": user_phone,
+                "verification_token": verification_token,
+                "verified": True,
+                "channel": ch,
+                "verified_at": now,
+                "expires_at": now + timedelta(days=30),
+                "used": False,
+                "user_id": new_user.id
+            })
+            setattr(new_user, "phone_verification_token", verification_token)
+        except Exception:
+            pass
 
-        # 3. For new user verifying phone BEFORE submitting registration form
-        return {
-            "success": True,
-            "message": "Phone number verified successfully.",
-            "phone_number": mask_phone_number(user_phone),
-            "canonical_phone_number": user_phone,
-            "phone_verified": True,
-            "verification_token": verification_token
-        }
+        logger.info(f"New user registered and logged in via phone OTP: id={new_user.id}, phone={mask_phone_number(user_phone)}")
+        return new_user
+
 
     @staticmethod
-    async def resend_otp(identifier: str, country_code: Optional[str] = None):
-        cleaned_id = identifier.strip()
+    async def resend_otp(
+        identifier: str,
+        country_code: Optional[str] = None,
+        channel: str = "sms",
+        mode: Optional[str] = None
+    ):
+        cleaned_id = str(identifier).strip()
+        ch = (channel or "sms").lower().strip()
+        m = mode.lower().strip() if mode else None
         phone_number = None
 
         try:
             phone_number = normalize_phone_number(cleaned_id, country_code=country_code)
-        except InvalidPhoneNumberException:
-            phone_number = None
-
-        collection = await AuthService.get_otp_collection()
-        now = datetime.now(timezone.utc)
-
-        # Check existing OTP document
-        doc = None
-        if phone_number:
-            doc = await collection.find_one({"phone_number": phone_number})
-        if not doc:
-            doc = await collection.find_one({"email": cleaned_id.lower()})
-
-        # Also check if user exists in users collection
-        user = None
-        if phone_number:
-            user = await AuthService.get_user_by_phone(phone_number)
-        if not user:
-            user = await AuthService.get_user_by_email(cleaned_id.lower())
-
-        # If identifier is not a valid phone number and neither existing doc nor user found:
-        if not phone_number and not doc and not user:
+        except InvalidPhoneNumberException as e:
+            if "@" in cleaned_id:
+                return await AuthService.send_otp(cleaned_id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A valid mobile phone number is required to receive OTP."
+                detail=str(e)
             )
 
-        # Enforce 60-second cooldown
+        collection = await AuthService.get_otp_collection()
+        users_col = await AuthService.get_collection()
+        now = datetime.now(timezone.utc)
+
+        # Check existing user
+        existing_user = await users_col.find_one({"phone_number": phone_number})
+
+        # Check existing OTP document
+        doc = await collection.find_one({"phone_number": phone_number})
+        is_existing_login = bool(doc and doc.get("purpose") in ("login_verification", "sign_in_verification"))
+
+        # Explicit mode conflict checks
+        if m == "signup" and existing_user and not is_existing_login:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this mobile number already exists. Please log in."
+            )
+        if m == "login" and not existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No account found with this mobile number. Please sign up."
+            )
+
+        # Check existing OTP document for cooldown (60 seconds)
         if doc and doc.get("last_sent_at"):
             last_sent = doc["last_sent_at"]
             if last_sent.tzinfo is None:
@@ -393,56 +492,62 @@ class AuthService:
                     detail="Please wait 60 seconds before requesting another OTP."
                 )
 
-        target_phone = phone_number or (user.phone_number if user else None) or (doc.get("phone_number") if doc else None)
-        if not target_phone:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="A valid mobile phone number is required to receive OTP."
-            )
-
         otp = generate_secure_otp(6)
         otp_hash = get_password_hash(otp)
         expires_at = now + timedelta(minutes=10)
 
-        # Select appropriate MSG91 template (login vs registration)
-        is_login = bool(user and getattr(user, "hashed_password", "")) or (doc and doc.get("purpose") in ("login_verification", "sign_in_verification"))
+        # Select appropriate SMS template if channel is SMS
+        is_login = (m == "login") or is_existing_login or bool(existing_user and getattr(existing_user, "hashed_password", ""))
         template_id = (
             getattr(settings, "MSG91_TEMPLATE_ID_FOR_LOG", None) if is_login
             else getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
         ) or getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
 
-        # Send via MSG91 SMS gateway
+        # Send via SMSService (delegates to Fast2SMS for sms, or MSG91 WhatsApp for whatsapp)
         await SMSService.send_otp(
-            phone_number=target_phone,
+            phone_number=phone_number,
             otp=otp,
+            channel=ch,
             template_id=template_id
         )
 
         otp_doc = {
-            "user_id": str(user.id) if user else (doc.get("user_id") if doc else None),
-            "phone_number": target_phone,
+            "user_id": str(existing_user["_id"]) if existing_user else None,
+            "phone_number": phone_number,
             "otp_hash": otp_hash,
-            "purpose": "sign_in_verification",
+            "channel": ch,
+            "mode": m or ("login" if is_login else "signup"),
+            "purpose": "login_verification" if is_login else "signup_verification",
             "expires_at": expires_at,
             "attempts": 0,
             "last_sent_at": now,
             "created_at": now
         }
 
+        # Keep recent hashes so either WhatsApp OTP or SMS OTP remains valid
+        existing_hashes = (doc.get("recent_hashes") or []) if doc else []
+        valid_hashes = [h for h in existing_hashes if isinstance(h, dict) and h.get("expires_at", now) > now]
+        if doc and doc.get("otp_hash"):
+            valid_hashes.append({"otp_hash": doc["otp_hash"], "channel": doc.get("channel", "sms"), "expires_at": doc.get("expires_at", now)})
+        valid_hashes.append({"otp_hash": otp_hash, "channel": ch, "expires_at": expires_at})
+        otp_doc["recent_hashes"] = valid_hashes
+
         await collection.update_one(
-            {"phone_number": target_phone},
+            {"phone_number": phone_number},
             {"$set": otp_doc},
             upsert=True
         )
 
         return {
-            "detail": "OTP resent successfully.",
+            "detail": f"OTP sent successfully via {ch.upper()}.",
             "status": "success",
-            "message": "OTP resent successfully.",
-            "phone_number": mask_phone_number(target_phone),
-            "canonical_phone_number": target_phone,
-            "code": "OTP_RESENT"
+            "message": f"OTP sent successfully via {ch.upper()}.",
+            "phone_number": mask_phone_number(phone_number),
+            "canonical_phone_number": phone_number,
+            "channel": ch,
+            "code": "OTP_SENT"
         }
+
 
     @staticmethod
     async def handle_signup(user_in: UserCreate):
@@ -473,11 +578,13 @@ class AuthService:
 
         # Duplicate check on existing users
         existing_phone_user = await AuthService.get_user_by_phone(phone_number)
-        if existing_phone_user and getattr(existing_phone_user, "hashed_password", ""):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="An account with this phone number already exists."
-            )
+        v_token = getattr(user_in, "verification_token", None)
+        if existing_phone_user:
+            if existing_phone_user.email and not v_token:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this phone number already exists."
+                )
 
         existing_email_user = await AuthService.get_user_by_email(raw_email)
         if existing_email_user:
@@ -521,7 +628,7 @@ class AuthService:
         user = User(
             name=user_name,
             phone_number=phone_number,
-            phone_verified=is_phone_verified,
+            phone_verified=is_phone_verified or (existing_phone_user is not None and getattr(existing_phone_user, "phone_verified", False)),
             email=raw_email,
             email_verified=True,
             hashed_password=hashed_password,
@@ -531,18 +638,20 @@ class AuthService:
         )
 
         users_col = await AuthService.get_collection()
-        if existing_phone_user and not getattr(existing_phone_user, "hashed_password", ""):
+        if existing_phone_user:
             from bson import ObjectId
             update_data = {
                 "name": user_name,
                 "email": raw_email,
                 "email_verified": True,
                 "hashed_password": hashed_password,
-                "phone_verified": is_phone_verified,
+                "phone_verified": True,
                 "updated_at": now
             }
             await users_col.update_one({"_id": ObjectId(existing_phone_user.id)}, {"$set": update_data})
             user.id = str(existing_phone_user.id)
+            user.phone_verified = True
+            is_phone_verified = True
         else:
             user_doc = user.model_dump(by_alias=True, exclude={"id"})
             result = await users_col.insert_one(user_doc)

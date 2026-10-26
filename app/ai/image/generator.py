@@ -131,11 +131,9 @@ class ImageGenerator:
 
             client = genai.Client(api_key=settings.GEMINI_API_KEY)
             models_to_test = [
+                "imagen-3.0-generate-002",
                 "gemini-2.5-flash-image",
                 "gemini-3.1-flash-image",
-                "gemini-3.1-flash-lite-image",
-                "gemini-3-pro-image",
-                "gemini-nano-banana-2.1"
             ]
 
             contents = [*pil_refs, prompt] if pil_refs else [prompt]

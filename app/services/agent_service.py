@@ -46,23 +46,29 @@ Analyze the user's intent:
 1. "create_post": If the user wants to generate/create a social media post, image, banner, graphic, flyer, poster, or photo.
 2. "create_reel": If the user wants to generate/create a reel, short video, TikTok, or video script.
 3. "generate_festival_campaign": If the user specifically asks for a festival marketing campaign (e.g. Diwali, Holi, Eid, Navratri).
-4. "chat": For ALL other requests — including marketing advice, questions, growth strategies, caption ideas, taglines, ad copy suggestions, brainstorming, explanations, greetings ("Hi", "Namaste"), or feedback.
+4. "competitor_analysis": If the user asks for competitor analysis, rival comparison, market positioning, or SWOT analysis.
+5. "website_analysis": If the user asks for a website audit, landing page review, SEO analysis, or conversion optimization.
+6. "trend_analysis": If the user asks for social media trends, viral hooks, hashtag strategy, or trend forecasting.
+7. "product_marketing": If the user asks for product marketing copy, buyer personas, USPs, or launch angles.
+8. "brand_strategy": If the user asks for brand guidelines, brand voice, color psychology, or content pillars.
+9. "chat": For ALL other requests — including general marketing advice, brainstorming, questions, greetings, or feedback.
 
 Return ONLY a valid, parseable JSON object without markdown code blocks, following this exact schema:
 {{
-  "action": "create_post" | "create_reel" | "generate_festival_campaign" | "chat",
+  "action": "create_post" | "create_reel" | "generate_festival_campaign" | "competitor_analysis" | "website_analysis" | "trend_analysis" | "product_marketing" | "brand_strategy" | "chat",
   "topic": "Extracted topic, product, or theme",
   "tone": "Extracted tone (e.g., energetic, festive, luxury, modern, professional)",
   "platform": "instagram" | "facebook" | "linkedin",
-  "conversational_response": "A warm, natural, and highly engaging response written in {language} (Hindi/Hinglish). If action is 'create_post' or 'create_reel', introduce the created asset enthusiastically, explaining what was designed. If action is 'chat', provide a thorough, structured, and insightful response answering their question with high-value marketing advice."
+  "conversational_response": "A warm, natural, and highly engaging response written in {language} (Hindi/Hinglish). If generating an asset or intelligence report, introduce what was prepared enthusiastically. If chat, provide insightful advice."
 }}
 """
         client = self._get_gemini_client()
         models_to_try = [
-            getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
-            "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
+            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+            getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+            "gemini-2.5-flash",
             "gemini-flash-latest",
+            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-2.5-pro"),
             "gemini-2.5-pro",
         ]
 
@@ -242,8 +248,84 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
                     "data": response_msg
                 }
 
+            elif action == "competitor_analysis":
+                from app.services.marketing_intelligence_service import MarketingIntelligenceService
+                from app.schemas.ai import CompetitorAnalysisRequest
+                comp_req = CompetitorAnalysisRequest(
+                    industry=business_dict.get("category"),
+                    competitors=[topic] if topic and topic.lower() != command.lower() else []
+                )
+                comp_result = await MarketingIntelligenceService.analyze_competitors(db, user_id, comp_req)
+                response_msg = conversational_response or f"Maine aapke business ke liye comprehensive Competitor Analysis report taiyaar kar di hai! 📊"
+                return {
+                    "success": True,
+                    "action": "competitor_analysis",
+                    "message": response_msg,
+                    "data": comp_result.model_dump()
+                }
+
+            elif action == "website_analysis":
+                from app.services.marketing_intelligence_service import MarketingIntelligenceService
+                from app.schemas.ai import WebsiteAnalysisRequest
+                web_req = WebsiteAnalysisRequest(
+                    website_url=business_dict.get("location") or "yourbusiness.com"
+                )
+                web_result = await MarketingIntelligenceService.analyze_website(db, user_id, web_req)
+                response_msg = conversational_response or f"Maine aapke website aur landing page ka conversion audit complete kar liya hai! 🌐"
+                return {
+                    "success": True,
+                    "action": "website_analysis",
+                    "message": response_msg,
+                    "data": web_result.model_dump()
+                }
+
+            elif action == "trend_analysis":
+                from app.services.marketing_intelligence_service import MarketingIntelligenceService
+                from app.schemas.ai import SocialTrendAnalysisRequest
+                trend_req = SocialTrendAnalysisRequest(
+                    platform=platform,
+                    industry=business_dict.get("category")
+                )
+                trend_result = await MarketingIntelligenceService.analyze_social_trends(db, user_id, trend_req)
+                response_msg = conversational_response or f"Maine {platform.title()} ke latest viral trends aur content hooks analyze kar liye hain! 🔥"
+                return {
+                    "success": True,
+                    "action": "trend_analysis",
+                    "message": response_msg,
+                    "data": trend_result.model_dump()
+                }
+
+            elif action == "product_marketing":
+                from app.services.marketing_intelligence_service import MarketingIntelligenceService
+                from app.schemas.ai import ProductMarketingRequest
+                prod_req = ProductMarketingRequest(
+                    product_name=topic or "Core Product",
+                    product_category=business_dict.get("category")
+                )
+                prod_result = await MarketingIntelligenceService.generate_product_marketing(db, user_id, prod_req)
+                response_msg = conversational_response or f"Maine {topic or 'product'} ke liye USPs aur high-converting copy generate kar di hai! 🛍️"
+                return {
+                    "success": True,
+                    "action": "product_marketing",
+                    "message": response_msg,
+                    "data": prod_result.model_dump()
+                }
+
+            elif action == "brand_strategy":
+                from app.services.marketing_intelligence_service import MarketingIntelligenceService
+                from app.schemas.ai import BrandStrategyRequest
+                brand_req = BrandStrategyRequest(business_id=business_id)
+                brand_result = await MarketingIntelligenceService.generate_brand_strategy(db, user_id, brand_req)
+                response_msg = conversational_response or f"Maine aapke brand ke liye complete voice guidelines aur content pillars create kar diye hain! 🎯"
+                return {
+                    "success": True,
+                    "action": "brand_strategy",
+                    "message": response_msg,
+                    "data": brand_result.model_dump()
+                }
+
             else:  # "chat", advice, consultation, greetings, strategy
-                response_msg = conversational_response or "Main aapki marketing mein kaise madad kar sakta hoon? Aap mujhse post, reel, ad copy ya marketing strategy banwa sakte hain! 🚀"
+                response_msg = conversational_response or "Main aapki marketing mein kaise madad kar sakta hoon? Aap mujhse post, reel, ad copy, competitor analysis ya marketing strategy banwa sakte hain! 🚀"
                 return {
                     "success": True,
                     "action": "chat",

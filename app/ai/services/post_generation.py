@@ -105,11 +105,11 @@ class PostGenerationService:
 
         # Priority list of models with proven Gemini API availability
         models_to_try = [
-            getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
-            "gemini-flash-lite-latest",
-            "gemini-3.8-flash",
+            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+            getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
+            "gemini-2.5-flash",
             "gemini-flash-latest",
-            "gemini-3-flash-preview",
+            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-2.5-pro"),
             "gemini-2.5-pro",
         ]
         unique_models = []

@@ -290,7 +290,7 @@ async def generate_image_endpoint(request: ImageGenerationRequest, current_user:
                     "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
                 )
                 v_res = client.models.generate_content(
-                    model=getattr(settings, "GEMINI_MODEL", "gemini-flash-lite-latest") or "gemini-flash-lite-latest",
+                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash"),
                     contents=[*pil_refs, vision_prompt]
                 )
                 if v_res and v_res.text:
@@ -331,6 +331,117 @@ async def generate_image_endpoint(request: ImageGenerationRequest, current_user:
             "image_url": res.get("image_url", "")
         }
     }
+
+
+# ============================================================================
+# Advanced Marketing & Competitive Intelligence Endpoints
+# ============================================================================
+
+from app.services.marketing_intelligence_service import MarketingIntelligenceService
+from app.schemas.ai import (
+    CompetitorAnalysisRequest,
+    CompetitorAnalysisResponse,
+    WebsiteAnalysisRequest,
+    WebsiteAnalysisResponse,
+    SocialTrendAnalysisRequest,
+    SocialTrendAnalysisResponse,
+    ProductMarketingRequest,
+    ProductMarketingResponse,
+    BrandStrategyRequest,
+    BrandStrategyResponse,
+)
+
+
+@router.post("/competitor-analysis", response_model=dict)
+async def analyze_competitors_endpoint(
+    request: CompetitorAnalysisRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Analyzes competitive landscape, competitor strengths/weaknesses, and strategic differentiators
+    grounded in verified business context.
+    """
+    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    result = await MarketingIntelligenceService.analyze_competitors(db, user_id, request)
+    return {
+        "success": True,
+        "message": "Competitor analysis completed successfully",
+        "data": result.model_dump()
+    }
+
+
+@router.post("/website-analysis", response_model=dict)
+async def analyze_website_endpoint(
+    request: WebsiteAnalysisRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Conducts an AI audit of conversion funnels, brand clarity, and SEO opportunities for the user's web storefront.
+    """
+    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    result = await MarketingIntelligenceService.analyze_website(db, user_id, request)
+    return {
+        "success": True,
+        "message": "Website analysis completed successfully",
+        "data": result.model_dump()
+    }
+
+
+@router.post("/trend-analysis", response_model=dict)
+async def analyze_social_trends_endpoint(
+    request: SocialTrendAnalysisRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Extracts viral social media trends, high-converting hooks, audio recommendations, and content calendar ideas.
+    """
+    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    result = await MarketingIntelligenceService.analyze_social_trends(db, user_id, request)
+    return {
+        "success": True,
+        "message": "Social media trend analysis completed successfully",
+        "data": result.model_dump()
+    }
+
+
+@router.post("/product-marketing", response_model=dict)
+async def generate_product_marketing_endpoint(
+    request: ProductMarketingRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Derives unique selling propositions, target buyer personas, and multi-channel marketing copy directly from product specs.
+    """
+    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    result = await MarketingIntelligenceService.generate_product_marketing(db, user_id, request)
+    return {
+        "success": True,
+        "message": "Product marketing strategy generated successfully",
+        "data": result.model_dump()
+    }
+
+
+@router.post("/brand-strategy", response_model=dict)
+async def generate_brand_strategy_endpoint(
+    request: BrandStrategyRequest,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Develops comprehensive brand voice guidelines, color psychology, and content pillars anchored in the saved Brand Kit.
+    """
+    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    result = await MarketingIntelligenceService.generate_brand_strategy(db, user_id, request)
+    return {
+        "success": True,
+        "message": "Brand strategy generated successfully",
+        "data": result.model_dump()
+    }
+
 
 
 

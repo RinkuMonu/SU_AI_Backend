@@ -117,7 +117,8 @@ class GoogleService:
         account_type: str = 'business',
         mode: str = 'login',
         phone_number: Optional[str] = None,
-        country_code: Optional[str] = None
+        country_code: Optional[str] = None,
+        phone_verification_token: Optional[str] = None
     ) -> Tuple[User, str, str]:
         user_info = None
         client_id, _ = GoogleService.get_credentials()
@@ -155,7 +156,7 @@ class GoogleService:
         picture_url = user_info.get('picture')
         now = datetime.now(timezone.utc)
 
-        # Normalize phone number if supplied by user during registration
+        # Normalize phone number if supplied directly
         norm_phone = None
         if phone_number and str(phone_number).strip():
             from app.utils.phone import normalize_phone_number, InvalidPhoneNumberException
@@ -164,10 +165,37 @@ class GoogleService:
             except InvalidPhoneNumberException as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
-        # Check if user already exists in canonical 'users' collection
-        existing = await db['users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
+        m = (mode or "login").lower().strip()
 
-        if existing:
+        # Check if an existing account matches email or Google ID
+        existing = await db['users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
+        if not existing:
+            pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
+            if pending_existing:
+                user_id = str(pending_existing['_id'])
+                pending_existing['googleId'] = google_id
+                pending_existing['email_verified'] = True
+                pending_existing['email_verified_at'] = now
+                providers = pending_existing.get('authProviders', [])
+                if 'google' not in providers:
+                    providers.append('google')
+                    pending_existing['authProviders'] = providers
+                if picture_url and not pending_existing.get('profileImageUrl'):
+                    pending_existing['profileImageUrl'] = picture_url
+                pending_existing['updated_at'] = now
+                await db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': pending_existing}, upsert=True)
+                try:
+                    await db['pending_users'].delete_one({'_id': ObjectId(user_id)})
+                except Exception:
+                    pass
+                existing = await db['users'].find_one({'_id': ObjectId(user_id)})
+
+        if m == "login":
+            if not existing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No registered account found with this Google email. Please sign up first."
+                )
             user_id = str(existing['_id'])
             update_data: Dict[str, Any] = {
                 'googleId': google_id,
@@ -182,97 +210,119 @@ class GoogleService:
                 providers.append('google')
                 update_data['authProviders'] = providers
 
-            # If existing user does not yet have a phone, persist supplied phone as unverified
             if norm_phone and not existing.get('phone_number'):
-                # Check for collision with another user
-                conflict = await db['users'].find_one({'phone_number': norm_phone, '_id': {'$ne': existing['_id']}})
-                if conflict:
-                    raise HTTPException(status_code=400, detail='Mobile phone number is already registered to another account.')
                 update_data['phone_number'] = norm_phone
-                update_data['phone_verified'] = False
 
             await db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': update_data})
             user_doc = await db['users'].find_one({'_id': ObjectId(user_id)})
             user = User.from_mongo(user_doc)
             user.id = user_id
             logger.info(f"Existing user {user_id} logged in with Google (email={email}).")
+
         else:
-            # Check if user existed in legacy pending_users
-            pending_existing = await db['pending_users'].find_one({'$or': [{'email': email}, {'googleId': google_id}]})
-            if pending_existing:
-                user_id = str(pending_existing['_id'])
-                pending_existing['googleId'] = google_id
-                pending_existing['email_verified'] = True
-                pending_existing['email_verified_at'] = now
-                providers = pending_existing.get('authProviders', [])
-                if 'google' not in providers:
-                    providers.append('google')
-                    pending_existing['authProviders'] = providers
-                if norm_phone and not pending_existing.get('phone_number'):
-                    pending_existing['phone_number'] = norm_phone
-                    pending_existing['phone_verified'] = False
-
-                if picture_url and not pending_existing.get('profileImageUrl'):
-                    pending_existing['profileImageUrl'] = picture_url
-                if 'onboardingCompleted' not in pending_existing:
-                    pending_existing['onboardingCompleted'] = False
-
-                # Migrate from pending_users into canonical users collection
-                pending_existing['updated_at'] = now
-                await db['users'].update_one({'_id': ObjectId(user_id)}, {'$set': pending_existing}, upsert=True)
-                try:
-                    await db['pending_users'].delete_one({'_id': ObjectId(user_id)})
-                except Exception:
-                    pass
-                user = User.from_mongo(pending_existing)
-                user.id = user_id
-                logger.info(f"Pending user {user_id} migrated to canonical users via Google auth.")
-            else:
-                # Brand new Google user -> automatically register directly into canonical users collection
-                logger.info(f"Unregistered Google user ({email}) - auto-registering into canonical users.")
-
-                # Brand new user -> register directly into canonical 'users' collection
-                if norm_phone:
-                    conflict = await db['users'].find_one({'phone_number': norm_phone})
-                    if conflict:
-                        raise HTTPException(status_code=400, detail='Mobile phone number is already registered to another account.')
-
-                random_pwd = get_password_hash(secrets.token_urlsafe(32))
-                user = User(
-                    name=full_name,
-                    firstName=first_name,
-                    lastName=last_name,
-                    email=email,
-                    phone_number=norm_phone,
-                    phone_verified=False,  # Unverified until verified via OTP
-                    hashed_password=random_pwd,
-                    accountType=account_type or 'business',
-                    authProviders=['google'],
-                    googleId=google_id,
-                    email_verified=True,
-                    email_verified_at=now,
-                    termsAcceptedAt=now,
-                    profileImageUrl=picture_url,
-                    role=None,  # Requires role selection on first login
-                    onboardingCompleted=False,
-                    onboarding_step=1,
-                    created_at=now,
-                    updated_at=now
+            # mode == "signup"
+            # 1. Reject if email or Google ID already exists
+            if existing:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this email already exists. Please log in."
                 )
-                doc = user.model_dump(by_alias=True, exclude={'id'})
 
-                result = await db['users'].insert_one(doc)
-                user.id = str(result.inserted_id)
+            # 2. If phone verification token is passed, validate it and check if phone already registered
+            verified_phone = norm_phone
+            phone_is_verified = False
 
-                # Provision default Free subscription
-                try:
-                    from app.services.credit_service import CreditService
-                    await CreditService.get_or_create_subscription(db, user.id)
-                except Exception as e:
-                    logger.warning(f"Could not provision subscription for Google user {user.id}: {e}")
+            if phone_verification_token:
+                pv = await db["phone_verifications"].find_one({
+                    "verification_token": phone_verification_token,
+                    "expires_at": {"$gt": now}
+                })
+                if pv and pv.get("phone_number"):
+                    verified_phone = pv["phone_number"]
+                    phone_is_verified = True
+                    # Check if phone already registered to another account
+                    conflict_phone = await db['users'].find_one({"phone_number": verified_phone})
+                    if conflict_phone:
+                        if str(conflict_phone.get("_id")) == str(pv.get("user_id")) or not conflict_phone.get("email"):
+                            user_id = str(conflict_phone["_id"])
+                            await db['users'].update_one(
+                                {"_id": conflict_phone["_id"]},
+                                {"$set": {
+                                    "email": email,
+                                    "googleId": google_id,
+                                    "email_verified": True,
+                                    "phone_verified": True,
+                                    "name": full_name or conflict_phone.get("name"),
+                                    "firstName": first_name or conflict_phone.get("firstName"),
+                                    "lastName": last_name or conflict_phone.get("lastName"),
+                                    "profileImageUrl": picture_url or conflict_phone.get("profileImageUrl"),
+                                    "updated_at": now
+                                }, "$addToSet": {"authProviders": "google"}}
+                            )
+                            user_doc = await db['users'].find_one({"_id": ObjectId(user_id)})
+                            user = User.from_mongo(user_doc)
+                            user.phone_verified = True
+                            user.id = user_id
+                            jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
+                            return user, jwt_access_token, jwt_refresh_token
+                        else:
+                            raise HTTPException(
+                                status_code=status.HTTP_409_CONFLICT,
+                                detail="An account with this mobile number already exists. Please log in."
+                            )
+                    await db["phone_verifications"].update_one(
+                        {"_id": pv["_id"]},
+                        {"$set": {"used": True, "used_at": now}}
+                    )
+            elif norm_phone:
+                conflict_phone = await db['users'].find_one({"phone_number": norm_phone})
+                if conflict_phone:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="An account with this mobile number already exists. Please log in."
+                    )
 
-                logger.info(f"New user registered directly into users via Google: id={user.id}, email={email}, phone={norm_phone}")
+            # 3. Create new user via Google
+            random_pwd = get_password_hash(secrets.token_urlsafe(32))
+            auth_provs = ['google']
+            if phone_is_verified:
+                auth_provs.append('phone')
+
+            user = User(
+                name=full_name,
+                firstName=first_name,
+                lastName=last_name,
+                email=email,
+                phone_number=verified_phone,
+                phone_verified=phone_is_verified,
+                hashed_password=random_pwd,
+                accountType=account_type or 'business',
+                authProviders=auth_provs,
+                googleId=google_id,
+                email_verified=True,
+                email_verified_at=now,
+                termsAcceptedAt=now,
+                profileImageUrl=picture_url,
+                role=None,
+                onboardingCompleted=False,
+                onboarding_step=1,
+                created_at=now,
+                updated_at=now
+            )
+            doc = user.model_dump(by_alias=True, exclude={'id'})
+            result = await db['users'].insert_one(doc)
+            user.id = str(result.inserted_id)
+
+            # Provision default Free subscription
+            try:
+                from app.services.credit_service import CreditService
+                await CreditService.get_or_create_subscription(db, user.id)
+            except Exception as e:
+                logger.warning(f"Could not provision subscription for Google user {user.id}: {e}")
+
+            logger.info(f"New user registered directly into users via Google: id={user.id}, email={email}")
 
         # Issue access & refresh tokens via canonical session creator
         jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
         return user, jwt_access_token, jwt_refresh_token
+

@@ -23,7 +23,10 @@ class Settings(BaseSettings):
 
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-flash-lite-latest"
+    GEMINI_BACKUP_API_KEY: str | None = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+    GEMINI_FAST_MODEL: str = "gemini-2.5-flash"
+    GEMINI_REASONING_MODEL: str = "gemini-2.5-pro"
     GEMINI_VIDEO_MODEL: str = "veo-3.1-fast-generate-preview"
     VIDEO_PROVIDER: str = "veo"
     VOICE_PROVIDER: str = "gtts"
@@ -138,7 +141,18 @@ class Settings(BaseSettings):
             self.GOOGLE_CLIENT_SECRET = self.google_client_secret
         if self.MONGODB_URI and (not self.MONGO_URI or self.MONGO_URI == "mongodb://localhost:27017"):
             self.MONGO_URI = self.MONGODB_URI
+        if not self.MSG91_WHATSAPP_AUTHKEY and os.getenv("MSG91_WHATSAPP_AUTHKEY"):
+            self.MSG91_WHATSAPP_AUTHKEY = os.getenv("MSG91_WHATSAPP_AUTHKEY")
+        if not self.FAST2SMS_API_KEY and os.getenv("FAST2SMS_API_KEY"):
+            self.FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY")
+        if not self.FAST2SMS_OTP_ID and os.getenv("FAST2SMS_OTP_ID"):
+            self.FAST2SMS_OTP_ID = os.getenv("FAST2SMS_OTP_ID")
+        if not self.GEMINI_API_KEY and self.GEMINI_BACKUP_API_KEY:
+            self.GEMINI_API_KEY = self.GEMINI_BACKUP_API_KEY
+        elif not self.GEMINI_API_KEY and os.getenv("GEMINI_API_KEY"):
+            self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
         return self
+
 
     # SMS / MSG91 Configuration
     SMS_PROVIDER: str = "msg91"
@@ -148,8 +162,20 @@ class Settings(BaseSettings):
     MSG91_TEMPLATE_ID_FOR_FORGET_PASWORD: str | None = None
     MSG91_TEMPLATE_ID_FOR_RESET_MPIN: str | None = None
 
+    # Fast2SMS Configuration
+    FAST2SMS_API_KEY: Optional[str] = None
+    FAST2SMS_OTP_ID: Optional[str] = None
+
+    # MSG91 WhatsApp Configuration
+    MSG91_WHATSAPP_AUTHKEY: Optional[str] = None
+    MSG91_WHATSAPP_INTEGRATED_NUMBER: str = "917733886507"
+    MSG91_WHATSAPP_TEMPLATE_NAME: str = "otp_template"
+    MSG91_WHATSAPP_LANGUAGE: str = "en"
+    MSG91_WHATSAPP_NAMESPACE: str = "a84d2159_8fa6_4354_9967_74f013129d57"
+
     _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
     model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="ignore")
 
 
 settings = Settings()
+

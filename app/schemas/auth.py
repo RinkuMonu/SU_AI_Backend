@@ -211,6 +211,9 @@ class GoogleAuthLoginRequest(BaseModel):
     mobile: Optional[str] = None
     country_code: Optional[str] = None
     countryCode: Optional[str] = None
+    phone_verification_token: Optional[str] = None
+    verification_token: Optional[str] = None
+
 
 
 class LinkedInAuthLoginRequest(BaseModel):

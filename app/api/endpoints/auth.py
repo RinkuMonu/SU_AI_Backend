@@ -1,4 +1,5 @@
 import logging
+import secrets
 import urllib.parse
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta, timezone
@@ -89,6 +90,26 @@ async def signup(request: Request, response: Response):
                 status_code=status.HTTP_409_CONFLICT,
                 detail="An account with this email is already registered. Please log in."
             )
+
+    # Check duplicate mobile number
+    v_token = body.get("verification_token")
+    if raw_phone:
+        from app.utils.phone import normalize_phone_number, InvalidPhoneNumberException
+        try:
+            norm_p = normalize_phone_number(str(raw_phone).strip())
+            existing_p = await db["users"].find_one({"phone_number": norm_p})
+            if existing_p and existing_p.get("email") and existing_p.get("hashed_password"):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this mobile number already exists. Please log in."
+                )
+            elif existing_p and not v_token:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An account with this mobile number already exists. Please log in."
+                )
+        except InvalidPhoneNumberException:
+            pass
             
     # If raw_otp is provided or firstName+lastName without phone OTP requirement
     if raw_otp or (body.get("firstName") and body.get("lastName")) or (body.get("fullName") and not raw_phone):
@@ -145,7 +166,7 @@ async def signup(request: Request, response: Response):
 
 @router.post("/verify-otp")
 @router.post("/otp/verify-phone")
-async def verify_otp(request: OTPVerifyRequest):
+async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
     if not identifier:
         raise HTTPException(
@@ -154,69 +175,53 @@ async def verify_otp(request: OTPVerifyRequest):
         )
 
     cc = request.country_code or request.countryCode
-    result = await AuthService.verify_otp(identifier, request.otp, country_code=cc)
-    if isinstance(result, dict) and not isinstance(result, User):
-        users = await AuthService.get_collection()
-        norm_phone = result.get("canonical_phone_number") or identifier
-        user_doc = await users.find_one({"phone_number": norm_phone})
-        
-        if not user_doc:
-            from datetime import datetime, timezone
-            now = datetime.now(timezone.utc)
-            new_user = User(
-                name="User",
-                phone_number=norm_phone,
-                phone_verified=True,
-                email=f"{norm_phone.lstrip('+')}@phone.user",
-                email_verified=True,
-                hashed_password="",
-                role=None,
-                created_at=now,
-                updated_at=now
-            )
-            doc_to_insert = new_user.model_dump(by_alias=True, exclude={"id"})
-            inserted = await users.insert_one(doc_to_insert)
-            new_user.id = str(inserted.inserted_id)
-            user = new_user
-            try:
-                from app.services.credit_service import CreditService
-                await CreditService.get_or_create_subscription(get_database(), user.id)
-            except Exception:
-                pass
-        else:
-            await users.update_one({"_id": user_doc["_id"]}, {"$set": {"phone_verified": True}})
-            user_doc["phone_verified"] = True
-            user = User(**user_doc)
-            
-        access_token = create_access_token(subject=str(user.id))
-        role = getattr(user, "role", None)
-        requires_role = role is None or role in ["user", ""]
-        dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
-        
-        user_resp = UserResponse(
-            id=str(user.id),
-            name=user.name,
-            phone_number=getattr(user, "phone_number", None),
-            phone_verified=True,
-            email=getattr(user, "email", None),
-            role=role,
-            email_verified=getattr(user, "email_verified", True)
-        )
-        return {
-            "success": True,
-            "message": "Phone number verified successfully.",
-            "access_token": access_token,
-            "accessToken": access_token,
-            "token": access_token,
-            "verification_token": result.get("verification_token") or access_token,
-            "user": user_resp.model_dump(),
-            "role": role,
-            "requires_role_selection": requires_role,
-            "dashboard_route": dashboard_route
-        }
+    channel = request.channel or "sms"
+    mode = request.mode
+    result = await AuthService.verify_otp(identifier, request.otp, country_code=cc, channel=channel, mode=mode)
 
-    user = result
-    access_token = create_access_token(subject=str(user.id))
+    user = result if isinstance(result, User) else None
+    if isinstance(result, dict) and "user" in result and isinstance(result["user"], User):
+        user = result["user"]
+
+    v_token = getattr(user, "phone_verification_token", None) or getattr(user, "verification_token", None)
+    if not v_token and isinstance(result, dict):
+        v_token = result.get("verification_token") or result.get("phone_verification_token")
+    if not v_token:
+        db = get_database()
+        user_phone = (getattr(user, "phone_number", None) if user else None) or identifier
+        pv_doc = await db["phone_verifications"].find_one({"phone_number": user_phone}, sort=[("_id", -1)])
+        if pv_doc:
+            v_token = pv_doc.get("verification_token")
+        if not v_token:
+            v_token = secrets.token_urlsafe(32)
+            await db["phone_verifications"].insert_one({
+                "phone_number": user_phone,
+                "verification_token": v_token,
+                "verified": True,
+                "channel": channel,
+                "verified_at": datetime.now(timezone.utc),
+                "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+                "used": False,
+                "user_id": str(user.id) if user else None
+            })
+
+    if not user:
+        if isinstance(result, User):
+            user = result
+        else:
+            users_col = await AuthService.get_collection()
+            clean_id = str(identifier).strip()
+            user_doc = await users_col.find_one({"phone_number": clean_id})
+            if user_doc:
+                user = User(**user_doc)
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification failed.")
+
+    db = get_database()
+    jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id))
+    if response:
+        set_refresh_cookie(response, jwt_refresh_token)
 
     role = getattr(user, "role", None)
     requires_role = role is None or role in ["user", ""]
@@ -226,17 +231,24 @@ async def verify_otp(request: OTPVerifyRequest):
         id=str(user.id),
         name=user.name,
         phone_number=getattr(user, "phone_number", None),
-        phone_verified=getattr(user, "phone_verified", False),
+        phone_verified=getattr(user, "phone_verified", True),
         email=getattr(user, "email", None),
         role=role,
         email_verified=getattr(user, "email_verified", True)
     )
     return TokenResponse(
-        access_token=access_token,
+        access_token=jwt_access_token,
+        token=jwt_access_token,
         user=user_resp,
         role=role,
+        phone_verified=True,
         requires_role_selection=requires_role,
-        dashboard_route=dashboard_route
+        dashboard_route=dashboard_route,
+        phone_verification_token=v_token,
+        verification_token=v_token,
+        next_step="select_role" if requires_role else "dashboard",
+        success=True,
+        message="OTP verified successfully. Logged in."
     )
 
 
@@ -248,12 +260,16 @@ async def resend_otp(request: OTPResendRequest):
     if not identifier:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Phone number or identifier is required to resend OTP."
+            detail="Phone number or identifier is required to send OTP."
         )
 
     cc = request.country_code or request.countryCode
-    result = await AuthService.resend_otp(identifier, country_code=cc)
+    channel = request.channel or "sms"
+    mode = request.mode
+    result = await AuthService.resend_otp(identifier, country_code=cc, channel=channel, mode=mode)
     return result
+
+
 
 
 @router.post("/login")
@@ -1293,6 +1309,7 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
     account_type = req.accountType or req.account_type or "business"
     raw_phone = req.phone_number or req.phone or req.mobile
     country_code = req.country_code or req.countryCode
+    phone_verification_token = req.phone_verification_token or req.verification_token
     user, access_token_jwt, refresh_token_jwt = await GoogleService.authenticate_google_user(
         db=db,
         code=req.code,
@@ -1303,7 +1320,9 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         mode=mode,
         phone_number=raw_phone,
         country_code=country_code,
+        phone_verification_token=phone_verification_token,
     )
+
     set_refresh_cookie(response, refresh_token_jwt)
 
     role = getattr(user, "role", None)

@@ -53,7 +53,7 @@ class ContentService:
                 "business_id": business_id,
                 "generation_type": content_type,
                 "provider": "gemini",
-                "model_name": "gemini-flash-lite-latest",
+                "model_name": getattr(settings, "GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
                 "input_params": {
                     "product_id": payload.get("product_id"),
                     "product_ids": payload.get("product_ids"),
