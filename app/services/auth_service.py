@@ -1311,12 +1311,13 @@ class AuthService:
         """
         from bson import ObjectId
 
-        # 1. Reject attempts to modify other users' roles
+        # 1. Reject attempts to modify other users' roles (only if valid ObjectId pointing to a different user)
         if client_user_id and str(client_user_id).strip() != str(user_id).strip():
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Attempt to change another user's role is forbidden."
-            )
+            if ObjectId.is_valid(client_user_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Attempt to change another user's role is forbidden."
+                )
 
         # 2. Validate requested role
         if not requested_role or not isinstance(requested_role, str) or not requested_role.strip():

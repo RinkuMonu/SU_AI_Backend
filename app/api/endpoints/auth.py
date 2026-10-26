@@ -1278,7 +1278,7 @@ async def google_connect(redirect_uri: Optional[str] = Query(None)):
     return {"success": True, "authorization_url": auth_url, "url": auth_url}
 
 @router.post("/google/login")
-async def google_login(req: GoogleAuthLoginRequest, response: Response):
+async def google_login(req: GoogleAuthLoginRequest, response: Response, request: Request = None):
     """Authenticate existing user via Google OAuth 2.0 (or register if mode='signup')."""
     db = get_database()
     if not req.code and not req.access_token and not req.id_token:
@@ -1287,7 +1287,8 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
             detail="Please provide 'code', 'access_token', or 'id_token'."
         )
 
-    mode = (req.mode or "login").lower().strip()
+    path_mode = "signup" if (request and "signup" in str(request.url.path)) else "login"
+    mode = (req.mode or path_mode).lower().strip()
     redirect_uri = req.redirect_uri or req.redirectUri
     account_type = req.accountType or req.account_type or "business"
     raw_phone = req.phone_number or req.phone or req.mobile
@@ -1333,9 +1334,16 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
 
+    onboarding_completed = bool(getattr(user, "onboardingCompleted", False))
+    is_existing = (not requires_role) and onboarding_completed
+    next_step = "dashboard" if is_existing else "role_selection"
     return {
         "success": True,
         "message": "Google login successful" if mode == "login" else "Google registration successful",
+        "exists": is_existing,
+        "is_existing_user": is_existing,
+        "user_exists": is_existing,
+        "next_step": next_step,
         "access_token": access_token_jwt,
         "accessToken": access_token_jwt,
         "token": access_token_jwt,
@@ -1355,11 +1363,11 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response):
     }
 
 
-@router.post("/google/signup", status_code=status.HTTP_201_CREATED)
-async def google_signup(req: GoogleAuthLoginRequest, response: Response):
-    """Explicitly register a new user via Google OAuth 2.0 (delegates to canonical google_login)."""
+@router.post("/google/signup")
+async def google_signup(req: GoogleAuthLoginRequest, response: Response, request: Request = None):
+    """Register new user via Google OAuth 2.0."""
     req.mode = "signup"
-    return await google_login(req, response)
+    return await google_login(req=req, response=response, request=request)
 
 @router.get("/google/callback")
 async def google_callback(
@@ -1471,7 +1479,8 @@ async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
             detail="Please provide 'code' or 'access_token'."
         )
 
-    mode = (req.mode or "login").lower().strip()
+    path_mode = "signup" if (request and "signup" in str(request.url.path)) else "login"
+    mode = (req.mode or path_mode).lower().strip()
     user, access_token_jwt, refresh_token_jwt = await LinkedInService.authenticate_linkedin_user(
         db=db,
         code=req.code,
