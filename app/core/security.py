@@ -93,8 +93,27 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         
     business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
+    def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
+        if not role:
+            return None
+        r = str(role).lower().strip()
+        if r in ["", "none", "null", "user"]:
+            return None
+        if r in ["businessman", "business", "merchant", "brand", "entrepreneur", "corporate"]:
+            return "businessman"
+        if r in ["influencer", "creator"]:
+            return "influencer"
+        if r in ["admin", "administrator", "superuser"]:
+            return "admin"
+        return r
+
     user_phone = user_doc.get("phone_number")
-    user_role = user_doc.get("role")
+    raw_role = user_doc.get("role")
+    raw_account_type = user_doc.get("accountType")
+    user_role = normalize_role(raw_role, raw_account_type)
+    if not user_role and raw_role:
+        user_role = raw_role
+
     phone_verified = user_doc.get("phone_verified", False)
     if not user_phone or user_role in ["businessman", "influencer", "admin"]:
         phone_verified = True
@@ -107,7 +126,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         "phone_verified": phone_verified,
         "email": user_doc.get("email", ""),
         "role": user_role,
-        "accountType": user_doc.get("accountType", "personal"),
+        "accountType": raw_account_type or ("business" if user_role == "businessman" else "personal"),
         "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", True)),
         "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", True)),
         "onboardingCompleted": user_doc.get("onboardingCompleted", False),
@@ -143,8 +162,28 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
             if not user_doc:
                 return None
         business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
+        
+        def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
+            if not role:
+                return None
+            r = str(role).lower().strip()
+            if r in ["", "none", "null", "user"]:
+                return None
+            if r in ["businessman", "business", "merchant", "brand", "entrepreneur", "corporate"]:
+                return "businessman"
+            if r in ["influencer", "creator"]:
+                return "influencer"
+            if r in ["admin", "administrator", "superuser"]:
+                return "admin"
+            return r
+
         user_phone = user_doc.get("phone_number")
-        user_role = user_doc.get("role")
+        raw_role = user_doc.get("role")
+        raw_account_type = user_doc.get("accountType")
+        user_role = normalize_role(raw_role, raw_account_type)
+        if not user_role and raw_role:
+            user_role = raw_role
+
         phone_verified = user_doc.get("phone_verified", False)
         if not user_phone or user_role in ["businessman", "influencer", "admin"]:
             phone_verified = True
@@ -157,7 +196,7 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
             "phone_verified": phone_verified,
             "email": user_doc.get("email", ""),
             "role": user_role,
-            "accountType": user_doc.get("accountType", "personal"),
+            "accountType": raw_account_type or ("business" if user_role == "businessman" else "personal"),
             "onboardingCompleted": user_doc.get("onboardingCompleted", False),
             "is_pending": is_pending,
             "business_id": str(business["_id"]) if business else None
@@ -165,21 +204,41 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
     except Exception:
         return None
 
+def normalize_role_helper(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
+    if not role:
+        return None
+    r = str(role).lower().strip()
+    if r in ["", "none", "null", "user"]:
+        return None
+    if r in ["businessman", "business", "merchant", "brand", "entrepreneur", "corporate"]:
+        return "businessman"
+    if r in ["influencer", "creator"]:
+        return "influencer"
+    if r in ["admin", "administrator", "superuser"]:
+        return "admin"
+    return r
+
 def require_role(*allowed_roles: str):
+    normalized_allowed = {normalize_role_helper(r) for r in allowed_roles if r}
+
     async def dependency(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
-        user_role = current_user.get("role")
+        user_role = normalize_role_helper(current_user.get("role"))
+        if not user_role and current_user.get("business_id"):
+            user_role = "businessman"
+
         if not user_role:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Role selection required before accessing this resource."
             )
-        if user_role == "admin" or user_role in allowed_roles:
+
+        if user_role == "admin" or user_role in normalized_allowed:
             return current_user
 
         detail_msg = f"Access denied. Required role: {', '.join(allowed_roles)}."
-        if "businessman" in allowed_roles and "influencer" not in allowed_roles:
+        if "businessman" in normalized_allowed and "influencer" not in normalized_allowed:
             detail_msg = "Access denied. Businessman role required."
-        elif "influencer" in allowed_roles and "businessman" not in allowed_roles:
+        elif "influencer" in normalized_allowed and "businessman" not in normalized_allowed:
             detail_msg = "Access denied. Influencer/Creator role required."
 
         raise HTTPException(
@@ -190,5 +249,6 @@ def require_role(*allowed_roles: str):
 
 require_businessman = require_role("businessman")
 require_influencer = require_role("influencer")
+
 
 

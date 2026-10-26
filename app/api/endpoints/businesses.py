@@ -11,18 +11,54 @@ router = APIRouter()
 @router.post("/")
 async def create_business(req: BusinessCreate, current_user: CurrentUser = Depends(get_current_user)):
     db = get_database()
-    if current_user["accountType"] != "business":
-        raise HTTPException(status_code=403, detail="Personal users cannot create business profiles")
-        
-    existing = await db["businesses"].find_one({"ownerId": current_user["id"]})
+    uid = str(current_user["id"])
+    now = datetime.now(timezone.utc)
+    
+    # Auto-upgrade user account type and role to business/businessman
+    if ObjectId.is_valid(uid):
+        await db["users"].update_one(
+            {"_id": ObjectId(uid)},
+            {"$set": {"accountType": "business", "role": "businessman", "updated_at": now}}
+        )
+        await db["pending_users"].update_one(
+            {"_id": ObjectId(uid)},
+            {"$set": {"accountType": "business", "role": "businessman", "updated_at": now}}
+        )
+
+    # Check existing business by ownerId or owner_id
+    existing = await db["businesses"].find_one({
+        "$or": [
+            {"ownerId": uid},
+            {"owner_id": uid},
+            {"ownerId": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+            {"owner_id": ObjectId(uid) if ObjectId.is_valid(uid) else uid}
+        ]
+    })
+    
+    update_data = req.model_dump(exclude_none=True)
+    update_data["updated_at"] = now
+    
     if existing:
-        raise HTTPException(status_code=409, detail="Business profile already exists for this user")
-        
+        await db["businesses"].update_one(
+            {"_id": existing["_id"]},
+            {"$set": update_data}
+        )
+        updated = await db["businesses"].find_one({"_id": existing["_id"]})
+        updated["id"] = str(updated.pop("_id"))
+        return {
+            "success": True,
+            "message": "Business profile updated successfully",
+            "data": updated
+        }
+
     business = Business(
-        ownerId=current_user["id"],
+        ownerId=uid,
         **req.model_dump()
     )
     doc = business.model_dump(by_alias=True, exclude={"id"})
+    doc["owner_id"] = uid
+    doc["created_at"] = now
+    doc["updated_at"] = now
     res = await db["businesses"].insert_one(doc)
     doc["id"] = str(res.inserted_id)
     doc.pop("_id", None)
@@ -31,6 +67,7 @@ async def create_business(req: BusinessCreate, current_user: CurrentUser = Depen
         "message": "Business created successfully",
         "data": doc
     }
+
 
 @router.get("/")
 async def get_businesses(current_user: CurrentUser = Depends(get_current_user)):

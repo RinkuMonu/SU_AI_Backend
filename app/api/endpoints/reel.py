@@ -305,9 +305,15 @@ async def generate_reel(
             name = "Mock Business"
         business = MockBusiness()
         
-    brand = await get_brand_kit(db, str(business.id))
-    if not brand:
-        brand = {}
+    brand = None
+    if request.use_brand_kit:
+        from app.services.brand_service import resolve_user_brand_config
+        brand = await resolve_user_brand_config(
+            db=db,
+            user_id=str(current_user["id"]),
+            business_id=str(business.id) if hasattr(business, "id") else None,
+            require_usable=True
+        )
         
     product_id = request.product_id or "general"
     product = None

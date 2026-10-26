@@ -134,6 +134,8 @@ class PlanOnboardingService:
         # 4. Check Step 2: Social Media Connectivity
         business = await db["businesses"].find_one({"owner_id": user_id})
         social_connectivity_completed = False
+        is_social_skipped = bool(business and business.get("social_connectivity_skipped", False))
+        
         if business and business.get("social_connectivity_completed") is True:
             social_connectivity_completed = True
         else:
@@ -150,10 +152,18 @@ class PlanOnboardingService:
             if ig_conn or fb_conn or li_conn:
                 social_connectivity_completed = True
 
+        # Check Brand Kit started or saved
+        brand_kit_started_or_saved = bool(
+            brand_kit_completed or
+            (brand_kit and (brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or brand_kit.get("completion_percentage", 0) > 0 or brand_kit.get("brand_kit_dismissed", False))) or
+            (business and business.get("brand_kit_dismissed", False))
+        )
+
         # 5. Check Step 3: Plan Activation
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
         sub_plan_id = (sub.get("plan_id") or "FREE").upper().strip()
         is_qualifying_paid = sub_plan_id in QUALIFYING_PAID_PLANS and sub.get("status") == "active"
+        is_plan_skipped = bool(business and business.get("plan_selection_skipped", False))
 
         plan_activation_completed = False
         completed_at = None
@@ -170,8 +180,9 @@ class PlanOnboardingService:
             )
 
         # Determine eligibility and popup display
-        is_eligible = brand_kit_completed and social_connectivity_completed
-        should_show_modal = is_eligible and not plan_activation_completed
+        # Eligible once Step 1 and Step 2 are completed or skipped
+        is_eligible = brand_kit_started_or_saved and (social_connectivity_completed or is_social_skipped)
+        should_show_modal = is_eligible and (not plan_activation_completed) and (not is_plan_skipped)
 
         # Active plan summary
         plan_config = PLANS.get(sub_plan_id, PLANS["FREE"])

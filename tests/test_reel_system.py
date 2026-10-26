@@ -345,9 +345,10 @@ async def test_veo_provider_quota_handling():
     print(f"[PASS] Veo provider configured with model: {provider.model}")
 
 
-async def test_end_to_end_reel_service_job(db):
+async def test_end_to_end_reel_service_job():
     """Test End-to-End Reel Generation Pipeline through ReelService with product locking."""
     print("\n--- Test 9: End-to-End Reel Generation Job ---")
+    db = setup_db()
     reel_service = ReelService(db)
     
     request = GenerateReelRequest(

@@ -11,6 +11,7 @@ from PIL import Image
 from app.core.config import settings
 from app.ai.prompts.post import build_post_prompt
 from app.ai.image.generator import ImageGenerator
+from app.utils.image_composer import ImageComposer
 
 _log = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ class PostGenerationService:
         additional_instruction: str | None = None,
         reference_images: list[str] | None = None,
         products: list | None = None,
+        use_brand_kit: bool = False,
+        manual_brand: dict | None = None,
+        content_type: str = "post",
+        product_images: list[str] | None = None,
     ) -> dict:
         if brand is None:
             brand = {}
@@ -81,8 +86,19 @@ class PostGenerationService:
         if not product and products:
             product = products[0]
 
-        reference_images = reference_images or []
-        pil_refs = await self._load_reference_images(reference_images)
+        # Combine all product and reference images
+        all_refs = []
+        for img in (product_images or []) + (reference_images or []):
+            if img and img not in all_refs:
+                all_refs.append(img)
+        # Also include product's own images if present and not in all_refs
+        if product.get("image_url") and product.get("image_url") not in all_refs:
+            all_refs.insert(0, product.get("image_url"))
+        for pimg in product.get("images", []) or []:
+            if pimg and pimg not in all_refs:
+                all_refs.append(pimg)
+
+        pil_refs = await self._load_reference_images(all_refs)
         has_refs = len(pil_refs) > 0
 
         client = self._get_gemini_client()
@@ -101,7 +117,7 @@ class PostGenerationService:
             if m not in unique_models:
                 unique_models.append(m)
 
-        extracted_subject = None
+        extracted_subject = product.get("name") if product and product.get("name") else None
         extracted_traits = None
 
         # Step 1: Accurate Subject & Trait Extraction via Gemini Multimodal Vision
@@ -124,7 +140,7 @@ class PostGenerationService:
                         v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
                         if v_match:
                             v_json = json.loads(v_match.group(0))
-                            extracted_subject = v_json.get("subject_name")
+                            extracted_subject = v_json.get("subject_name") or extracted_subject
                             extracted_traits = v_json.get("key_traits")
                             _log.info(f"Gemini identified reference subject: '{extracted_subject}'")
                             break
@@ -132,7 +148,7 @@ class PostGenerationService:
                     _log.warning(f"Vision extraction note on {model_name}: {e}")
                     continue
 
-        # Step 2: Build Post Prompt with the identified subject anchored
+        # Step 2: Build Content Prompt with the identified subject and product features anchored
         prompt = build_post_prompt(
             business=business,
             brand=brand,
@@ -145,6 +161,9 @@ class PostGenerationService:
             has_reference_images=has_refs,
             extracted_subject=extracted_subject,
             extracted_traits=extracted_traits,
+            use_brand_kit=use_brand_kit,
+            manual_brand=manual_brand,
+            content_type=content_type,
         )
 
         raw_text = ""
@@ -153,14 +172,14 @@ class PostGenerationService:
             contents = [*pil_refs, prompt] if has_refs else [prompt]
             for model_name in unique_models:
                 try:
-                    _log.info(f"Calling Gemini ({model_name}) for post content...")
+                    _log.info(f"Calling Gemini ({model_name}) for {content_type} content...")
                     response = client.models.generate_content(
                         model=model_name,
                         contents=contents
                     )
                     if response and response.text:
                         raw_text = response.text.strip()
-                        _log.info(f"Gemini post generation succeeded with model: {model_name}")
+                        _log.info(f"Gemini content generation succeeded with model: {model_name}")
                         break
                 except Exception as e:
                     _log.warning(f"Gemini model {model_name} failed: {e}")
@@ -194,15 +213,19 @@ class PostGenerationService:
                 except Exception:
                     pass
 
-        default_headline = f"{extracted_subject} ✨" if extracted_subject else (additional_instruction or "New Special Post")
+        default_headline = f"{extracted_subject or product.get('name', 'Special Offer')} ✨"
         if not parsed or not isinstance(parsed, dict):
+            prod_features_summary = ", ".join(product.get("features", [])) if product.get("features") else "exceptional quality and design"
+            default_caption = f"Discover the all-new {product.get('name', 'collection')} crafted for excellence. Featuring {prod_features_summary}."
+            if product.get("price"):
+                default_caption += f" Available now for only {product.get('price')}."
             parsed = {
                 "headline": default_headline,
-                "caption": raw_text or "Experience the ultimate collection designed to elevate your everyday moments.",
+                "caption": default_caption,
                 "call_to_action": "Shop Now | Link in Bio",
-                "hashtags": ["#trending", "#festive", "#lifestyle", "#newlaunch"],
-                "creative_direction": additional_instruction or "Commercial photoshoot with warm festive lighting",
-                "image_prompt": additional_instruction or "Festive commercial photography, 8k resolution, cinematic lighting"
+                "hashtags": ["#trending", "#newlaunch", "#lifestyle", "#quality"],
+                "creative_direction": additional_instruction or "Studio commercial product photography",
+                "image_prompt": f"Raw authentic commercial photography of {product.get('name', 'the product')}, 8k resolution, cinematic lighting"
             }
 
         # Ensure all expected fields exist
@@ -212,61 +235,132 @@ class PostGenerationService:
         parsed.setdefault("hashtags", ["#trending", "#viral", "#lifestyle"])
         parsed.setdefault("creative_direction", "")
 
-        # ---------------------------------------------------------------------
-        # Anchor the image_prompt on the extracted subject & Indian ethnicity
-        # ---------------------------------------------------------------------
-        img_prompt = (parsed.get("image_prompt") or parsed.get("creative_direction") or "").strip()
+        # If ad, ensure primary_text and description exist
+        if content_type in ["ad", "advertisement"]:
+            if not parsed.get("primary_text"):
+                parsed["primary_text"] = parsed.get("caption")
+            if not parsed.get("description"):
+                parsed["description"] = f"Explore {product.get('name', 'our top rated product')} today."
 
-        if extracted_subject:
-            # If the generated prompt does not explicitly name the subject, anchor it firmly
-            if extracted_subject.lower() not in img_prompt.lower():
-                img_prompt = (
-                    f"Raw authentic photograph of {extracted_subject}, {extracted_traits or ''}, "
-                    f"{additional_instruction or 'cinematic lighting, elegant lifestyle'}, natural warm lighting, "
-                    f"authentic Indian facial features, warm Indian skin tone, South Asian ethnicity, "
-                    f"photorealistic skin and fabric textures, 8k resolution, authentic likeness, "
-                    f"strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, no cartoon, no 3d render"
-                )
-            elif not img_prompt.lower().startswith("raw authentic"):
-                img_prompt = f"Raw authentic photograph of {img_prompt}"
+        # ---------------------------------------------------------------------
+        # Image Generation & Composition
+        # ---------------------------------------------------------------------
+        clean_type = (content_type or "post").lower()
+        image_url = ""
+
+        # For captions: If user already provided product image(s), reuse the primary product image
+        if clean_type == "caption" and all_refs:
+            image_url = all_refs[0]
+            _log.info(f"Reusing existing product image for caption: {image_url}")
         else:
-            base_prompt = img_prompt or additional_instruction or product.get("name") or "commercial high quality social media photography"
-            # If prompt touches people/festivals/clothing, ensure Indian ethnicity is enforced
-            human_terms = ["woman", "women", "girl", "girls", "man", "men", "boy", "person", "people", "portrait", "face", "model", "holi", "diwali", "festiv", "saree", "lehenga", "ethnic"]
-            if any(k in base_prompt.lower() for k in human_terms):
-                if "indian" not in base_prompt.lower():
+            # Anchor the image_prompt on the extracted subject & product
+            img_prompt = (parsed.get("image_prompt") or parsed.get("creative_direction") or "").strip()
+
+            if extracted_subject:
+                if extracted_subject.lower() not in img_prompt.lower():
                     img_prompt = (
-                        f"Raw authentic photograph of authentic Indian people, {base_prompt}, "
-                        f"genuine South Asian Indian facial features, warm wheatish Indian skin tone, dark brown eyes, "
-                        f"natural lighting, 8k resolution, documentary photography, "
+                        f"Raw authentic photograph of {extracted_subject}, {extracted_traits or ''}, "
+                        f"{additional_instruction or 'cinematic lighting, elegant lifestyle'}, natural warm lighting, "
+                        f"photorealistic textures, 8k resolution, authentic likeness, "
                         f"strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, no cartoon, no 3d render"
                     )
-                else:
-                    img_prompt = (
-                        f"{base_prompt}, genuine South Asian Indian facial features, warm Indian skin tone, "
-                        f"strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, no cartoon, no 3d render"
-                    )
+                elif not img_prompt.lower().startswith("raw authentic"):
+                    img_prompt = f"Raw authentic photograph of {img_prompt}"
             else:
-                img_prompt = base_prompt
+                base_prompt = img_prompt or additional_instruction or product.get("name") or "commercial high quality social media photography"
+                human_terms = ["woman", "women", "girl", "girls", "man", "men", "boy", "person", "people", "portrait", "face", "model", "holi", "diwali", "festiv", "saree", "lehenga", "ethnic"]
+                if any(k in base_prompt.lower() for k in human_terms):
+                    if "indian" not in base_prompt.lower():
+                        img_prompt = (
+                            f"Raw authentic photograph of authentic Indian people, {base_prompt}, "
+                            f"genuine South Asian Indian facial features, warm wheatish Indian skin tone, dark brown eyes, "
+                            f"natural lighting, 8k resolution, documentary photography, "
+                            f"strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, no cartoon, no 3d render"
+                        )
+                    else:
+                        img_prompt = (
+                            f"{base_prompt}, genuine South Asian Indian facial features, warm Indian skin tone, "
+                            f"strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, no cartoon, no 3d render"
+                        )
+                else:
+                    img_prompt = base_prompt
 
-        _log.info(f"Final image generation prompt: {img_prompt[:200]}...")
+            # If Brand Kit mode is enabled, incorporate brand styling and colors into image prompt
+            if use_brand_kit and brand and any(brand.values()):
+                b_style = brand.get("visual_style") or brand.get("social_style")
+                b_color = brand.get("primary_color")
+                brand_visual_directives = []
+                if b_style:
+                    brand_visual_directives.append(f"aesthetic style: {b_style}")
+                if b_color:
+                    brand_visual_directives.append(f"brand color harmony accents of {b_color}")
+                if brand_visual_directives:
+                    img_prompt = f"{img_prompt}, {', '.join(brand_visual_directives)}"
+            elif not use_brand_kit and manual_brand and manual_brand.get("brand_colors"):
+                m_colors = manual_brand.get("brand_colors")
+                color_str = ", ".join(m_colors) if isinstance(m_colors, list) else str(m_colors)
+                img_prompt = f"{img_prompt}, subtle color accents of {color_str}"
 
-        image_gen = ImageGenerator()
-        seed = random.randint(1000, 999999)
-        try:
-            img_res = await image_gen.generate(
-                prompt=img_prompt,
-                aspect_ratio="1:1",
-                seed=seed,
-                pil_refs=pil_refs
-            )
-            image_url = img_res.get("image_url", "")
-        except Exception as e:
-            _log.error(f"Image generation failed: {e}")
-            image_url = ""
+            _log.info(f"Final image generation prompt: {img_prompt[:200]}...")
 
-        # Assign clean image URL (No broken ImageComposer banner overlay, no external watermarks)
+            image_gen = ImageGenerator()
+            seed = random.randint(1000, 999999)
+            try:
+                img_res = await image_gen.generate(
+                    prompt=img_prompt,
+                    aspect_ratio="1:1",
+                    seed=seed,
+                    pil_refs=pil_refs
+                )
+                image_url = img_res.get("image_url", "")
+            except Exception as e:
+                _log.error(f"Image generation failed: {e}")
+                # Fallback to existing product image if available
+                image_url = all_refs[0] if all_refs else ""
+
+        # Apply saved brand logo overlay if Brand Kit mode is active and logo is available
+        logo_applied = False
+        logo_unavailable = False
+        if use_brand_kit and brand and any(brand.values()):
+            brand_logo = brand.get("logo_url")
+            if brand_logo and image_url:
+                try:
+                    overlay_url = await ImageComposer.apply_logo_overlay(
+                        image_url_or_path=image_url,
+                        logo_url_or_path=brand_logo,
+                        position="top_right"
+                    )
+                    if overlay_url and overlay_url != image_url:
+                        image_url = overlay_url
+                        logo_applied = True
+                except Exception as logo_err:
+                    _log.warning(f"Could not apply logo overlay: {logo_err}")
+            elif not brand_logo:
+                logo_unavailable = True
+
+        # Assign media URLs and metadata
+        parsed["content_type"] = content_type
         parsed["image_url"] = image_url
         parsed["media_url"] = image_url
+        parsed["use_brand_kit"] = use_brand_kit
+        parsed["brand_kit_applied"] = bool(use_brand_kit and brand and any(brand.values()))
+
+        if use_brand_kit and brand and any(brand.values()):
+            parsed["brand_details"] = {
+                "brand_name": brand.get("brand_name") or brand.get("business_name"),
+                "primary_color": brand.get("primary_color"),
+                "secondary_color": brand.get("secondary_color"),
+                "accent_color": brand.get("accent_color"),
+                "font": brand.get("font") or brand.get("heading_font"),
+                "brand_voice": brand.get("brand_voice") or brand.get("tone"),
+                "visual_style": brand.get("visual_style") or brand.get("social_style"),
+                "logo_url": brand.get("logo_url"),
+                "logo_applied": logo_applied,
+                "logo_unavailable": logo_unavailable,
+                "tagline": brand.get("tagline"),
+            }
+        elif not use_brand_kit and manual_brand:
+            parsed["manual_branding_applied"] = True
+            parsed["manual_brand"] = manual_brand
 
         return parsed

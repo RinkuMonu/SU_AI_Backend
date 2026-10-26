@@ -81,7 +81,23 @@ class ReelScriptService:
         self.provider = AIProviderFactory.get_provider()
 
     @staticmethod
-    def _extract_and_parse_json(content: str) -> Optional[Dict[str, Any]]:
+    def _unwrap_parsed(parsed: Any) -> Optional[Dict[str, Any]]:
+        if not parsed:
+            return None
+        if isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+            parsed = parsed[0]
+        if isinstance(parsed, dict):
+            if "scenes" in parsed or "title" in parsed:
+                return parsed
+            # Check if wrapped in a single key like {"product_name": {...}} or {"data": {...}}
+            for val in parsed.values():
+                if isinstance(val, dict) and ("scenes" in val or "title" in val or "primary_product" in val):
+                    return val
+            return parsed
+        return None
+
+    @classmethod
+    def _extract_and_parse_json(cls, content: str) -> Optional[Dict[str, Any]]:
         if not content:
             return None
         content = content.strip()
@@ -90,18 +106,18 @@ class ReelScriptService:
         try:
             import json_repair
             parsed = json_repair.loads(content)
-            if isinstance(parsed, dict):
-                return parsed
-            if isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
-                return parsed[0]
+            unwrapped = cls._unwrap_parsed(parsed)
+            if unwrapped:
+                return unwrapped
         except Exception:
             pass
 
         # 2. Standard json.loads
         try:
             parsed = json.loads(content)
-            if isinstance(parsed, dict):
-                return parsed
+            unwrapped = cls._unwrap_parsed(parsed)
+            if unwrapped:
+                return unwrapped
         except Exception:
             pass
 
@@ -112,17 +128,17 @@ class ReelScriptService:
         try:
             import json_repair
             parsed = json_repair.loads(candidate)
-            if isinstance(parsed, dict):
-                return parsed
-            if isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
-                return parsed[0]
+            unwrapped = cls._unwrap_parsed(parsed)
+            if unwrapped:
+                return unwrapped
         except Exception:
             pass
 
         try:
             parsed = json.loads(candidate)
-            if isinstance(parsed, dict):
-                return parsed
+            unwrapped = cls._unwrap_parsed(parsed)
+            if unwrapped:
+                return unwrapped
         except Exception:
             pass
 
@@ -134,14 +150,16 @@ class ReelScriptService:
             try:
                 import json_repair
                 parsed = json_repair.loads(slice_text)
-                if isinstance(parsed, dict):
-                    return parsed
+                unwrapped = cls._unwrap_parsed(parsed)
+                if unwrapped:
+                    return unwrapped
             except Exception:
                 pass
             try:
                 parsed = json.loads(slice_text)
-                if isinstance(parsed, dict):
-                    return parsed
+                unwrapped = cls._unwrap_parsed(parsed)
+                if unwrapped:
+                    return unwrapped
             except Exception:
                 pass
 
@@ -151,8 +169,9 @@ class ReelScriptService:
             try:
                 import json_repair
                 parsed = json_repair.loads(tail_text)
-                if isinstance(parsed, dict):
-                    return parsed
+                unwrapped = cls._unwrap_parsed(parsed)
+                if unwrapped:
+                    return unwrapped
             except Exception:
                 pass
 
@@ -170,7 +189,8 @@ class ReelScriptService:
         offer: str = None,
         additional_instruction: str = None,
         generation_mode: str = "product",
-        festival_theme: str = "none"
+        festival_theme: str = "none",
+        use_brand_kit: bool = False
     ) -> ReelScript:
         prompt = get_reel_script_prompt(
             product=product,
@@ -183,7 +203,8 @@ class ReelScriptService:
             offer=offer,
             additional_instruction=additional_instruction,
             generation_mode=generation_mode,
-            festival_theme=festival_theme
+            festival_theme=festival_theme,
+            use_brand_kit=use_brand_kit
         )
         
         system_prompt = (

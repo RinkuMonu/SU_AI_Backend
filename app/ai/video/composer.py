@@ -66,11 +66,35 @@ class VideoComposer:
             lines.append(" ".join(cur_line))
         return "\\N".join(lines)
 
-    def _generate_ass(self, script: Any, output_path: str, brand_colors: Dict[str, str] = None) -> str:
+    def _hex_to_ass(self, hex_val: Optional[str], default: str = "&H00FFFFFF") -> str:
+        if not hex_val or not isinstance(hex_val, str):
+            return default
+        h = hex_val.strip().lstrip("#")
+        if len(h) == 3:
+            h = f"{h[0]*2}{h[1]*2}{h[2]*2}"
+        if len(h) == 6:
+            r = h[0:2]
+            g = h[2:4]
+            b = h[4:6]
+            return f"&H00{b}{g}{r}".upper()
+        return default
+
+    def _generate_ass(
+        self,
+        script: Any,
+        output_path: str,
+        brand_colors: Dict[str, str] = None,
+        font_family: str = None
+    ) -> str:
         scenes = script.scenes if hasattr(script, "scenes") else script.get("scenes", [])
         total_duration = script.duration_seconds if hasattr(script, "duration_seconds") else script.get("duration_seconds", 15)
         hook_text = getattr(script, "hook", "") or "🔥 TRENDING NOW"
         cta_text = getattr(script, "cta", "") or "👉 TAP LINK IN BIO TO SHOP"
+
+        brand_colors = brand_colors or {}
+        primary_ass = self._hex_to_ass(brand_colors.get("primary"), "&H0000FFFF")
+        accent_ass = self._hex_to_ass(brand_colors.get("accent") or brand_colors.get("secondary"), "&H0000FFFF")
+        font_name = font_family or "Arial"
 
         ass_lines = [
             "[Script Info]",
@@ -80,14 +104,14 @@ class VideoComposer:
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            # Top badge (Hook / Brand Badge)
-            "Style: TopHook, Arial, 24, &H0000FFFF, &H000000FF, &H00000000, &H90000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 5, 0, 8, 40, 40, 100, 1",
+            # Top badge (Hook / Brand Badge) with Brand Primary Accent
+            f"Style: TopHook, {font_name}, 24, {primary_ass}, &H000000FF, &H00000000, &H90000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 5, 0, 8, 40, 40, 100, 1",
             # Center / Upper Scene Headline
-            "Style: SceneTitle, Arial, 32, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 8, 40, 40, 180, 1",
+            f"Style: SceneTitle, {font_name}, 32, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 8, 40, 40, 180, 1",
             # Spoken Voiceover subtitle (Elevated to MarginV=340 to stay ABOVE Instagram UI elements)
-            "Style: VoiceCaption, Arial, 26, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 0, 0, 3, 4, 0, 2, 40, 40, 340, 1",
-            # Final Scene CTA Badge
-            "Style: BottomCTA, Arial, 30, &H0000FFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 2, 40, 40, 280, 1",
+            f"Style: VoiceCaption, {font_name}, 26, &H00FFFFFF, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 0, 0, 3, 4, 0, 2, 40, 40, 340, 1",
+            # Final Scene CTA Badge with Brand Accent
+            f"Style: BottomCTA, {font_name}, 30, {accent_ass}, &H000000FF, &H00000000, &HB0000000, 1, 0, 0, 0, 100, 100, 1, 0, 3, 6, 0, 2, 40, 40, 280, 1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
@@ -296,6 +320,7 @@ class VideoComposer:
         music_style: str = "cinematic",
         captions_enabled: bool = True,
         voiceover_mode: str = "ai",
+        font_family: str = None,
         **kwargs
     ) -> str:
         if not HAS_FFMPEG:
@@ -423,7 +448,7 @@ class VideoComposer:
         ass_path = None
         if captions_enabled and script:
             ass_path = os.path.join(self.temp_dir, f"{job_id}.ass")
-            self._generate_ass(script, ass_path, brand_colors)
+            self._generate_ass(script, ass_path, brand_colors, font_family)
 
         out_filename = f"{job_id}.mp4"
         output_path = os.path.join(self.output_dir, out_filename)
@@ -454,11 +479,31 @@ class VideoComposer:
             inputs.extend(["-stream_loop", "-1", "-i", selected_bgm])
             bgm_input_idx = voice_input_idx + 1
 
+        # Brand logo input if available
+        local_logo = None
+        if logo_url:
+            local_logo = await self._resolve_image_path(logo_url, f"{job_id}_logo", product_name="brand_logo")
+            if not local_logo or not os.path.exists(local_logo):
+                local_logo = None
+
+        has_logo = local_logo is not None and os.path.exists(local_logo)
+        if has_logo:
+            inputs.extend(["-i", local_logo])
+            logo_input_idx = (bgm_input_idx + 1) if has_bgm else (voice_input_idx + 1)
+
         # Video concatenation and audio mixing
         n_scenes = len(scene_video_files)
         sar_normalizers = ";".join([f"[{j}:v]setsar=1[v{j}]" for j in range(n_scenes)])
         concat_inputs = "".join([f"[v{j}]" for j in range(n_scenes)])
-        concat_v = f"{sar_normalizers};{concat_inputs}concat=n={n_scenes}:v=1:a=0[raw_v]"
+
+        if has_logo:
+            concat_v = (
+                f"{sar_normalizers};{concat_inputs}concat=n={n_scenes}:v=1:a=0[concat_base];"
+                f"[{logo_input_idx}:v]scale=140:-1[logo_scaled];"
+                f"[concat_base][logo_scaled]overlay=main_w-overlay_w-36:36[raw_v]"
+            )
+        else:
+            concat_v = f"{sar_normalizers};{concat_inputs}concat=n={n_scenes}:v=1:a=0[raw_v]"
 
         # Overlay subtitles if enabled
         if ass_path and os.path.exists(ass_path):
@@ -547,6 +592,18 @@ class VideoComposer:
             try:
                 if os.path.exists(sc_file):
                     os.remove(sc_file)
+            except Exception:
+                pass
+
+        if local_logo and local_logo.startswith(self.temp_dir) and os.path.exists(local_logo):
+            try:
+                os.remove(local_logo)
+            except Exception:
+                pass
+
+        if ass_path and os.path.exists(ass_path):
+            try:
+                os.remove(ass_path)
             except Exception:
                 pass
 

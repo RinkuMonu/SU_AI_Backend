@@ -35,6 +35,9 @@ class BrandKit(MongoBaseModel):
     brand_kit_status: str = "not_started"
     brand_kit_completed: bool = False
     brand_kit_completed_at: Optional[datetime] = None
+    completion_percentage: int = 0
+    completed_sections: List[str] = []
+    pending_sections: List[str] = []
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

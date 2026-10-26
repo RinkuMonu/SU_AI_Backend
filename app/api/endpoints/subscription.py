@@ -158,3 +158,87 @@ async def get_credit_transactions(
     history = await CreditService.get_history(db, str(current_user["id"]))
     return {"success": True, "data": history}
 
+@router.get("/credits/summary")
+async def get_credit_summary_endpoint(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    summary = await CreditService.get_credit_summary(db, str(current_user["id"]))
+    return {"success": True, "data": summary}
+
+@router.post("/activate-free")
+@router.post("/select-free")
+async def activate_free_plan_endpoint(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Activates the ₹0 Free tier plan for the authenticated user.
+    Records the free plan activation in subscription_history, grants 5 credits idempotently,
+    and marks Step 3 plan onboarding as completed.
+    """
+    user_id = str(current_user["id"])
+    sub = await SubscriptionService.activate_free_plan(db, user_id)
+    return {
+        "success": True,
+        "message": "Free plan activated successfully",
+        "data": sub
+    }
+
+@router.post("/skip")
+async def skip_plan_selection_endpoint(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Allows the user to skip the Step 3 plan selection modal.
+    Prevents the modal from continuously reopening while keeping plan_activation_completed as is.
+    """
+    from datetime import datetime, timezone
+    user_id = str(current_user["id"])
+    now = datetime.now(timezone.utc)
+    await db["businesses"].update_one(
+        {"owner_id": user_id},
+        {"$set": {"plan_selection_skipped": True, "plan_selection_skipped_at": now}},
+        upsert=True
+    )
+    return {
+        "success": True,
+        "message": "Plan selection skipped successfully",
+        "plan_selection_skipped": True
+    }
+
+@router.get("/billing-report")
+@router.get("/billing/report")
+async def get_billing_report_endpoint(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Returns an auditable billing report for the authenticated user,
+    including current subscription, free and paid plan history, payment transactions,
+    and credit usage summary.
+    """
+    user_id = str(current_user["id"])
+    report = await SubscriptionService.get_billing_report(db, user_id)
+    return {
+        "success": True,
+        "data": report
+    }
+
+@router.get("/history")
+@router.get("/billing/history")
+async def get_subscription_history_endpoint(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Returns the subscription history (both free ₹0 activations and paid plans) for the authenticated user.
+    """
+    user_id = str(current_user["id"])
+    history = await SubscriptionService.get_subscription_history(db, user_id)
+    return {
+        "success": True,
+        "data": history
+    }
+

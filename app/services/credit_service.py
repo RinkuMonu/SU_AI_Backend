@@ -116,6 +116,8 @@ class CreditService:
         }
         await tx_collection.insert_one(tx)
         
+        if updated_sub is not None:
+            updated_sub["success"] = True
         return updated_sub
 
     @staticmethod
@@ -164,6 +166,94 @@ class CreditService:
             await tx_collection.insert_one(tx)
             
         return updated_sub
+
+    @staticmethod
+    async def grant_credits(db, user_id: str, amount: int, reason: str, reference_id: str = None) -> dict:
+        """
+        Atomically grants credits to a user and logs the transaction.
+        Idempotent: If a grant with reference_id already exists, returns existing subscription without re-crediting.
+        """
+        if amount <= 0:
+            return await CreditService.get_or_create_subscription(db, user_id)
+
+        tx_col = db["credit_transactions"]
+        if reference_id:
+            existing_grant = await tx_col.find_one({
+                "user_id": user_id,
+                "transaction_type": "grant",
+                "reference_id": reference_id
+            })
+            if existing_grant:
+                return await CreditService.get_or_create_subscription(db, user_id)
+
+        # Ensure base subscription exists
+        await CreditService.get_or_create_subscription(db, user_id)
+        
+        now = datetime.now(timezone.utc)
+        sub_col = db["subscriptions"]
+        
+        # Get current balance before
+        sub_before = await sub_col.find_one({"user_id": user_id})
+        balance_before = sub_before.get("credits_remaining", 0) if sub_before else 0
+
+        updated_sub = await sub_col.find_one_and_update(
+            {"user_id": user_id},
+            {
+                "$inc": {
+                    "credits_remaining": amount,
+                    "credits_total": amount
+                },
+                "$set": {"updated_at": now}
+            },
+            return_document=ReturnDocument.AFTER
+        )
+
+        balance_after = updated_sub.get("credits_remaining", balance_before + amount)
+
+        tx = {
+            "user_id": user_id,
+            "transaction_type": "grant",
+            "amount": amount,
+            "feature": reason,
+            "reference_id": reference_id,
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+            "created_at": now
+        }
+        await tx_col.insert_one(tx)
+        return updated_sub
+
+    @staticmethod
+    async def get_credit_summary(db, user_id: str) -> dict:
+        """
+        Returns credit summary: total granted, total consumed/deducted, and remaining balance.
+        """
+        sub = await CreditService.get_or_create_subscription(db, user_id)
+        remaining = sub.get("credits_remaining", 0)
+        total_in_sub = sub.get("credits_total", remaining)
+
+        cursor = db["credit_transactions"].find({"user_id": user_id})
+        total_granted = 0
+        total_consumed = 0
+        async for tx in cursor:
+            ttype = tx.get("transaction_type")
+            amt = tx.get("amount", 0)
+            if ttype == "grant":
+                total_granted += amt
+            elif ttype == "deduction":
+                total_consumed += amt
+            elif ttype == "refund":
+                total_consumed -= amt
+
+        if total_granted == 0:
+            total_granted = total_in_sub
+
+        return {
+            "credits_total": max(total_granted, total_in_sub),
+            "credits_granted": max(total_granted, total_in_sub),
+            "credits_consumed": max(total_consumed, 0),
+            "credits_remaining": remaining
+        }
 
     @staticmethod
     async def get_history(db, user_id: str):

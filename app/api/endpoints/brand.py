@@ -56,12 +56,15 @@ async def save_draft(
     """
     owner_id = str(current_user["id"])
     submission_dict = data.model_dump(exclude_none=True)
-    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=True)
+    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=True, is_complete_action=False)
     return BrandKitActionResponse(
         success=True,
         message="Brand Kit draft saved successfully",
         brand_kit_status="in_progress",
         brand_kit_completed=False,
+        completion_percentage=brand.get("completion_percentage", 0),
+        completed_sections=brand.get("completed_sections", []),
+        pending_sections=brand.get("pending_sections", []),
         data=brand
     )
 
@@ -79,12 +82,15 @@ async def complete_brand_kit(
     """
     owner_id = str(current_user["id"])
     submission_dict = data.model_dump(exclude_none=True)
-    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=False)
+    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=False, is_complete_action=True)
     return BrandKitActionResponse(
         success=True,
         message="Brand Kit completed successfully",
         brand_kit_status="completed",
         brand_kit_completed=True,
+        completion_percentage=brand.get("completion_percentage", 100),
+        completed_sections=brand.get("completed_sections", []),
+        pending_sections=brand.get("pending_sections", []),
         data=brand
     )
 
@@ -97,17 +103,21 @@ async def create_or_save_brand(
 ):
     """
     Unified Brand Kit submission endpoint.
-    If data.is_draft is True, saves as draft; otherwise validates required fields and completes.
+    Supports partial saves without blocking on optional fields.
+    If all fields are completed and is_draft is False, marks as completed; otherwise saves in_progress.
     """
     owner_id = str(current_user["id"])
     submission_dict = data.model_dump(exclude_none=True)
     is_draft = getattr(data, "is_draft", False)
-    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=is_draft)
+    brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=is_draft, is_complete_action=False)
     return {
         "success": True,
         "message": "Brand Kit draft saved successfully" if is_draft else "Brand Kit saved successfully",
         "brand_kit_status": brand.get("brand_kit_status"),
         "brand_kit_completed": brand.get("brand_kit_completed"),
+        "completion_percentage": brand.get("completion_percentage", 0),
+        "completed_sections": brand.get("completed_sections", []),
+        "pending_sections": brand.get("pending_sections", []),
         "data": brand
     }
 
@@ -138,20 +148,19 @@ async def update_my_brand(
 ):
     """
     Updates the existing Brand Kit for the authenticated user.
+    Preserves existing saved data for omitted fields and recalculates completion.
     """
     owner_id = str(current_user["id"])
     update_dict = data.model_dump(exclude_none=True)
-    
-    # Check if already completed to preserve completion status unless specified
-    existing = await get_brand_kit_by_owner(db, owner_id)
-    is_already_completed = existing.get("brand_kit_completed", False) if existing else False
-    
-    # If already completed, keep completed; if not, save as draft update
-    is_draft = not is_already_completed
-    brand = await save_brand_kit_submission(db, owner_id, update_dict, is_draft=is_draft)
+    brand = await save_brand_kit_submission(db, owner_id, update_dict, is_draft=False, is_complete_action=False)
     return {
         "success": True,
         "message": "Brand Kit updated successfully",
+        "brand_kit_status": brand.get("brand_kit_status"),
+        "brand_kit_completed": brand.get("brand_kit_completed"),
+        "completion_percentage": brand.get("completion_percentage", 0),
+        "completed_sections": brand.get("completed_sections", []),
+        "pending_sections": brand.get("pending_sections", []),
         "data": brand
     }
 
@@ -199,4 +208,34 @@ async def generate_ai_logo(
         "message": "AI Logo generated successfully",
         "data": result
     }
+
+
+@router.post("/dismiss", operation_id="brand_dismiss_modal")
+@router.post("/skip", operation_id="brand_skip_modal")
+async def dismiss_brand_kit_modal(
+    current_user: CurrentUser = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Dismisses or skips the automatic Brand Kit popup without marking it completed.
+    """
+    from datetime import datetime, timezone
+    owner_id = str(current_user["id"])
+    now = datetime.now(timezone.utc)
+    
+    await db["businesses"].update_one(
+        {"owner_id": owner_id},
+        {"$set": {"brand_kit_dismissed": True, "brand_kit_dismissed_at": now, "updated_at": now}},
+        upsert=True
+    )
+    await db["brand_kits"].update_one(
+        {"owner_id": owner_id},
+        {"$set": {"brand_kit_dismissed": True, "updated_at": now}}
+    )
+    return {
+        "success": True,
+        "message": "Brand Kit modal dismissed",
+        "should_show_modal": False
+    }
+
 

@@ -65,6 +65,12 @@ class GenerateReelRequest(BaseModel):
     prompt: Optional[str] = None  # Common alias
     festival_theme: Optional[str] = "none"  # "none", "diwali", "holi", "eid", "christmas", "new_year"
 
+    # Brand Kit Mode
+    use_brand_kit: bool = Field(
+        default=False,
+        description="Whether to use the authenticated user's saved Brand Kit"
+    )
+
     @model_validator(mode="before")
     @classmethod
     def harmonize_aliases(cls, values: Any) -> Any:
@@ -263,6 +269,9 @@ class ReelJobStatus(BaseModel):
     motion_classification: Optional[str] = None
     motion_score: Optional[float] = None
     diversity_score: Optional[float] = None
+    use_brand_kit: Optional[bool] = False
+    brand_kit_applied: Optional[bool] = False
+    brand: Optional[Dict[str, Any]] = None
 
 
 class EnhanceImageRequest(BaseModel):

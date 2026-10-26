@@ -319,98 +319,92 @@ class InstagramService:
         return normalized
 
     @classmethod
-    def get_authorization_url(cls, state: str, custom_scopes: list = None) -> str:
+    def get_redirect_uri(cls) -> str:
+        """
+        Dynamically determine the Instagram callback redirect URI.
+        Prefers BACKEND_URL if it is an ngrok tunnel or dev backend,
+        otherwise uses INSTAGRAM_REDIRECT_URI.
+        """
+        backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        configured = getattr(settings, "INSTAGRAM_REDIRECT_URI", "").strip()
+        if backend_url and "ngrok" not in backend_url and "localhost" not in backend_url and "127.0.0.1" not in backend_url:
+            if not configured or "ngrok" in configured or "localhost" in configured or "loca.lt" in configured:
+                return f"{backend_url}/api/instagram/callback"
+        if backend_url and ("ngrok" in backend_url or "localhost" in backend_url):
+            return f"{backend_url}/api/instagram/callback"
+        if configured:
+            return configured
+        if backend_url:
+            return f"{backend_url}/api/instagram/callback"
+        return "http://localhost:8000/api/instagram/callback"
+
+    @classmethod
+    def get_authorization_url(cls, state: str, custom_scopes: list = None, force_facebook_dialog: bool = False) -> str:
         """
         Generate OAuth authorization URL for Instagram Professional connection.
-        Uses Meta's official OAuth dialog (facebook.com/dialog/oauth) which is required
-        for Instagram Graph API (Publishing, Insights, Comments, Business Profile).
-        If a dedicated Instagram App ID (different from Facebook App ID) is explicitly configured,
-        native instagram.com/oauth/authorize is used.
+        Directly uses Instagram's official authorization dialog:
+        https://www.instagram.com/oauth/authorize
+        Ensures clicking "Connect to Instagram" opens Instagram's native login/authorization
+        page and NEVER redirects to Facebook.
         """
-        fb_app_id = getattr(settings, "FACEBOOK_APP_ID", None) or "1590258016168448"
-        ig_app_id = getattr(settings, "INSTAGRAM_APP_ID", None)
-        redirect_uri = getattr(settings, "INSTAGRAM_REDIRECT_URI", None) or f"{settings.BACKEND_URL}/api/instagram/callback"
-        api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0") or "v19.0"
+        app_id = getattr(settings, "INSTAGRAM_APP_ID", None) or getattr(settings, "FACEBOOK_APP_ID", None) or "1590258016168448"
+        redirect_uri = cls.get_redirect_uri()
 
-        # Check if we have a separate dedicated Instagram App ID (not identical to the Facebook App ID)
-        is_dedicated_ig_app = bool(ig_app_id and fb_app_id and str(ig_app_id).strip() != str(fb_app_id).strip())
-
-        if is_dedicated_ig_app:
-            # Native Instagram OAuth for dedicated Instagram App ID
-            scopes = [
-                "instagram_business_basic",
-                "instagram_business_content_publish",
-                "instagram_business_manage_messages",
-                "instagram_business_manage_comments",
+        if force_facebook_dialog:
+            api_version = getattr(settings, "FACEBOOK_API_VERSION", "v19.0") or "v19.0"
+            base_scopes = [
+                "public_profile",
+                "email",
+                "pages_show_list",
+                "pages_read_engagement",
+                "pages_manage_posts",
+                "instagram_basic",
+                "instagram_content_publish",
             ]
-            if custom_scopes:
-                scopes = cls.normalize_scopes(custom_scopes)
-            scopes_str = ",".join(scopes)
+            scopes_str = ",".join(base_scopes)
             return (
-                f"https://www.instagram.com/oauth/authorize"
-                f"?client_id={ig_app_id}"
+                f"https://www.facebook.com/{api_version}/dialog/oauth"
+                f"?client_id={app_id}"
                 f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
                 f"&response_type=code"
                 f"&scope={urllib.parse.quote(scopes_str)}"
+                f"&auth_type=rerequest"
                 f"&state={urllib.parse.quote(state)}"
             )
 
-        # Standard Meta App ID (Meta Graph API for Instagram Business accounts)
-        app_id = fb_app_id or ig_app_id or "1590258016168448"
-        base_scopes = [
-            "public_profile",
-            "email",
-            "pages_show_list",
-            "pages_read_engagement",
-            "pages_manage_posts",
-            "instagram_basic",
-            "instagram_content_publish",
+        # Native Instagram OAuth dialog
+        scopes = [
+            "instagram_business_basic",
+            "instagram_business_manage_messages",
+            "instagram_business_manage_comments",
+            "instagram_business_content_publish",
         ]
-
         if custom_scopes:
-            resolved_scopes = []
-            for s in custom_scopes:
-                s_clean = s.strip()
-                if s_clean == "instagram_business_basic":
-                    resolved_scopes.append("instagram_basic")
-                elif s_clean == "instagram_business_content_publish":
-                    resolved_scopes.append("instagram_content_publish")
-                elif s_clean == "instagram_business_manage_comments":
-                    resolved_scopes.append("instagram_manage_comments")
-                elif s_clean == "instagram_business_manage_messages":
-                    resolved_scopes.append("instagram_manage_messages")
-                elif not s_clean.startswith("instagram_business_"):
-                    resolved_scopes.append(s_clean)
-            for s in base_scopes:
-                if s not in resolved_scopes:
-                    resolved_scopes.append(s)
-            scopes_list = resolved_scopes
-        else:
-            scopes_list = base_scopes
+            scopes = cls.normalize_scopes(custom_scopes)
+        scopes_str = ",".join(scopes)
 
-        scopes_str = ",".join(scopes_list)
         return (
-            f"https://www.facebook.com/{api_version}/dialog/oauth"
+            f"https://www.instagram.com/oauth/authorize"
             f"?client_id={app_id}"
             f"&redirect_uri={urllib.parse.quote(redirect_uri)}"
             f"&response_type=code"
             f"&scope={urllib.parse.quote(scopes_str)}"
-            f"&auth_type=rerequest"
+            f"&enable_fb_login=0"
             f"&state={urllib.parse.quote(state)}"
         )
 
 
 
-    @staticmethod
-    async def exchange_code_for_token(code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
+    @classmethod
+    async def exchange_code_for_token(cls, code: str, redirect_uri: Optional[str] = None) -> Dict[str, Any]:
         """
         Exchange authorization code for an Instagram / Facebook access token,
         then exchange for a long-lived token.
-        Supports both Facebook Dialog OAuth and Instagram direct OAuth.
+        Supports both direct Instagram OAuth and Facebook Dialog OAuth.
         """
         app_id = settings.INSTAGRAM_APP_ID or settings.FACEBOOK_APP_ID or "1590258016168448"
         app_secret = settings.INSTAGRAM_APP_SECRET or settings.FACEBOOK_APP_SECRET
-        effective_redirect_uri = redirect_uri or settings.INSTAGRAM_REDIRECT_URI or f"{settings.BACKEND_URL}/api/instagram/callback"
+        effective_redirect_uri = redirect_uri or cls.get_redirect_uri()
 
         if not app_id or not app_secret:
             raise HTTPException(
@@ -427,44 +421,47 @@ class InstagramService:
             api_version = "v19.0"
 
         async with httpx.AsyncClient(timeout=30.0) as client:
-            # 1. Primary attempt: Facebook Graph API OAuth endpoint (standard for Meta App ID)
-            fb_token_url = f"{FB_API_BASE}/{api_version}/oauth/access_token"
-            params = {
-                "client_id": app_id,
-                "client_secret": app_secret,
-                "redirect_uri": effective_redirect_uri,
-                "code": clean_code,
-            }
+            # 1. Primary attempt: Direct Instagram OAuth endpoint (POST to api.instagram.com)
+            # Used for authorization codes issued by https://www.instagram.com/oauth/authorize
             try:
-                res = await client.get(fb_token_url, params=params)
+                ig_token_url = "https://api.instagram.com/oauth/access_token"
+                data = {
+                    "client_id": app_id,
+                    "client_secret": app_secret,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": effective_redirect_uri,
+                    "code": clean_code,
+                }
+                res = await client.post(ig_token_url, data=data)
                 if res.status_code == 200:
                     token_json = res.json()
                     short_lived_token = token_json.get("access_token")
                     user_id = str(token_json.get("user_id", ""))
                 else:
-                    err_detail = res.json() if res.content else {}
-                    logger.info(f"Facebook Graph token exchange response: {err_detail}")
+                    logger.info(f"Instagram OAuth token POST response: {res.text}")
             except Exception as e:
-                logger.warning(f"Facebook Graph token exchange error: {e}")
+                logger.warning(f"Instagram OAuth token POST failed: {e}")
 
-            # 2. Secondary attempt: Direct Instagram OAuth endpoint (POST to api.instagram.com)
+            # 2. Secondary attempt: Facebook Graph API OAuth endpoint (fallback for Meta App dialog)
             if not short_lived_token:
                 try:
-                    ig_token_url = "https://api.instagram.com/oauth/access_token"
-                    data = {
+                    fb_token_url = f"{FB_API_BASE}/{api_version}/oauth/access_token"
+                    params = {
                         "client_id": app_id,
                         "client_secret": app_secret,
-                        "grant_type": "authorization_code",
                         "redirect_uri": effective_redirect_uri,
                         "code": clean_code,
                     }
-                    res = await client.post(ig_token_url, data=data)
+                    res = await client.get(fb_token_url, params=params)
                     if res.status_code == 200:
                         token_json = res.json()
                         short_lived_token = token_json.get("access_token")
                         user_id = str(token_json.get("user_id", ""))
+                    else:
+                        err_detail = res.json() if res.content else {}
+                        logger.info(f"Facebook Graph token exchange response: {err_detail}")
                 except Exception as e:
-                    logger.warning(f"Instagram OAuth token POST failed: {e}")
+                    logger.warning(f"Facebook Graph token exchange error: {e}")
 
             if not short_lived_token:
                 raise HTTPException(
@@ -474,33 +471,35 @@ class InstagramService:
 
             # 3. Exchange for long-lived token (60 days)
             long_lived_token = short_lived_token
+            # Try Instagram long-lived token exchange first
             try:
                 ll_url = (
-                    f"{FB_API_BASE}/{api_version}/oauth/access_token"
-                    f"?grant_type=fb_exchange_token"
-                    f"&client_id={app_id}"
+                    f"https://graph.instagram.com/access_token"
+                    f"?grant_type=ig_exchange_token"
                     f"&client_secret={app_secret}"
-                    f"&fb_exchange_token={short_lived_token}"
+                    f"&access_token={short_lived_token}"
                 )
                 ll_res = await client.get(ll_url)
                 if ll_res.status_code == 200:
                     long_lived_token = ll_res.json().get("access_token", short_lived_token)
             except Exception as e:
-                logger.info(f"fb_exchange_token attempt info: {e}")
+                logger.info(f"ig_exchange_token attempt info: {e}")
 
+            # Fallback to Facebook long-lived token exchange if unchanged
             if long_lived_token == short_lived_token:
                 try:
                     ll_url = (
-                        f"https://graph.instagram.com/access_token"
-                        f"?grant_type=ig_exchange_token"
+                        f"{FB_API_BASE}/{api_version}/oauth/access_token"
+                        f"?grant_type=fb_exchange_token"
+                        f"&client_id={app_id}"
                         f"&client_secret={app_secret}"
-                        f"&access_token={short_lived_token}"
+                        f"&fb_exchange_token={short_lived_token}"
                     )
                     ll_res = await client.get(ll_url)
                     if ll_res.status_code == 200:
                         long_lived_token = ll_res.json().get("access_token", short_lived_token)
                 except Exception as e:
-                    logger.info(f"ig_exchange_token attempt info: {e}")
+                    logger.info(f"fb_exchange_token attempt info: {e}")
 
             return {
                 "access_token": long_lived_token,
@@ -524,11 +523,36 @@ class InstagramService:
             }
 
         async with httpx.AsyncClient(timeout=15.0) as client:
+            # 1. Primary check for native Instagram tokens: Instagram Graph API direct /me
+            try:
+                ig_me_url = "https://graph.instagram.com/me"
+                params = {
+                    "fields": "id,username,account_type,media_count",
+                    "access_token": access_token,
+                }
+                res = await client.get(ig_me_url, params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    ig_id = str(data.get("id", ""))
+                    username = data.get("username", "")
+                    if ig_id and username:
+                        return {
+                            "id": ig_id,
+                            "user_id": ig_id,
+                            "username": username,
+                            "name": username,
+                            "account_type": data.get("account_type", "BUSINESS"),
+                            "media_count": data.get("media_count", 0),
+                            "profile_picture_url": "",
+                        }
+            except Exception as e:
+                logger.info(f"graph.instagram.com /me check: {e}")
+
             api_version = getattr(settings, "INSTAGRAM_API_VERSION", "v19.0")
             if not api_version or api_version == "v26.0":
                 api_version = "v19.0"
 
-            # 1. Primary check: Facebook Graph API /me/accounts (pages & linked instagram_business_account)
+            # 2. Secondary check: Facebook Graph API /me/accounts (pages & linked instagram_business_account)
             url = f"{FB_API_BASE}/{api_version}/me/accounts"
             params = {
                 "fields": "name,access_token,instagram_business_account{id,username,profile_picture_url,followers_count,media_count,name}",
@@ -560,7 +584,7 @@ class InstagramService:
             except Exception as e:
                 logger.warning(f"Facebook Graph /me/accounts check: {e}")
 
-            # 2. Secondary check: Facebook /me with accounts and direct instagram_business_account
+            # 3. Third check: Facebook /me with accounts and direct instagram_business_account
             try:
                 fb_me_url = f"{FB_API_BASE}/{api_version}/me"
                 res = await client.get(
@@ -608,30 +632,6 @@ class InstagramService:
                             }
             except Exception as e:
                 logger.info(f"Facebook Graph /me check: {e}")
-
-            # 3. Third check: Instagram Graph API direct /me (for Instagram Login tokens)
-            try:
-                ig_me_url = "https://graph.instagram.com/me"
-                params = {
-                    "fields": "id,username,account_type,media_count",
-                    "access_token": access_token,
-                }
-                res = await client.get(ig_me_url, params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    ig_id = str(data.get("id", ""))
-                    username = data.get("username", "")
-                    return {
-                        "id": ig_id,
-                        "user_id": ig_id,
-                        "username": username,
-                        "name": username,
-                        "account_type": data.get("account_type", "BUSINESS"),
-                        "media_count": data.get("media_count", 0),
-                        "profile_picture_url": "",
-                    }
-            except Exception as e:
-                logger.info(f"graph.instagram.com /me check: {e}")
 
             # Fallback in dev/demo
             if InstagramService.is_demo_mode():

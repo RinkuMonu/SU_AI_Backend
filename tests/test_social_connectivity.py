@@ -212,6 +212,9 @@ async def test_oauth_initiation_all_platforms():
         assert res_ig.status_code == 200
         ig_auth_url = res_ig.json()["authorization_url"]
         assert "state=" in ig_auth_url
+        assert ig_auth_url.startswith("https://www.instagram.com/oauth/authorize")
+        assert "facebook.com" not in ig_auth_url
+        assert "enable_fb_login=0" in ig_auth_url
         ig_state_doc = await db["instagram_oauth_states"].find_one({"user_id": user_id})
         assert ig_state_doc is not None
 
@@ -220,6 +223,7 @@ async def test_oauth_initiation_all_platforms():
         assert res_fb.status_code == 200
         fb_auth_url = res_fb.json()["authorization_url"]
         assert "state=" in fb_auth_url
+        assert "facebook.com" in fb_auth_url
         fb_state_doc = await db["facebook_oauth_states"].find_one({"user_id": user_id})
         assert fb_state_doc is not None
 

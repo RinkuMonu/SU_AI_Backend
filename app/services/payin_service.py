@@ -177,7 +177,11 @@ class PayinService:
                     db, 
                     transaction["user_id"], 
                     transaction["plan_id"],
-                    billing_cycle=cycle
+                    billing_cycle=cycle,
+                    reference_id=order_id,
+                    transaction_id=order_id,
+                    payment_provider="finunique_payin",
+                    amount=float(transaction.get("amount", 0))
                 )
 
                 # Mark plan activation onboarding completed

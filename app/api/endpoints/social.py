@@ -6,6 +6,7 @@ from app.services.social_connectivity_service import (
     get_social_onboarding_status,
     get_all_platform_connections,
     disconnect_social_platform,
+    skip_social_connectivity,
     CREATE_ACCOUNT_URLS,
 )
 from app.schemas.social import (
@@ -91,6 +92,27 @@ async def disconnect_platform(
         social_connectivity_completed=is_completed,
         should_show_modal=should_show,
     )
+
+
+@router.post("/skip", operation_id="social_skip_onboarding")
+@router.post("/onboarding/skip", operation_id="social_skip_onboarding_alias")
+async def skip_social_onboarding(
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Skips the Social Media Connectivity onboarding step without marking it completed.
+    Stops the popup from reopening on refresh.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    await skip_social_connectivity(db, user_id)
+    return {
+        "success": True,
+        "message": "Social media connectivity skipped successfully",
+        "social_connectivity_completed": False,
+        "social_connectivity_skipped": True,
+        "should_show_modal": False,
+    }
 
 
 # ─────────────────────────────────────────────────────────────

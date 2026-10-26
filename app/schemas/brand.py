@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 import re
-from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator, ConfigDict, AliasChoices
 from app.models.base import PyObjectId
 
 HEX_COLOR_REGEX = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -93,6 +93,9 @@ class BrandBase(BaseModel):
     contact: Optional[ContactInfo] = None
     location: Optional[LocationInfo] = None
     social_style: Optional[str] = None
+    completion_percentage: Optional[int] = 0
+    completed_sections: Optional[List[str]] = Field(default_factory=list)
+    pending_sections: Optional[List[str]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def sync_description_and_name(self):
@@ -131,6 +134,9 @@ class BrandResponse(BrandBase):
     brand_kit_status: str = "not_started"
     brand_kit_completed: bool = False
     brand_kit_completed_at: Optional[datetime] = None
+    completion_percentage: int = 0
+    completed_sections: List[str] = Field(default_factory=list)
+    pending_sections: List[str] = Field(default_factory=list)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -142,6 +148,9 @@ class BrandKitStatusResponse(BaseModel):
     brand_kit_completed: bool
     brand_kit_completed_at: Optional[datetime] = None
     business_id: Optional[str] = None
+    completion_percentage: int = 0
+    completed_sections: List[str] = Field(default_factory=list)
+    pending_sections: List[str] = Field(default_factory=list)
     brand_kit: Optional[Dict[str, Any]] = None
 
 
@@ -150,6 +159,9 @@ class BrandKitActionResponse(BaseModel):
     message: str
     brand_kit_status: str
     brand_kit_completed: bool
+    completion_percentage: int = 0
+    completed_sections: List[str] = Field(default_factory=list)
+    pending_sections: List[str] = Field(default_factory=list)
     data: Optional[Dict[str, Any]] = None
 
 
@@ -169,28 +181,43 @@ class AILogoGenerateResponse(BaseModel):
 
 
 class AILogoGenerateRequest(BaseModel):
-    business_name: Optional[str] = None
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    business_name: Optional[str] = Field(None, validation_alias=AliasChoices("business_name", "brand_name", "name"))
     brand_name: Optional[str] = None
-    business_category: Optional[str] = None
+    business_category: Optional[str] = Field(None, validation_alias=AliasChoices("business_category", "category", "industry"))
     style: Optional[str] = "minimalist_modern"
-    preferred_colors: Optional[List[str]] = None
-    prompt: Optional[str] = None
+    preferred_colors: Optional[List[str]] = Field(default=None, validation_alias=AliasChoices("preferred_colors", "colors", "brand_colors"))
+    prompt: Optional[str] = Field(None, validation_alias=AliasChoices("prompt", "description", "visual_theme"))
     tagline: Optional[str] = None
-    brand_voice: Optional[str] = None
+    brand_voice: Optional[str] = Field(None, validation_alias=AliasChoices("brand_voice", "tone", "personality"))
     personality: Optional[str] = None
     font: Optional[str] = None
     transparent_background: Optional[bool] = False
-    variation_seed: Optional[int] = None
+    variation_seed: Optional[int] = Field(None, validation_alias=AliasChoices("variation_seed", "seed"))
     num_variations: Optional[int] = Field(default=1, ge=1, le=4)
     save_to_brand_kit: Optional[bool] = False
 
-    @field_validator("preferred_colors")
+    @field_validator("preferred_colors", mode="before")
     @classmethod
-    def clean_colors(cls, v: Optional[List[str]]) -> Optional[List[str]]:
-        if not v:
-            return v
+    def clean_colors(cls, v: Any) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return []
+            if "," in s:
+                raw_list = [c.strip() for c in s.split(",") if c.strip()]
+            else:
+                raw_list = [s]
+        elif isinstance(v, (list, tuple)):
+            raw_list = list(v)
+        else:
+            return []
+
         cleaned = []
-        for c in v:
+        for c in raw_list:
             if not isinstance(c, str):
                 continue
             s = c.strip()
@@ -201,6 +228,27 @@ class AILogoGenerateRequest(BaseModel):
                 if norm:
                     cleaned.append(norm)
             except Exception:
-                cleaned.append(s)
+                if HEX_COLOR_REGEX.match(s if s.startswith("#") else f"#{s}"):
+                    cleaned.append(s.upper() if s.startswith("#") else f"#{s.upper()}")
+                else:
+                    cleaned.append(s)
         return cleaned
+
+    @field_validator("num_variations", mode="before")
+    @classmethod
+    def clean_num_variations(cls, v: Any) -> int:
+        if v is None or v == "":
+            return 1
+        try:
+            return max(1, min(4, int(v)))
+        except (ValueError, TypeError):
+            return 1
+
+    @model_validator(mode="after")
+    def sync_names(self):
+        name = self.business_name or self.brand_name
+        if name:
+            self.business_name = name
+            self.brand_name = name
+        return self
 

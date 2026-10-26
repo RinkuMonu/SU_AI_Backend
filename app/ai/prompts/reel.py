@@ -43,14 +43,25 @@ def get_reel_script_prompt(
     offer: str = None,
     additional_instruction: str = None,
     generation_mode: str = "product",
-    festival_theme: str = "none"
+    festival_theme: str = "none",
+    use_brand_kit: bool = False
 ) -> str:
+    brand = brand or {}
     prod_name = product.get("name", "Product")
     prod_desc = product.get("description", "")
     prod_price = product.get("price", "")
     prod_category = product.get("category", "") or "Commercial Product"
-    business_name = brand.get("business_name") or brand.get("name") or "SevenUnique Partner"
-    primary_color = brand.get("primary_color", "#7928CA")
+
+    has_brand = use_brand_kit and bool(brand and any(brand.values()))
+    business_name = (brand.get("business_name") or brand.get("brand_name")) if has_brand else "Commercial Spotlight"
+    primary_color = brand.get("primary_color", "#7928CA") if has_brand else "#7928CA"
+    brand_voice = (brand.get("brand_voice") or brand.get("tone")) if has_brand else tone
+    brand_style = (brand.get("visual_style") or brand.get("social_style")) if has_brand else "Clean Cinematic Commercial"
+    brand_tagline = brand.get("tagline", "") if has_brand else ""
+    sec_color = brand.get("secondary_color", "") if has_brand else ""
+    accent_color = brand.get("accent_color", "") if has_brand else ""
+    brand_font = (brand.get("heading_font") or brand.get("font", "")) if has_brand else ""
+    target_audience = (brand.get("target_audience") or brand.get("customer_type", "")) if has_brand else ""
 
     domain = detect_product_domain(prod_name, prod_category, prod_desc)
     is_festival_explicit = bool(festival_theme and festival_theme.lower() not in ["none", "null", "false", ""])
@@ -152,6 +163,25 @@ def get_reel_script_prompt(
 - Creative freedom applies to camera movements (push-in, pan, orbit, macro), lighting, and realistic interactions—NEVER to changing the product.
 """
 
+    brand_section = ""
+    if has_brand:
+        colors_line = f"Primary: {primary_color}"
+        if sec_color:
+            colors_line += f", Secondary: {sec_color}"
+        if accent_color:
+            colors_line += f", Accent: {accent_color}"
+        brand_section = f"""
+# BRAND IDENTITY GUIDELINES (BRAND KIT MODE: ON)
+- Brand Name: {business_name}
+- Brand Voice & Personality: {brand_voice}
+- Visual Aesthetic Style: {brand_style}
+- Brand Color Palette: {colors_line}
+- Brand Tagline: {brand_tagline or 'N/A'}
+- Typography: {brand_font or 'Modern clean'}
+- Target Audience: {target_audience or 'General'}
+- Directives: Harmonize scene environments, styling, on-screen text, and voiceover tone with this brand identity.
+"""
+
     prompt = f"""You are an elite Commercial Director and AI Video Producer.
 Generate a structured, photorealistic 9:16 Instagram Reel plan strictly focused on this product.
 
@@ -162,13 +192,13 @@ Generate a structured, photorealistic 9:16 Instagram Reel plan strictly focused 
 - Listed Price: {prod_price if prod_price else "Exclusive"}
 - Business / Brand Name: {business_name}
 - Brand Color: {primary_color}
-
+{brand_section}
 # CAMPAIGN SPECIFICATIONS
 - Advertising Objective: {objective}
 - Platform: {platform} (9:16 vertical video)
 - Target Duration: {duration} seconds
 - Spoken Language: {language}
-- Campaign Tone: {tone}
+- Campaign Tone: {brand_voice if has_brand else tone}
 """
     if offer:
         prompt += f"- Promotional Offer: {offer}\n"

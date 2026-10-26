@@ -105,6 +105,19 @@ class InfluencerService:
             doc["id"] = doc.get("user_id", str(doc["_id"]))
             doc.pop("_id", None)
             
+            # Sanitize invalid location strings like 'None, None' or 'null'
+            loc = doc.get("location")
+            if loc and any(bad in str(loc).lower() for bad in ["none", "null"]):
+                doc["location"] = ""
+                
+            # Clean leading @ from username if stored improperly
+            if doc.get("username") and isinstance(doc["username"], str):
+                doc["username"] = doc["username"].lstrip("@")
+            
+            # Ensure fullName fallback
+            if not doc.get("fullName"):
+                doc["fullName"] = doc.get("name") or doc.get("username", "Creator")
+            
             # Generate AI match score if business exists
             if business:
                 match_data = await InfluencerService.calculate_ai_match_score(business, doc)

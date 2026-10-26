@@ -669,3 +669,256 @@ async def test_brand_kit_submission_with_brand_description_alias():
         assert biz is not None
         assert biz["description"] == "Premium automotive luxury detailing and car customization services."
 
+
+# --------------------------------------------------------------------------
+# 17. Incomplete Brand Kit Partial Save (POST /api/v1/brands)
+# --------------------------------------------------------------------------
+async def test_incomplete_brand_kit_partial_save():
+    """
+    Verifies that users can save incomplete Brand Kits on POST /api/v1/brands
+    without being blocked by optional fields (logo, colors, fonts, etc.).
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Partial Save User")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Incomplete payload: only business_name, business_type, business_category
+        partial_payload = {
+            "business_name": "Nova Cloud Systems",
+            "business_type": "Private Limited",
+            "business_category": "Cloud Computing",
+            "tagline": "Scale without limits"
+        }
+
+        # Saving on unified endpoint POST /api/v1/brands must NOT fail with 422
+        res = await ac.post("/api/v1/brands", json=partial_payload, headers=headers)
+        assert res.status_code == 201, f"Expected 201, got {res.status_code}: {res.text}"
+        data = res.json()
+        assert data["success"] is True
+        assert data["brand_kit_status"] == "in_progress"
+        assert data["brand_kit_completed"] is False
+        assert data["completion_percentage"] > 0
+        assert data["completion_percentage"] < 100
+        assert isinstance(data["completed_sections"], list)
+        assert len(data["pending_sections"]) > 0
+        assert "visual_identity" in data["pending_sections"]
+
+        # Verify persisted state via GET
+        get_res = await ac.get("/api/v1/brands", headers=headers)
+        assert get_res.status_code == 200
+        get_data = get_res.json()["data"]
+        assert get_data["business_name"] == "Nova Cloud Systems"
+        assert get_data["tagline"] == "Scale without limits"
+        assert get_data["brand_kit_completed"] is False
+        assert get_data["completion_percentage"] == data["completion_percentage"]
+
+
+# --------------------------------------------------------------------------
+# 18. Partial Updates Preserve Existing Data (PUT /api/v1/brands)
+# --------------------------------------------------------------------------
+async def test_partial_updates_preserve_existing_data():
+    """
+    Verifies that PUT updates preserve existing saved fields when omitted or empty,
+    recalculating completion percentage without data loss.
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Preserve User")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Initial partial save
+        init_payload = {
+            "business_name": "Solaris Energy",
+            "business_type": "Public Limited",
+            "primary_color": "#F59E0B",
+            "secondary_color": "#10B981",
+            "tagline": "Clean energy for all"
+        }
+        res1 = await ac.post("/api/v1/brands", json=init_payload, headers=headers)
+        assert res1.status_code == 201
+        initial_pct = res1.json()["completion_percentage"]
+
+        # Partial update with only font and website (omitting colors and tagline)
+        update_payload = {
+            "font": "Poppins",
+            "website": "https://solarisenergy.com"
+        }
+        res2 = await ac.put("/api/v1/brands", json=update_payload, headers=headers)
+        assert res2.status_code == 200
+        updated_data = res2.json()["data"]
+
+        # Check existing fields are PRESERVED
+        assert updated_data["business_name"] == "Solaris Energy"
+        assert updated_data["primary_color"] == "#F59E0B"
+        assert updated_data["secondary_color"] == "#10B981"
+        assert updated_data["tagline"] == "Clean energy for all"
+        # Check new fields are added
+        assert updated_data["font"] == "Poppins"
+        assert updated_data["website"] == "https://solarisenergy.com"
+        # Check completion percentage increased
+        assert res2.json()["completion_percentage"] > initial_pct
+
+        # Update with empty string on optional field must NOT overwrite existing value
+        empty_str_update = {"tagline": ""}
+        res3 = await ac.put("/api/v1/brands", json=empty_str_update, headers=headers)
+        assert res3.status_code == 200
+        assert res3.json()["data"]["tagline"] == "Clean energy for all"
+
+
+# --------------------------------------------------------------------------
+# 19. Completion Calculation Service Unit Test
+# --------------------------------------------------------------------------
+async def test_calculate_brand_kit_completion_unit():
+    """
+    Tests calculate_brand_kit_completion across empty, partial, and 100% complete records.
+    """
+    from app.services.brand_service import calculate_brand_kit_completion
+
+    # 1. Empty data -> 0%
+    empty_res = calculate_brand_kit_completion({})
+    assert empty_res["completion_percentage"] == 0
+    assert len(empty_res["completed_sections"]) == 0
+    assert len(empty_res["pending_sections"]) == 5
+
+    # 2. Complete Section 1 (Business Identity): 4 fields -> 29%
+    s1_data = {
+        "business_name": "Test Brand",
+        "business_type": "Private Limited",
+        "business_category": "Technology",
+        "business_description": "A leading provider of high performance AI solutions."
+    }
+    s1_res = calculate_brand_kit_completion(s1_data)
+    assert s1_res["completion_percentage"] == 29
+    assert "business_identity" in s1_res["completed_sections"]
+    assert len(s1_res["completed_sections"]) == 1
+    assert len(s1_res["pending_sections"]) == 4
+
+    # 3. Complete all 14 core fields across 5 sections -> 100%
+    full_data = {
+        "business_name": "Full Brand Corp",
+        "business_type": "LLP",
+        "business_category": "FinTech",
+        "business_description": "Empowering micro-businesses with decentralized payment gateways.",
+        "business_model": "B2B",
+        "selling_model": "Subscription",
+        "logo_url": "https://example.com/logo.png",
+        "primary_color": "#1E40AF",
+        "secondary_color": "#3B82F6",
+        "font": "Inter",
+        "brand_voice": "Authoritative & Innovative",
+        "age_group": "25-34",
+        "customer_type": "Startups",
+        "location_focus": "Mumbai, Maharashtra"
+    }
+    full_res = calculate_brand_kit_completion(full_data)
+    assert full_res["completion_percentage"] == 100
+    assert len(full_res["completed_sections"]) == 5
+    assert len(full_res["pending_sections"]) == 0
+
+
+# --------------------------------------------------------------------------
+# 20. Logo Generation Schema Flexibility and Fully Qualified URLs
+# --------------------------------------------------------------------------
+async def test_logo_generation_flexible_schema_and_public_urls():
+    """
+    Verifies that logo generation request schema flexibly accepts string colors,
+    aliases (name, category, colors), and returns fully qualified public URLs.
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Flexible Logo User")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        fake_png_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4"
+        mock_result = {
+            "image_url": "https://fake-ai-cdn.com/logo.png",
+            "prompt": "vector logo for FlexiBrand",
+            "model": "imagen-3"
+        }
+
+        with patch.object(ImageGenerator, "generate", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = mock_result
+            with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.content = fake_png_data
+                mock_get.return_value = mock_resp
+
+                # Test sending preferred_colors as single string, and aliases (name, category)
+                res = await ac.post("/api/v1/brands/generate-logo", json={
+                    "name": "FlexiBrand",
+                    "category": "E-Commerce",
+                    "style": "minimalist_modern",
+                    "preferred_colors": "#7C3AED",  # Single string instead of array
+                    "num_variations": 2
+                }, headers=headers)
+
+                assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
+                res_data = res.json()["data"]
+                assert res_data["business_name"] == "FlexiBrand"
+                # Must be fully qualified public URL
+                assert res_data["logo_url"].startswith("http")
+                assert "/uploads/brand/" in res_data["logo_url"]
+                assert len(res_data["variations"]) == 2
+                for v in res_data["variations"]:
+                    assert v["logo_url"].startswith("http")
+
+
+# --------------------------------------------------------------------------
+# 21. Logo Generation Provider Failure and Missing Name Validation
+# --------------------------------------------------------------------------
+async def test_logo_generation_validation_and_provider_failure():
+    """
+    Verifies that missing business name with no DB record returns clear 400 error,
+    and provider errors return structured 502 without suppressing HTTP errors.
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="Logo Fail User")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 1. Missing business name without any registered business in DB -> 400
+        res_no_name = await ac.post("/api/v1/brands/generate-logo", json={
+            "style": "minimalist_modern"
+        }, headers=headers)
+        assert res_no_name.status_code == 400
+        assert "business name" in res_no_name.json()["detail"].lower()
+
+        # 2. Provider error returns structured 502 with message
+        with patch.object(ImageGenerator, "generate", side_effect=Exception("Connection refused by upstream AI")):
+            res_fail = await ac.post("/api/v1/brands/generate-logo", json={
+                "business_name": "Test Brand",
+                "style": "minimalist_modern"
+            }, headers=headers)
+            assert res_fail.status_code == 502
+            assert "Connection refused by upstream AI" in res_fail.json()["detail"]
+
+
+# --------------------------------------------------------------------------
+# 22. Essential Validation: Missing Business Name Blocks Brand Kit Creation
+# --------------------------------------------------------------------------
+async def test_missing_business_name_blocks_save():
+    """
+    Verifies that genuinely essential data (business name) is required
+    when neither payload nor user profile has a business name.
+    """
+    db = get_database()
+    user_id, token, _ = await create_user_with_token(db, role="businessman", name="No Name User")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Payload with no business_name or brand_name
+        res = await ac.post("/api/v1/brands", json={
+            "tagline": "Just a tagline",
+            "primary_color": "#1E40AF"
+        }, headers=headers)
+        assert res.status_code == 422
+        data = res.json()
+        assert "business_name" in str(data["detail"])
+

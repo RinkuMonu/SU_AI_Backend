@@ -182,31 +182,45 @@ async def get_social_onboarding_status(db, current_user) -> SocialOnboardingStat
             create_account_urls=CREATE_ACCOUNT_URLS,
         )
 
-    # 3. Check Brand Kit completion prerequisite
+    # 3. Check Brand Kit prerequisite (started or saved)
     brand_kit = await get_brand_kit_by_owner(db, user_id)
     brand_kit_completed = False
+    brand_kit_started_or_saved = False
     if brand_kit:
         brand_kit_completed = brand_kit.get("brand_kit_completed", False)
-        # Support legacy brand kit check
         if not brand_kit_completed:
             has_name = bool(brand_kit.get("business_name") or brand_kit.get("brand_name"))
             has_logo = bool(brand_kit.get("logo_url"))
             has_color = bool(brand_kit.get("primary_color"))
             if has_name and has_logo and has_color and brand_kit.get("brand_kit_status") != "in_progress":
                 brand_kit_completed = True
+        brand_kit_started_or_saved = bool(
+            brand_kit_completed or
+            brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or
+            brand_kit.get("completion_percentage", 0) > 0 or
+            brand_kit.get("brand_kit_dismissed", False)
+        )
 
     # 4. Check active platform connections
     platforms = await get_all_platform_connections(db, user_id)
     connected_count = sum(1 for p in platforms.values() if p.connected)
     is_social_completed = connected_count > 0
 
-    # Retrieve completed timestamp from business if available
+    # Retrieve completed timestamp and skipped status from business
     business = await db["businesses"].find_one({"owner_id": user_id})
     completed_at = business.get("social_connectivity_completed_at") if business else None
+    is_social_skipped = bool(
+        (business and business.get("social_connectivity_skipped", False)) or
+        (current_user.get("social_connectivity_skipped", False) if isinstance(current_user, dict) else False)
+    )
 
     # Determine popup display condition
-    # Popup displays ONLY IF Brand Kit is completed AND user has 0 connected accounts
-    should_show_modal = brand_kit_completed and (connected_count == 0)
+    # Stop popup if at least 1 account connected OR if user skipped
+    # Otherwise show modal only once Step 1 is started/saved and Step 2 is pending
+    if is_social_completed or is_social_skipped:
+        should_show_modal = False
+    else:
+        should_show_modal = brand_kit_started_or_saved and (connected_count == 0) and not is_social_skipped
 
     return SocialOnboardingStatusResponse(
         role=role,
@@ -218,6 +232,26 @@ async def get_social_onboarding_status(db, current_user) -> SocialOnboardingStat
         platforms=platforms,
         create_account_urls=CREATE_ACCOUNT_URLS,
     )
+
+
+async def skip_social_connectivity(db, user_id: str) -> bool:
+    """
+    Marks social connectivity step as skipped so the blocking popup does not reappear.
+    Does not mark social_connectivity_completed as True.
+    """
+    now = datetime.now(timezone.utc)
+    await db["businesses"].update_one(
+        {"owner_id": user_id},
+        {"$set": {"social_connectivity_skipped": True, "social_connectivity_skipped_at": now, "updated_at": now}},
+        upsert=True
+    )
+    from bson import ObjectId
+    if ObjectId.is_valid(user_id):
+        await db["users"].update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"social_connectivity_skipped": True, "updated_at": now}}
+        )
+    return True
 
 
 async def disconnect_social_platform(db, user_id: str, platform: str) -> Tuple[bool, bool, bool]:
@@ -266,3 +300,11 @@ async def disconnect_social_platform(db, user_id: str, platform: str) -> Tuple[b
     should_show_modal = brand_kit_completed and not is_social_completed
 
     return success, is_social_completed, should_show_modal
+
+
+class SocialConnectivityService:
+    get_social_onboarding_status = staticmethod(get_social_onboarding_status)
+    sync_business_social_status = staticmethod(sync_business_social_status)
+    skip_social_connectivity = staticmethod(skip_social_connectivity)
+    disconnect_social_platform = staticmethod(disconnect_social_platform)
+    get_all_platform_connections = staticmethod(get_all_platform_connections)

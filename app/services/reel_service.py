@@ -73,6 +73,9 @@ class ReelService:
             "captions_enabled": getattr(request, "captions_enabled", True),
             "original_image_url": orig_img,
             "enhanced_image_url": None,
+            "use_brand_kit": getattr(request, "use_brand_kit", False),
+            "brand_kit_applied": bool(getattr(request, "use_brand_kit", False) and brand),
+            "brand": brand if getattr(request, "use_brand_kit", False) else None,
             "status": "queued",
             "progress": 0,
             "stage": "Waiting in generation queue",
@@ -142,6 +145,9 @@ class ReelService:
             motion_classification=job.get("motion_classification"),
             motion_score=job.get("motion_score"),
             diversity_score=job.get("diversity_score"),
+            use_brand_kit=job.get("use_brand_kit", False),
+            brand_kit_applied=job.get("brand_kit_applied", False),
+            brand=job.get("brand"),
         )
 
     async def retry_job(self, job_id: str, user_id: str) -> bool:
@@ -155,6 +161,8 @@ class ReelService:
         })
         if not job:
             return False
+
+        use_bk = job.get("use_brand_kit", False)
 
         # Re-construct request and product
         request = GenerateReelRequest(
@@ -173,7 +181,8 @@ class ReelService:
             music_style=job.get("music_style", "cinematic"),
             captions_enabled=job.get("captions_enabled", True),
             campaign_objective=job.get("campaign_objective", "product_showcase"),
-            festival_theme=job.get("festival_theme", "none")
+            festival_theme=job.get("festival_theme", "none"),
+            use_brand_kit=use_bk
         )
 
         product = {
@@ -185,7 +194,7 @@ class ReelService:
             "images": [job.get("original_image_url")] if job.get("original_image_url") else []
         }
 
-        brand = {"name": "SevenUnique Partner", "primary_color": "#7928CA"}
+        brand = job.get("brand") or {} if use_bk else {}
 
         await self._update_job(job_id, {
             "status": "queued",
@@ -285,9 +294,10 @@ class ReelService:
                 "stage": "Planning commercial storyboard with Gemini"
             })
             
+            use_bk = getattr(request, "use_brand_kit", False) and bool(brand and any(brand.values()))
             script = await self.script_service.generate_script(
                 product=product,
-                brand=brand,
+                brand=brand if use_bk else {},
                 objective=request.campaign_objective or request.objective,
                 platform=request.platform,
                 duration=request.duration,
@@ -296,7 +306,8 @@ class ReelService:
                 offer=request.offer_text or request.offer,
                 additional_instruction=request.additional_instructions or request.additional_instruction,
                 generation_mode=gen_mode,
-                festival_theme=fest_theme
+                festival_theme=fest_theme,
+                use_brand_kit=use_bk
             )
             
             # Ensure viral hook components are present and locked to this product
@@ -474,10 +485,20 @@ class ReelService:
                 "stage": "Composing final reel with synchronized audio & captions"
             })
             
+            b_colors = {
+                "primary": brand.get("primary_color", "#7928CA"),
+                "secondary": brand.get("secondary_color"),
+                "accent": brand.get("accent_color")
+            } if use_bk else None
+            b_font = (brand.get("heading_font") or brand.get("font")) if use_bk else None
+            b_logo = brand.get("logo_url") if use_bk else None
+
             final_video_url = await self.composer.compose_reel(
                 video_segments=video_segments,
                 audio_url=audio_url,
-                brand_colors={"primary": brand.get("primary_color", "#7928CA")},
+                brand_colors=b_colors,
+                font_family=b_font,
+                logo_url=b_logo,
                 script=script,
                 product_name=product_name,
                 music_style=getattr(request, "music_style", "cinematic"),
@@ -513,8 +534,11 @@ class ReelService:
                 "motion_classification": validation_report.get("classification"),
                 "motion_score": validation_report.get("motion_score"),
                 "diversity_score": validation_report.get("diversity_score"),
+                "use_brand_kit": use_bk,
+                "brand_kit_applied": use_bk,
+                "brand": brand if use_bk else None,
             })
-            logger.info(f"Reel job {job_id} successfully completed for product: {product_name} (motion: {validation_report.get('classification')})")
+            logger.info(f"Reel job {job_id} successfully completed for product: {product_name} (motion: {validation_report.get('classification')}, use_brand_kit={use_bk})")
             
         except Exception as e:
             err_msg = str(e).strip() or repr(e)
