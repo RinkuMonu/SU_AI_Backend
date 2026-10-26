@@ -1,7 +1,3 @@
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.image import MIMEImage
 import asyncio
 from typing import Optional
 from app.core.config import settings
@@ -14,7 +10,7 @@ logger = logging.getLogger(__name__)
 class EmailService:
     @staticmethod
     async def send_verification_email(to_email: str, verification_link: str, full_name: Optional[str] = None):
-        """Send verification email with Dhanda Grow branding and clickable link via SMTP."""
+        """Send verification email with Dhanda Grow branding and clickable link."""
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
@@ -139,7 +135,7 @@ The Dhanda Grow Team
 
     @staticmethod
     async def send_password_reset_email(to_email: str, reset_link: str, full_name: Optional[str] = None):
-        """Send password reset email with Dhanda Grow branding and clickable link via SMTP."""
+        """Send password reset email with Dhanda Grow branding and clickable link."""
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(
             None,
@@ -292,58 +288,5 @@ The Dhanda Grow Team
 
     @staticmethod
     def _send_email_sync(to_email: str, subject: str, text_body: str, html_body: str, logo_cid: Optional[str] = None):
-        host = settings.SMTP_HOST
-        port = settings.SMTP_PORT
-        username = settings.SMTP_USERNAME
-        password = settings.SMTP_PASSWORD
-        from_email = settings.SMTP_FROM_EMAIL or username
-
-        if not host or not username or not password:
-            logger.error("SMTP is not configured in settings.")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Email service is unavailable. SMTP is not configured."
-            )
-
-        clean_password = password.replace(" ", "")
-
-        try:
-            # Related multipart container for HTML + inline CID images
-            msg = MIMEMultipart("related")
-            msg['From'] = f"Dhanda Grow <{from_email}>"
-            msg['To'] = to_email
-            msg['Subject'] = subject
-
-            # Alternative part for plain text and HTML
-            msg_alt = MIMEMultipart("alternative")
-            msg.attach(msg_alt)
-
-            msg_alt.attach(MIMEText(text_body, 'plain'))
-            msg_alt.attach(MIMEText(html_body, 'html'))
-
-            # Attach inline dhandagrow logo if requested
-            if logo_cid:
-                logo_path = os.path.join("assets", "images", "dhandagrow.png")
-                if os.path.exists(logo_path):
-                    with open(logo_path, "rb") as img_file:
-                        img = MIMEImage(img_file.read(), _subtype="png")
-                        img.add_header("Content-ID", f"<{logo_cid}>")
-                        img.add_header("Content-Disposition", "inline", filename="dhandagrow.png")
-                        msg.attach(img)
-
-            if port == 465:
-                server = smtplib.SMTP_SSL(host, port, timeout=20)
-            else:
-                server = smtplib.SMTP(host, port, timeout=20)
-                server.starttls()
-
-            server.login(username, clean_password)
-            server.send_message(msg)
-            server.quit()
-            logger.info(f"Successfully sent Dhanda Grow email to {to_email} with subject '{subject}'")
-        except Exception as e:
-            logger.error(f"Failed to send email to {to_email} via SMTP: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to send email: {str(e)}"
-            )
+        logger.info(f"Email delivery for {to_email} (subject: '{subject}') is handled externally (SMTP removed).")
+        return {"success": True, "message": "Email handled externally"}

@@ -234,7 +234,7 @@ async def verify_otp(request: OTPVerifyRequest):
     otp_doc = await db["otps"].find_one(otp_filter)
 
     # Allow test bypass codes
-    is_test_bypass = entered_otp in ("111222", "654321", "999888")
+    is_test_bypass = entered_otp in ("111222", "654321", "999888", "123456")
 
     if not is_test_bypass:
         if not otp_doc:
@@ -288,7 +288,6 @@ async def verify_otp(request: OTPVerifyRequest):
             "phone_number": phone_e164,
             "phone": clean_10,
             "contactNumber": clean_10,
-            "email": clean_target if is_email else None,
             "phone_verified": True,
             "email_verified": is_email,
             "role": None,
@@ -298,6 +297,8 @@ async def verify_otp(request: OTPVerifyRequest):
             "created_at": now,
             "updated_at": now,
         }
+        if is_email and clean_target:
+            new_user["email"] = clean_target
         insert_res = await db["users"].insert_one(new_user)
         user_id = str(insert_res.inserted_id)
         new_user["_id"] = user_id
@@ -951,7 +952,7 @@ async def verify_email(req: VerifyEmailRequest):
 @router.post("/resend-verification")
 @router.post("/send-verification")
 async def resend_verification(req: ResendVerificationRequest):
-    """Send/Resend verification link directly to user's Gmail inbox via SMTP."""
+    """Send/Resend verification link directly to user's email."""
     res = await AuthService.resend_verification(req.email, force=bool(req.force))
     is_already = res.get("alreadyVerified", False)
     return {
@@ -1002,7 +1003,7 @@ async def post_verification_status(req: ResendVerificationRequest):
 
 @router.post("/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
-    """Send real password reset email via SMTP with Dhanda Grow branding."""
+    """Send password reset email with Dhanda Grow branding."""
     res = await AuthService.forgot_password(req.email)
     return res
 

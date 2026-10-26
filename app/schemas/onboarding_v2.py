@@ -20,6 +20,7 @@ ALLOWED_PRESENCE_TYPES = {
     "website",
     "google_maps",
     "marketplace",
+    "marketplaces",
     "wholesale_b2b",
     "b2c_online",
     "social_only",

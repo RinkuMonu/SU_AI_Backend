@@ -152,7 +152,7 @@ class AuthService:
     @staticmethod
     async def verify_otp(identifier_or_email: str, otp: str, country_code: Optional[str] = None):
         """
-        Verify OTP for either email (SMTP) or phone (MSG91).
+        Verify OTP for either email or phone.
         Supports both string identifier and returns verified User or dict.
         """
         clean_id = str(identifier_or_email).strip()

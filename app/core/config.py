@@ -70,15 +70,6 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_API_URL: str | None = None
 
-    SMTP_HOST: str | None = "smtp.gmail.com"
-    SMTP_PORT: int = 587
-    SMTP_USERNAME: str | None = None
-    SMTP_PASSWORD: str | None = None
-    SMTP_FROM_EMAIL: str = "noreply@dhandagrow.com"
-    SMTP_USER: str | None = None
-    SMTP_PASS: str | None = None
-    SMTP_FROM: str | None = None
-
     PAYIN_URL: str = ""
     PAYIN_TOKEN: str = ""
     
@@ -105,18 +96,8 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
 
     @model_validator(mode="after")
-    def resolve_smtp_settings(self):
-        if not self.SMTP_USERNAME and self.SMTP_USER:
-            self.SMTP_USERNAME = self.SMTP_USER
-        if not self.SMTP_PASSWORD and self.SMTP_PASS:
-            self.SMTP_PASSWORD = self.SMTP_PASS.replace(" ", "")
-        elif self.SMTP_PASSWORD:
-            self.SMTP_PASSWORD = self.SMTP_PASSWORD.replace(" ", "")
-        if self.SMTP_FROM:
-            self.SMTP_FROM_EMAIL = self.SMTP_FROM
-        elif self.SMTP_USERNAME and self.SMTP_FROM_EMAIL == "noreply@dhandagrow.com":
-            self.SMTP_FROM_EMAIL = self.SMTP_USERNAME
-                # Resolve LinkedIn settings
+    def resolve_settings(self):
+        # Resolve LinkedIn settings
         if not self.LINKEDIN_CLIENT_ID and self.Linkedin_client_id:
             self.LINKEDIN_CLIENT_ID = self.Linkedin_client_id
         if not self.LINKEDIN_CLIENT_SECRET and self.Linkedin_client_secret:
