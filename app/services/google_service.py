@@ -228,13 +228,8 @@ class GoogleService:
                 user.id = user_id
                 logger.info(f"Pending user {user_id} migrated to canonical users via Google auth.")
             else:
-                # Separate Login vs Registration behavior:
-                # Login must not silently create an account for an unregistered Google user.
-                if mode == "login":
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="No account found with this Google email. Please register first."
-                    )
+                # Brand new Google user -> automatically register directly into canonical users collection
+                logger.info(f"Unregistered Google user ({email}) - auto-registering into canonical users.")
 
                 # Brand new user -> register directly into canonical 'users' collection
                 if norm_phone:
