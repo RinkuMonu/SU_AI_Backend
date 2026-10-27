@@ -263,7 +263,6 @@ class SMSService:
 
         headers = {
             "authorization": api_key,
-            "Authorization": api_key,
             "accept": "application/json"
         }
 
@@ -311,7 +310,7 @@ class SMSService:
                         }
                     else:
                         raw_msg = data.get("message")
-                        err_msg = ", ".join(str(m) for m in raw_msg) if isinstance(raw_msg, list) else str(raw_msg or f"Fast2SMS HTTP {resp.status_code}")
+                        err_msg = ", ".join(str(m) for m in raw_msg) if isinstance(raw_msg, list) else str(raw_msg or resp.text or f"Fast2SMS HTTP {resp.status_code}")
                         logger.error(f"Fast2SMS DLT error for {mask_phone_number(clean_10)}: {err_msg}")
                         if (
                             settings.ENVIRONMENT == "development"
@@ -391,7 +390,7 @@ class SMSService:
                     }
                 else:
                     raw_msg = data.get("message")
-                    err_msg = ", ".join(str(m) for m in raw_msg) if isinstance(raw_msg, list) else str(raw_msg or f"Fast2SMS HTTP {resp.status_code}")
+                    err_msg = ", ".join(str(m) for m in raw_msg) if isinstance(raw_msg, list) else str(raw_msg or resp.text or f"Fast2SMS HTTP {resp.status_code}")
                     logger.error(f"Fast2SMS error for {mask_phone_number(clean_10)}: {err_msg}")
                     if (
                         settings.ENVIRONMENT == "development"
