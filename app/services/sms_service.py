@@ -48,18 +48,45 @@ class SMSService:
         if ch == "whatsapp":
             return await cls._send_via_msg91_whatsapp(phone_number, otp)
 
-        provider = (getattr(settings, "SMS_PROVIDER", None) or "fast2sms").lower().strip()
+        provider = (getattr(settings, "SMS_PROVIDER", None) or "msg91").lower().strip()
+        last_exc = None
+
         if provider == "fast2sms":
-            res = await cls._send_via_fast2sms(phone_number, otp, channel="sms")
-        elif provider == "msg91" and getattr(settings, "MSG91_AUTH_KEY", None):
-            res = await cls._send_via_msg91(phone_number, otp, template_id=template_id)
+            try:
+                res = await cls._send_via_fast2sms(phone_number, otp, channel="sms")
+                if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True):
+                    res["success"] = True
+                return res
+            except Exception as e:
+                logger.warning(f"Fast2SMS delivery failed ({e}), attempting fallback to MSG91...")
+                last_exc = e
+                if getattr(settings, "MSG91_AUTH_KEY", None):
+                    try:
+                        res = await cls._send_via_msg91(phone_number, otp, template_id=template_id)
+                        if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True):
+                            res["success"] = True
+                        return res
+                    except Exception as m_err:
+                        logger.error(f"MSG91 fallback delivery failed: {m_err}")
+                raise last_exc
         else:
-            res = await cls._send_via_fast2sms(phone_number, otp, channel="sms")
+            try:
+                if getattr(settings, "MSG91_AUTH_KEY", None):
+                    res = await cls._send_via_msg91(phone_number, otp, template_id=template_id)
+                    if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True):
+                        res["success"] = True
+                    return res
+            except Exception as e:
+                logger.warning(f"MSG91 delivery failed ({e}), attempting fallback to Fast2SMS...")
+                last_exc = e
 
-
-        if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True):
-            res["success"] = True
-        return res
+            try:
+                res = await cls._send_via_fast2sms(phone_number, otp, channel="sms")
+                if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True):
+                    res["success"] = True
+                return res
+            except Exception as f_err:
+                raise last_exc or f_err
 
 
     @classmethod

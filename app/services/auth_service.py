@@ -40,29 +40,34 @@ def generate_secure_otp(length: int = 6) -> str:
     return "".join(secrets.choice(string.digits) for _ in range(length))
 
 class AuthService:
+    _users_index_initialized = False
+    _otp_index_initialized = False
+
     @staticmethod
     async def get_collection():
         db = get_database()
-        # Unique index on phone_number where value is a string to prevent collisions while allowing multiple null/legacy accounts
-        try:
-            await db["users"].create_index(
-                "phone_number",
-                unique=True,
-                partialFilterExpression={"phone_number": {"$type": "string"}}
-            )
-        except Exception:
-            pass
+        if not AuthService._users_index_initialized:
+            try:
+                await db["users"].create_index(
+                    "phone_number",
+                    unique=True,
+                    partialFilterExpression={"phone_number": {"$type": "string"}}
+                )
+                AuthService._users_index_initialized = True
+            except Exception:
+                pass
         return db["users"]
 
     @staticmethod
     async def get_otp_collection():
         db = get_database()
-        # Ensure indexes on otps collection
-        try:
-            await db["otps"].create_index("expires_at", expireAfterSeconds=0)
-            await db["otps"].create_index("phone_number", sparse=True)
-        except Exception:
-            pass
+        if not AuthService._otp_index_initialized:
+            try:
+                await db["otps"].create_index("expires_at", expireAfterSeconds=0)
+                await db["otps"].create_index("phone_number", sparse=True)
+                AuthService._otp_index_initialized = True
+            except Exception:
+                pass
         return db["otps"]
 
     @staticmethod
