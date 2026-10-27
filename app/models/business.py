@@ -22,6 +22,21 @@ class Business(MongoBaseModel):
     logo_url: Optional[str] = Field(default=None, validation_alias=AliasChoices("logo_url", "logoUrl"))
     brand_colors: Optional[List[str]] = Field(default=None, validation_alias=AliasChoices("brand_colors", "brandColors"))
     primary_goal: Optional[str] = Field(default=None, validation_alias=AliasChoices("primary_goal", "primaryGoal", "brand_tone"))
+    tagline: Optional[str] = None
+    city: Optional[str] = None
+    sub_category: Optional[str] = None
+    business_types: Optional[List[str]] = None
+    primary_business_type: Optional[str] = None
+    differentiators: Optional[List[str]] = None
+    products_services: Optional[List[str]] = None
+    tones: Optional[List[str]] = None
+    selected_photos: Optional[List[str]] = None
+    online_presence: Optional[str] = None
+    selected_platforms: Optional[List[str]] = None
+    custom_platform_name: Optional[str] = None
+    none_of_these_selected: Optional[bool] = None
+    website_skipped: Optional[bool] = None
+    has_storefront: Optional[bool] = None
 
     # Onboarding Status Fields
     brand_kit_status: str = "not_started"

@@ -31,9 +31,9 @@ from app.services.marketing_intelligence_service import MarketingIntelligenceSer
 
 def test_gemini_configuration_defaults():
     """Verify Gemini default models and settings are properly configured."""
-    assert settings.GEMINI_MODEL in ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-flash-latest"]
-    assert settings.GEMINI_FAST_MODEL in ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-flash-latest"]
-    assert settings.GEMINI_REASONING_MODEL in ["gemini-3.8-pro", "gemini-2.5-pro", "gemini-pro-latest"]
+    assert settings.GEMINI_MODEL in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+    assert settings.GEMINI_FAST_MODEL in ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-2.5-flash", "gemini-flash-latest"]
+    assert settings.GEMINI_REASONING_MODEL in ["gemini-3.8-pro", "gemini-3.1-pro-preview", "gemini-3.5-flash", "gemini-2.5-pro", "gemini-pro-latest"]
 
 
 def test_gemini_backup_key_resolution():

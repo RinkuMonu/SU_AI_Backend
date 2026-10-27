@@ -93,6 +93,21 @@ class BrandBase(BaseModel):
     contact: Optional[ContactInfo] = None
     location: Optional[LocationInfo] = None
     social_style: Optional[str] = None
+    palette: Optional[List[str]] = Field(default=None, description="Color palette hex codes")
+    brand_colors: Optional[List[str]] = Field(default=None, description="List of primary and brand color hex codes")
+    tones: Optional[List[str]] = Field(default=None, description="Tone keywords for brand voice")
+    business_types: Optional[List[str]] = Field(default=None, description="Applicable business types")
+    primary_business_type: Optional[str] = None
+    sub_category: Optional[str] = None
+    city: Optional[str] = None
+    differentiators: Optional[List[str]] = Field(default=None, description="Key business differentiators")
+    products_services: Optional[List[str]] = Field(default=None, description="Key products and services")
+    selected_photos: Optional[List[str]] = Field(default=None, description="Selected brand/business photos")
+    target_audience_summary: Optional[str] = None
+    services_products_summary: Optional[List[str]] = None
+    online_presence: Optional[str] = Field(default=None, description="Onboarding online presence source")
+    clear_fields: Optional[List[str]] = Field(default=None, description="List of field names to explicitly clear")
+    cleared_fields: Optional[List[str]] = Field(default=None, description="Alias for clear_fields")
     completion_percentage: Optional[int] = 0
     completed_sections: Optional[List[str]] = Field(default_factory=list)
     pending_sections: Optional[List[str]] = Field(default_factory=list)
@@ -107,12 +122,49 @@ class BrandBase(BaseModel):
         if name:
             self.business_name = name
             self.brand_name = name
+        # Sync clear_fields / cleared_fields
+        if self.cleared_fields and not self.clear_fields:
+            self.clear_fields = self.cleared_fields
         return self
 
     @field_validator("primary_color", "secondary_color", "accent_color")
     @classmethod
     def validate_colors(cls, v: Optional[str]) -> Optional[str]:
         return validate_and_normalize_hex(v)
+
+    @field_validator("brand_colors", "palette", mode="before")
+    @classmethod
+    def validate_color_list(cls, v: Any) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v = [c.strip() for c in v.split(",") if c.strip()]
+        if isinstance(v, (list, tuple)):
+            cleaned = []
+            for item in v:
+                if not item or not isinstance(item, str):
+                    continue
+                try:
+                    norm = validate_and_normalize_hex(item)
+                    if norm:
+                        cleaned.append(norm)
+                except Exception:
+                    s = item.strip()
+                    if s:
+                        cleaned.append(s.upper() if s.startswith("#") else f"#{s.upper()}")
+            return cleaned
+        return None
+
+    @field_validator("tones", "differentiators", "products_services", "selected_photos", "business_types", "age_groups", "generating_for", "clear_fields", "cleared_fields", mode="before")
+    @classmethod
+    def validate_list_or_csv(cls, v: Any) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            return [x.strip() for x in v.split(",") if x.strip()]
+        if isinstance(v, (list, tuple)):
+            return [str(x).strip() for x in v if str(x).strip()]
+        return None
 
 
 class BrandCreate(BrandBase):

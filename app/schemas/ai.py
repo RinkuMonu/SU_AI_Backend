@@ -77,8 +77,12 @@ class CompetitorAnalysisResponse(BaseModel):
 
 class WebsiteAnalysisRequest(BaseModel):
     website_url: Optional[str] = None
+    url: Optional[str] = None
     primary_goal: Optional[str] = "leads_and_sales"
     target_audience: Optional[str] = None
+
+    def get_url(self) -> str:
+        return (self.website_url or self.url or "").strip()
 
 
 class WebsiteAnalysisResponse(BaseModel):

@@ -55,7 +55,7 @@ async def save_draft(
     Accepts partial inputs and persists state as 'in_progress'.
     """
     owner_id = str(current_user["id"])
-    submission_dict = data.model_dump(exclude_none=True)
+    submission_dict = data.model_dump(exclude_unset=True)
     brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=True, is_complete_action=False)
     return BrandKitActionResponse(
         success=True,
@@ -81,7 +81,7 @@ async def complete_brand_kit(
     Returns 422 with field-level errors if any required field is missing.
     """
     owner_id = str(current_user["id"])
-    submission_dict = data.model_dump(exclude_none=True)
+    submission_dict = data.model_dump(exclude_unset=True)
     brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=False, is_complete_action=True)
     return BrandKitActionResponse(
         success=True,
@@ -107,7 +107,7 @@ async def create_or_save_brand(
     If all fields are completed and is_draft is False, marks as completed; otherwise saves in_progress.
     """
     owner_id = str(current_user["id"])
-    submission_dict = data.model_dump(exclude_none=True)
+    submission_dict = data.model_dump(exclude_unset=True)
     is_draft = getattr(data, "is_draft", False)
     brand = await save_brand_kit_submission(db, owner_id, submission_dict, is_draft=is_draft, is_complete_action=False)
     return {
@@ -151,7 +151,7 @@ async def update_my_brand(
     Preserves existing saved data for omitted fields and recalculates completion.
     """
     owner_id = str(current_user["id"])
-    update_dict = data.model_dump(exclude_none=True)
+    update_dict = data.model_dump(exclude_unset=True)
     brand = await save_brand_kit_submission(db, owner_id, update_dict, is_draft=False, is_complete_action=False)
     return {
         "success": True,
@@ -230,7 +230,8 @@ async def dismiss_brand_kit_modal(
     )
     await db["brand_kits"].update_one(
         {"owner_id": owner_id},
-        {"$set": {"brand_kit_dismissed": True, "updated_at": now}}
+        {"$set": {"brand_kit_dismissed": True, "updated_at": now}},
+        upsert=True
     )
     return {
         "success": True,

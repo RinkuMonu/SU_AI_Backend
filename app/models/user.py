@@ -24,8 +24,11 @@ class User(MongoBaseModel):
     image: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
+    onboarding_completed_at: Optional[datetime] = None
+    onboarding_status: Optional[str] = None
     role: Optional[str] = None
     onboarding_step: Optional[int] = 1
+    online_presence: Optional[str] = None
 
     # Business Registration Fields
     business_logo: Optional[str] = None

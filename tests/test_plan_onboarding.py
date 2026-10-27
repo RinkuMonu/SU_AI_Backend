@@ -22,7 +22,6 @@ _phone_counter = 500
 async def setup_db():
     connect_to_mongo()
     yield
-    close_mongo_connection()
 
 
 @pytest.fixture(autouse=True)

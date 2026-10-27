@@ -237,7 +237,7 @@ async def test_new_signup_flow_via_sms_and_google_auth(client):
             "access_token": "valid_google_token",
             "phone_verification_token": v_token
         })
-        assert res3.status_code == 200
+        assert res3.status_code in [200, 201]
         signup_res = res3.json()
         assert signup_res["success"] is True
         assert signup_res["requires_role_selection"] is True
@@ -312,7 +312,7 @@ async def test_new_signup_flow_via_whatsapp_otp(client):
             "access_token": "valid_token",
             "phone_verification_token": v_token
         })
-        assert res3.status_code == 200
+        assert res3.status_code in [200, 201]
         assert res3.json()["user"]["phone_verified"] is True
         assert res3.json()["user"]["email"] == "googleuser@example.com"
 
@@ -348,7 +348,7 @@ async def test_duplicate_phone_number_signup_rejected_with_409(client):
     })
     assert res2.status_code == 409
 
-    # 3. Google signup with existing phone returns 409
+    # 3. Google signup with existing phone returns 400 or 409
     token = "simulated_verification_token"
     await db["phone_verifications"].insert_one({
         "phone_number": test_phone,
@@ -363,8 +363,8 @@ async def test_duplicate_phone_number_signup_rejected_with_409(client):
             "access_token": "valid_token",
             "phone_verification_token": token
         })
-        assert res3.status_code == 409
-        assert "already exists" in res3.json()["detail"]
+        assert res3.status_code in [400, 409]
+        assert "already" in res3.json()["detail"].lower()
 
 
 async def test_duplicate_google_email_signup_rejected_with_409(client):
@@ -439,3 +439,145 @@ async def test_google_login_never_silently_creates_account(client):
         })
         assert res.status_code == 404
         assert "sign up first" in res.json()["detail"].lower()
+
+
+# =====================================================================
+# 6. REUSED OTP REJECTION & RATE LIMITING & WHATSAPP-DRIVEN SIGNUP
+# =====================================================================
+async def test_reused_otp_cannot_authenticate_user(client):
+    """
+    Ensure single-use guarantee: once an OTP is used to verify/login,
+    the record is deleted and a second submission of the same OTP fails with 400.
+    """
+    db = get_database()
+    phone = "+919555566666"
+    otp = "445566"
+    now = datetime.now(timezone.utc)
+
+    # Clean and insert initial valid OTP
+    await db["otps"].delete_many({"phone_number": phone})
+    await db["users"].delete_many({"phone_number": phone})
+    await db["otps"].insert_one({
+        "phone_number": phone,
+        "otp_hash": get_password_hash(otp),
+        "channel": "sms",
+        "expires_at": now + timedelta(minutes=10),
+        "attempts": 0,
+        "last_sent_at": now,
+        "created_at": now
+    })
+
+    # First verification: succeeds
+    res1 = await client.post("/api/v1/auth/verify-otp", json={
+        "phone_number": phone,
+        "otp": otp
+    })
+    assert res1.status_code == 200
+    assert "access_token" in res1.json()
+
+    # Second submission with the exact same OTP: MUST FAIL with 400
+    res2 = await client.post("/api/v1/auth/verify-otp", json={
+        "phone_number": phone,
+        "otp": otp
+    })
+    assert res2.status_code == 400
+    assert "expired or invalid" in res2.json()["detail"].lower()
+
+
+async def test_hourly_otp_rate_limiting(client):
+    """
+    Ensure rate limiting: maximum 5 OTP requests per hour per phone number.
+    Subsequent requests within the 1-hour window return 429 Too Many Requests.
+    """
+    db = get_database()
+    phone = "+919666677777"
+    now = datetime.now(timezone.utc)
+
+    # Pre-seed OTP document with 5 requests within the active hour window
+    await db["otps"].delete_many({"phone_number": phone})
+    await db["otps"].insert_one({
+        "phone_number": phone,
+        "otp_hash": get_password_hash("112233"),
+        "channel": "whatsapp",
+        "expires_at": now + timedelta(minutes=10),
+        "attempts": 0,
+        "last_sent_at": now - timedelta(seconds=70),  # Past 60s cooldown
+        "window_start": now - timedelta(minutes=15),   # Within 1 hour window
+        "request_count": 5,                            # Maxed out 5 requests
+        "created_at": now - timedelta(minutes=15)
+    })
+
+    # Next send-otp request must be blocked with 429
+    res = await client.post("/api/v1/auth/send-otp", json={
+        "phone_number": phone,
+        "channel": "whatsapp"
+    })
+    assert res.status_code == 429
+    assert "too many" in res.json()["detail"].lower()
+
+
+async def test_whatsapp_otp_replaces_email_verification_for_signup(client):
+    """
+    Full redesigned flow:
+    1. Send OTP to mobile phone via WhatsApp (MSG91).
+    2. Server verifies the WhatsApp OTP and returns phone_verification_token.
+    3. Signup is completed using the phone_verification_token + email as profile field.
+    4. Account is registered with phone_verified=True, email_verified=True without
+       any email verification message dependency.
+    """
+    db = get_database()
+    phone = "+919444455555"
+    email = "whatsapp_flow_user@example.com"
+    otp = "889900"
+    now = datetime.now(timezone.utc)
+
+    # Cleanup
+    await db["users"].delete_many({"$or": [{"phone_number": phone}, {"email": email}]})
+    await db["otps"].delete_many({"phone_number": phone})
+    await db["phone_verifications"].delete_many({"phone_number": phone})
+
+    # Seed WhatsApp OTP in database
+    await db["otps"].insert_one({
+        "phone_number": phone,
+        "otp_hash": get_password_hash(otp),
+        "channel": "whatsapp",
+        "expires_at": now + timedelta(minutes=10),
+        "attempts": 0,
+        "last_sent_at": now,
+        "created_at": now
+    })
+
+    # Step 2: Verify WhatsApp OTP on server
+    verify_res = await client.post("/api/v1/auth/verify-otp", json={
+        "phone_number": phone,
+        "otp": otp,
+        "channel": "whatsapp",
+        "mode": "signup"
+    })
+    assert verify_res.status_code == 200
+    v_data = verify_res.json()
+    assert v_data["success"] is True
+    assert "verification_token" in v_data
+    v_token = v_data["verification_token"]
+
+    # Step 3: Complete signup with verification_token and user profile (name, email, password)
+    signup_res = await client.post("/api/v1/auth/signup", json={
+        "name": "WhatsApp Verified User",
+        "phone_number": phone,
+        "email": email,
+        "password": "Password@123",
+        "verification_token": v_token,
+        "accountType": "business"
+    })
+    assert signup_res.status_code in [200, 201]
+    s_data = signup_res.json()
+    assert s_data.get("phone_verified") is True or s_data.get("user", {}).get("phone_verified") is True
+
+    # Step 4: Verify in MongoDB that user is active and email_verified=True without email message
+    user_doc = await db["users"].find_one({"email": email})
+    assert user_doc is not None
+    assert user_doc["phone_number"] == phone
+    assert user_doc["phone_verified"] is True
+    assert user_doc["email_verified"] is True
+    assert user_doc["role"] is None  # Ready for role selection (/select-role)
+

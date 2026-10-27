@@ -23,7 +23,6 @@ from app.services.linkedin_service import LinkedInService
 async def setup_db():
     connect_to_mongo()
     yield
-    close_mongo_connection()
 
 @pytest.fixture(autouse=True)
 def mock_social_oauth_providers():

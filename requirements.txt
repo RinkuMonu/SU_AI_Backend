@@ -19,3 +19,5 @@ gTTS==2.5.1
 APScheduler==3.10.4
 holidays
 json-repair>=0.30.0
+beautifulsoup4>=4.12.0
+firecrawl-py>=4.0.0

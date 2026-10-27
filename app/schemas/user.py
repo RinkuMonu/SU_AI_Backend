@@ -113,6 +113,10 @@ class UserResponse(BaseModel):
     businessCategory: Optional[str] = None
     preferredLanguage: Optional[str] = None
     onboardingCompleted: bool = False
+    onboarding_completed_at: Optional[datetime] = None
+    onboarding_status: Optional[str] = None
+    onboarding_step: Optional[int] = 1
+    online_presence: Optional[str] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -158,6 +162,12 @@ class TokenResponse(BaseModel):
     next_step: Optional[str] = None
     success: bool = True
     message: Optional[str] = None
+    online_presence: Optional[str] = None
+    onboarding_step: Optional[int] = 1
+    onboarding_status: Optional[str] = None
+    can_access_dashboard: Optional[bool] = None
+    onboarding_completed: Optional[bool] = None
+    onboardingCompleted: Optional[bool] = None
 
 
 class UserPreferencesUpdate(BaseModel):
@@ -186,6 +196,8 @@ class UserUpdate(BaseModel):
     onboardingCompleted: Optional[bool] = None
     onboardingData: Optional[dict] = None
     onboarding_step: Optional[int] = None
+    online_presence: Optional[str] = None
+    onboarding_status: Optional[str] = None
 
     model_config = {
         "extra": "allow"
@@ -232,9 +244,23 @@ class RoleSelectResponse(UserResponse):
     success: bool = True
     message: str = "Role selected successfully."
     user: Optional[UserResponse] = None
+    dashboard_route: Optional[str] = None
+    next_step: Optional[str] = None
+    can_access_dashboard: Optional[bool] = None
+    onboarding_status: Optional[str] = None
+    onboarding_step: Optional[int] = 1
+    online_presence: Optional[str] = None
 
 
 class DashboardRouteResponse(BaseModel):
     role: Optional[str] = None
     dashboard_route: str
     dashboard_name: str
+    requires_onboarding: Optional[bool] = None
+    onboarding_completed: Optional[bool] = None
+    onboarding_status: Optional[str] = None
+    can_access_dashboard: Optional[bool] = None
+    next_step: Optional[str] = None
+    onboarding_step: Optional[int] = None
+    online_presence: Optional[str] = None
+    onboarding_route: Optional[str] = None

@@ -19,7 +19,9 @@ from app.core.security import (
     CurrentUser,
     require_businessman,
     require_influencer,
+    require_completed_onboarding,
 )
+from app.services.onboarding_service import OnboardingService
 from app.schemas.auth import (
     SignupRequest,
     LoginRequest,
@@ -131,7 +133,14 @@ async def signup(request: Request, response: Response):
                 "role": getattr(user, "role", "user") or "user",
                 "emailVerified": bool(user.emailVerified),
                 "email_verified": bool(user.emailVerified),
-                "isVerified": bool(user.emailVerified)
+                "isVerified": bool(user.emailVerified),
+                "onboardingCompleted": False,
+                "onboarding_completed": False,
+                "onboarding_status": "not_started",
+                "onboarding_step": 1,
+                "online_presence": None,
+                "can_access_dashboard": False,
+                "next_step": "role_selection"
             }
             response.status_code = status.HTTP_200_OK
             return {
@@ -141,11 +150,25 @@ async def signup(request: Request, response: Response):
                 "accessToken": access_token,
                 "token": access_token,
                 "user": user_dict,
+                "requires_role_selection": True,
+                "dashboard_route": "/select-role",
+                "onboarding_status": "not_started",
+                "onboarding_step": 1,
+                "online_presence": None,
+                "can_access_dashboard": False,
+                "next_step": "role_selection",
                 "data": {
                     "access_token": access_token,
                     "accessToken": access_token,
                     "token": access_token,
-                    "user": user_dict
+                    "user": user_dict,
+                    "requires_role_selection": True,
+                    "dashboard_route": "/select-role",
+                    "onboarding_status": "not_started",
+                    "onboarding_step": 1,
+                    "online_presence": None,
+                    "can_access_dashboard": False,
+                    "next_step": "role_selection"
                 }
             }
         except HTTPException:
@@ -223,8 +246,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     if response:
         set_refresh_cookie(response, jwt_refresh_token)
 
-    role = getattr(user, "role", None)
-    requires_role = role is None or role in ["user", ""]
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    role = onb_state.get("role")
+    requires_role = onb_state["requires_role_selection"]
     dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
 
     user_resp = UserResponse(
@@ -234,7 +261,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
         phone_verified=getattr(user, "phone_verified", True),
         email=getattr(user, "email", None),
         role=role,
-        email_verified=getattr(user, "email_verified", True)
+        email_verified=getattr(user, "email_verified", True),
+        online_presence=onb_state.get("online_presence"),
+        onboarding_step=onb_state.get("onboarding_step", 1),
+        onboarding_status=onb_state.get("onboarding_status", "not_started"),
+        onboardingCompleted=onb_state.get("onboarding_completed", False),
+        onboarding_completed_at=getattr(user, "onboarding_completed_at", None)
     )
     return TokenResponse(
         access_token=jwt_access_token,
@@ -246,7 +278,13 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
         dashboard_route=dashboard_route,
         phone_verification_token=v_token,
         verification_token=v_token,
-        next_step="select_role" if requires_role else "dashboard",
+        next_step=onb_state["next_step"],
+        online_presence=onb_state.get("online_presence"),
+        onboarding_step=onb_state.get("onboarding_step", 1),
+        onboarding_status=onb_state.get("onboarding_status", "not_started"),
+        can_access_dashboard=onb_state["can_access_dashboard"],
+        onboarding_completed=onb_state["onboarding_completed"],
+        onboardingCompleted=onb_state["onboarding_completed"],
         success=True,
         message="OTP verified successfully. Logged in."
     )
@@ -362,14 +400,27 @@ async def login(request: Request, response: Response):
     }
     
     try:
-        refresh_token = AuthService.create_token(str(user.id), expires_delta=timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        refresh_token = AuthService.create_token(str(user.id), settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
         set_refresh_cookie(response, refresh_token)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to set refresh cookie in login: {e}")
         
-    role = getattr(user, "role", None)
-    requires_role = role is None or role in ["user", ""]
+    db = get_database()
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    role = onb_state.get("role")
+    requires_role = onb_state["requires_role_selection"]
     dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+
+    user_dict["online_presence"] = onb_state.get("online_presence")
+    user_dict["onboarding_step"] = onb_state.get("onboarding_step", 1)
+    user_dict["onboarding_status"] = onb_state.get("onboarding_status", "not_started")
+    user_dict["onboardingCompleted"] = onb_state.get("onboarding_completed", False)
+    user_dict["onboarding_completed"] = onb_state.get("onboarding_completed", False)
+    user_dict["can_access_dashboard"] = onb_state["can_access_dashboard"]
+    user_dict["next_step"] = onb_state["next_step"]
 
     return {
         "success": True,
@@ -380,6 +431,13 @@ async def login(request: Request, response: Response):
         "role": role,
         "requires_role_selection": requires_role,
         "dashboard_route": dashboard_route,
+        "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+        "onboarding_step": onb_state.get("onboarding_step", 1),
+        "online_presence": onb_state.get("online_presence"),
+        "onboardingCompleted": onb_state.get("onboarding_completed", False),
+        "onboarding_completed": onb_state.get("onboarding_completed", False),
+        "can_access_dashboard": onb_state["can_access_dashboard"],
+        "next_step": onb_state["next_step"],
         "data": {
             "access_token": access_token,
             "accessToken": access_token,
@@ -387,7 +445,14 @@ async def login(request: Request, response: Response):
             "user": user_dict,
             "role": role,
             "requires_role_selection": requires_role,
-            "dashboard_route": dashboard_route
+            "dashboard_route": dashboard_route,
+            "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+            "onboarding_step": onb_state.get("onboarding_step", 1),
+            "online_presence": onb_state.get("online_presence"),
+            "onboardingCompleted": onb_state.get("onboarding_completed", False),
+            "onboarding_completed": onb_state.get("onboarding_completed", False),
+            "can_access_dashboard": onb_state["can_access_dashboard"],
+            "next_step": onb_state["next_step"]
         }
     }
 
@@ -438,6 +503,11 @@ async def select_role(
         client_user_id=request.user_id
     )
 
+    db = get_database()
+    u_dict = updated_user.model_dump() if hasattr(updated_user, "model_dump") else (updated_user.dict() if hasattr(updated_user, "dict") else dict(updated_user))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": user_id}, {"ownerId": user_id}]})
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
     user_resp = UserResponse(
         id=str(updated_user.id),
         name=updated_user.name,
@@ -445,7 +515,12 @@ async def select_role(
         phone_verified=getattr(updated_user, "phone_verified", False),
         email=getattr(updated_user, "email", None),
         role=getattr(updated_user, "role", None),
-        email_verified=getattr(updated_user, "email_verified", True)
+        email_verified=getattr(updated_user, "email_verified", True),
+        online_presence=onb_state.get("online_presence"),
+        onboarding_step=onb_state.get("onboarding_step", 1),
+        onboarding_status=onb_state.get("onboarding_status", "not_started"),
+        onboardingCompleted=onb_state.get("onboarding_completed", False),
+        onboarding_completed_at=getattr(updated_user, "onboarding_completed_at", None)
     )
 
     return RoleSelectResponse(
@@ -456,6 +531,13 @@ async def select_role(
         email=user_resp.email,
         role=user_resp.role,
         email_verified=user_resp.email_verified,
+        online_presence=onb_state.get("online_presence"),
+        onboarding_step=onb_state.get("onboarding_step", 1),
+        onboarding_status=onb_state.get("onboarding_status", "not_started"),
+        onboardingCompleted=onb_state.get("onboarding_completed", False),
+        dashboard_route=onb_state["dashboard_route"],
+        next_step=onb_state["next_step"],
+        can_access_dashboard=onb_state["can_access_dashboard"],
         success=True,
         message="Role selected successfully.",
         user=user_resp
@@ -471,29 +553,75 @@ async def get_dashboard_route(current_user: CurrentUser = Depends(get_current_us
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Role selection required before accessing dashboard."
         )
+    db = get_database()
+    uid = str(current_user.get("id"))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": uid}, {"ownerId": uid}]})
+    onb_state = OnboardingService.determine_state(current_user, bus_doc)
+
     if role == "businessman":
         return DashboardRouteResponse(
             role="businessman",
             dashboard_route="/dashboard/business",
-            dashboard_name="Business Dashboard"
+            dashboard_name="Business Dashboard",
+            requires_onboarding=onb_state["requires_onboarding"],
+            onboarding_completed=onb_state["onboarding_completed"],
+            onboarding_status=onb_state["onboarding_status"],
+            can_access_dashboard=onb_state["can_access_dashboard"],
+            next_step=onb_state["next_step"],
+            onboarding_step=onb_state["onboarding_step"],
+            online_presence=onb_state["online_presence"],
+            onboarding_route=onb_state["onboarding_route"]
         )
     elif role == "influencer":
         return DashboardRouteResponse(
             role="influencer",
             dashboard_route="/dashboard/creator",
-            dashboard_name="Influencer/Creator Dashboard"
+            dashboard_name="Influencer/Creator Dashboard",
+            requires_onboarding=False,
+            onboarding_completed=True,
+            onboarding_status="completed",
+            can_access_dashboard=True,
+            next_step="dashboard",
+            onboarding_step=1,
+            online_presence=None,
+            onboarding_route="/dashboard/creator"
         )
     elif role == "admin":
         return DashboardRouteResponse(
             role="admin",
             dashboard_route="/admin/dashboard",
-            dashboard_name="Admin Dashboard"
+            dashboard_name="Admin Dashboard",
+            requires_onboarding=False,
+            onboarding_completed=True,
+            onboarding_status="completed",
+            can_access_dashboard=True,
+            next_step="dashboard",
+            onboarding_step=1,
+            online_presence=None,
+            onboarding_route="/admin/dashboard"
         )
     else:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported or unrecognized user role: '{role}'."
         )
+
+
+@router.get("/dashboard/access")
+@router.get("/dashboard/business/protected")
+async def verify_dashboard_access(current_user: CurrentUser = Depends(require_completed_onboarding)):
+    """
+    Protected endpoint for business dashboard access.
+    Enforces that onboarding must be completed before accessing dashboard resources.
+    Returns 403 if onboarding is incomplete.
+    """
+    return {
+        "success": True,
+        "can_access_dashboard": True,
+        "role": current_user.get("role"),
+        "onboarding_status": "completed",
+        "message": "Dashboard access authorized."
+    }
 
 
 @router.get("/dashboard/businessman")
@@ -1323,6 +1451,9 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         phone_verification_token=phone_verification_token,
     )
 
+    if request and "signup" in str(request.url.path) and response:
+        response.status_code = status.HTTP_201_CREATED
+
     set_refresh_cookie(response, refresh_token_jwt)
 
     role = getattr(user, "role", None)
@@ -1353,9 +1484,23 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
 
-    onboarding_completed = bool(getattr(user, "onboardingCompleted", False))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    onboarding_completed = onb_state["onboarding_completed"]
+    requires_role = onb_state["requires_role_selection"]
     is_existing = (not requires_role) and onboarding_completed
-    next_step = "dashboard" if is_existing else "role_selection"
+    next_step = onb_state["next_step"]
+
+    user_payload["online_presence"] = onb_state.get("online_presence")
+    user_payload["onboarding_status"] = onb_state["onboarding_status"]
+    user_payload["onboarding_step"] = onb_state["onboarding_step"]
+    user_payload["onboardingCompleted"] = onboarding_completed
+    user_payload["onboarding_completed"] = onboarding_completed
+    user_payload["can_access_dashboard"] = onb_state["can_access_dashboard"]
+    user_payload["next_step"] = next_step
+
     return {
         "success": True,
         "message": "Google login successful" if mode == "login" else "Google registration successful",
@@ -1369,6 +1514,12 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "role": role,
         "requires_role_selection": requires_role,
         "dashboard_route": dashboard_route,
+        "onboarding_status": onb_state["onboarding_status"],
+        "onboarding_step": onb_state["onboarding_step"],
+        "online_presence": onb_state.get("online_presence"),
+        "onboardingCompleted": onboarding_completed,
+        "onboarding_completed": onboarding_completed,
+        "can_access_dashboard": onb_state["can_access_dashboard"],
         "user": user_payload,
         "data": {
             "access_token": access_token_jwt,
@@ -1377,15 +1528,24 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
             "role": role,
             "requires_role_selection": requires_role,
             "dashboard_route": dashboard_route,
+            "onboarding_status": onb_state["onboarding_status"],
+            "onboarding_step": onb_state["onboarding_step"],
+            "online_presence": onb_state.get("online_presence"),
+            "onboardingCompleted": onboarding_completed,
+            "onboarding_completed": onboarding_completed,
+            "can_access_dashboard": onb_state["can_access_dashboard"],
+            "next_step": next_step,
             "user": user_payload
         }
     }
 
 
-@router.post("/google/signup")
+@router.post("/google/signup", status_code=status.HTTP_201_CREATED)
 async def google_signup(req: GoogleAuthLoginRequest, response: Response, request: Request = None):
     """Register new user via Google OAuth 2.0."""
     req.mode = "signup"
+    if response:
+        response.status_code = status.HTTP_201_CREATED
     return await google_login(req=req, response=response, request=request)
 
 @router.get("/google/callback")

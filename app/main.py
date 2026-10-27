@@ -2,7 +2,7 @@ from typing import Optional
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-# Reload trigger 6
+# Reload trigger 9
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection
 from app.services.scheduler_service import scheduler_service

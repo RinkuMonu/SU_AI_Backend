@@ -93,6 +93,19 @@ class Settings(BaseSettings):
     PAYIN_TOKEN: str = ""
     
     GEOAPIFY_API_KEY: str = ""
+    FIRECRAWL_API_KEY: Optional[str] = None
+    FIRECRAWL_API_URL: str = "https://api.firecrawl.dev/v1/scrape"
+    GOOGLE_MAPS_API_KEY: Optional[str] = None
+    GOOGLE_MAP_API_KEY: Optional[str] = None
+
+    def get_google_maps_api_key(self) -> str:
+        import os
+        return (
+            self.GOOGLE_MAPS_API_KEY
+            or self.GOOGLE_MAP_API_KEY
+            or os.getenv("GOOGLE_MAPS_API_KEY", "")
+            or os.getenv("GOOGLE_MAP_API_KEY", "")
+        ).strip()
 
     def get_public_url(self, path: Optional[str]) -> str:
         """Converts a local media path into a fully qualified public URL using BACKEND_URL."""

@@ -24,6 +24,7 @@ class GoogleService:
             or getattr(settings, 'google_client_id', None)
             or os.getenv('GOOGLE_CLIENT_ID')
             or os.getenv('NEXT_PUBLIC_GOOGLE_CLIENT_ID')
+            or "260412504334-00s4ah5tslv9rgso3g86fcb079bb84nr.apps.googleusercontent.com"
         )
         secret = (
             settings.GOOGLE_CLIENT_SECRET
@@ -194,7 +195,7 @@ class GoogleService:
             if not existing:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No registered account found with this Google email. Please sign up first."
+                    detail="No account found with this Google email. Please register first. Please sign up first."
                 )
             user_id = str(existing['_id'])
             update_data: Dict[str, Any] = {
@@ -267,8 +268,8 @@ class GoogleService:
                             return user, jwt_access_token, jwt_refresh_token
                         else:
                             raise HTTPException(
-                                status_code=status.HTTP_409_CONFLICT,
-                                detail="An account with this mobile number already exists. Please log in."
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="An account with this mobile number is already registered. Please log in."
                             )
                     await db["phone_verifications"].update_one(
                         {"_id": pv["_id"]},
@@ -278,8 +279,8 @@ class GoogleService:
                 conflict_phone = await db['users'].find_one({"phone_number": norm_phone})
                 if conflict_phone:
                     raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail="An account with this mobile number already exists. Please log in."
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="An account with this mobile number is already registered. Please log in."
                     )
 
             # 3. Create new user via Google

@@ -55,7 +55,7 @@ def is_field_meaningful(field_name: str, brand_data: dict) -> bool:
 
     if field_name in ["business_name", "brand_name"]:
         name = brand_data.get("business_name") or brand_data.get("brand_name")
-        return bool(name and str(name).strip())
+        return bool(name and str(name).strip() and str(name).strip() not in ["Draft Business"])
 
     if field_name in ["business_description", "brand_description"]:
         desc = brand_data.get("business_description") or brand_data.get("brand_description")
@@ -206,6 +206,19 @@ def serialize_brand(brand: dict) -> dict:
         "contact": brand.get("contact"),
         "location": brand.get("location"),
         "social_style": brand.get("social_style"),
+        "palette": brand.get("palette") or [],
+        "brand_colors": brand.get("brand_colors") or [],
+        "tones": brand.get("tones") or [],
+        "business_types": brand.get("business_types") or [],
+        "primary_business_type": brand.get("primary_business_type"),
+        "sub_category": brand.get("sub_category"),
+        "city": brand.get("city"),
+        "differentiators": brand.get("differentiators") or [],
+        "products_services": brand.get("products_services") or [],
+        "selected_photos": brand.get("selected_photos") or [],
+        "target_audience_summary": brand.get("target_audience_summary"),
+        "services_products_summary": brand.get("services_products_summary") or [],
+        "online_presence": brand.get("online_presence"),
         "brand_kit_status": brand.get("brand_kit_status", "not_started"),
         "brand_kit_completed": brand.get("brand_kit_completed", False),
         "brand_kit_completed_at": brand.get("brand_kit_completed_at"),
@@ -228,7 +241,7 @@ def validate_required_brand_kit_fields(data: dict) -> dict[str, str]:
     errors: dict[str, str] = {}
 
     b_name = data.get("business_name") or data.get("brand_name")
-    if not b_name or not str(b_name).strip():
+    if not b_name or not str(b_name).strip() or str(b_name).strip() in ["Draft Business"]:
         errors["business_name"] = "Business name is required."
 
     if not data.get("business_type") or not str(data["business_type"]).strip():
@@ -303,10 +316,19 @@ async def get_or_create_business_for_owner(db, owner_id: str, data: dict) -> dic
         "target_customer": data.get("customer_type") or data.get("target_audience"),
         "updated_at": now,
     }
+    if data.get("online_presence"):
+        business_update["online_presence"] = data["online_presence"]
+
     # Clean None values from update
     business_update = {k: v for k, v in business_update.items() if v is not None}
 
     if not business:
+        online_p = data.get("online_presence")
+        if not online_p and ObjectId.is_valid(owner_id):
+            u_doc = await db["users"].find_one({"_id": ObjectId(owner_id)})
+            if u_doc:
+                online_p = u_doc.get("online_presence")
+
         new_business = {
             "owner_id": owner_id,
             "name": b_name,
@@ -318,6 +340,7 @@ async def get_or_create_business_for_owner(db, owner_id: str, data: dict) -> dic
             "selling_model": data.get("selling_model"),
             "description": data.get("business_description") or data.get("brand_description"),
             "target_customer": data.get("customer_type"),
+            "online_presence": online_p,
             "brand_kit_status": "not_started",
             "brand_kit_completed": False,
             "brand_kit_completed_at": None,
@@ -362,8 +385,18 @@ async def save_brand_kit_submission(
     # 2. Merge submission_data over existing data
     # Preserve existing saved values when optional fields are omitted or sent as empty
     merged = dict(existing) if existing else {}
+
+    # Handle explicit clear_fields / cleared_fields
+    clear_fields = submission_data.get("clear_fields") or submission_data.get("cleared_fields") or []
+    if isinstance(clear_fields, str):
+        clear_fields = [f.strip() for f in clear_fields.split(",") if f.strip()]
+    if isinstance(clear_fields, list):
+        for cf in clear_fields:
+            if cf in merged and cf not in ["_id", "owner_id", "business_id"]:
+                merged[cf] = None
+
     for k, v in submission_data.items():
-        if k in ["is_draft", "_id"]:
+        if k in ["is_draft", "_id", "clear_fields", "cleared_fields"]:
             continue
         # Skip null or empty string overwriting existing non-empty values
         if v is None:
@@ -383,25 +416,36 @@ async def save_brand_kit_submission(
     elif merged.get("brand_description") and not merged.get("business_description"):
         merged["business_description"] = merged["brand_description"]
 
-    # 3. Essential validation: Business name must be present (from payload or existing record)
+    # 3. Essential validation: Business name
     b_name = merged.get("business_name") or merged.get("brand_name")
     if not b_name or not str(b_name).strip():
         biz = await db["businesses"].find_one({"owner_id": owner_id})
-        if biz and biz.get("name") and biz.get("name") != "My Business":
+        if biz and biz.get("name") and biz.get("name") not in ["My Business", "Draft Business"]:
             merged["business_name"] = str(biz["name"]).strip()
             merged["brand_name"] = str(biz["name"]).strip()
-        elif is_draft:
-            merged["business_name"] = "Draft Business"
-            merged["brand_name"] = "Draft Business"
+        elif is_draft or not is_complete_action:
+            default_name = (biz.get("name") if biz and biz.get("name") else None) or "My Business"
+            merged["business_name"] = default_name
+            merged["brand_name"] = default_name
         else:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "message": "Business name is required to save Brand Kit.",
+                    "message": "Business name is required to complete Brand Kit.",
                     "errors": {"business_name": "Business name is required."},
                     "missing_fields": {"business_name": "Business name is required."}
                 }
             )
+
+    # Sync online_presence if present on business or user
+    if not merged.get("online_presence"):
+        biz_doc = await db["businesses"].find_one({"owner_id": owner_id})
+        if biz_doc and biz_doc.get("online_presence"):
+            merged["online_presence"] = biz_doc["online_presence"]
+        elif ObjectId.is_valid(owner_id):
+            u_doc = await db["users"].find_one({"_id": ObjectId(owner_id)})
+            if u_doc and u_doc.get("online_presence"):
+                merged["online_presence"] = u_doc["online_presence"]
 
     # 4. Calculate Brand Kit completion from meaningful saved fields
     comp_info = calculate_brand_kit_completion(merged)
@@ -477,6 +521,13 @@ async def save_brand_kit_submission(
             "updated_at": now
         }}
     )
+
+    # 10. Update user onboarding status if completed
+    if is_completed and ObjectId.is_valid(owner_id):
+        await db["users"].update_one(
+            {"_id": ObjectId(owner_id)},
+            {"$set": {"brand_kit_completed": True, "updated_at": now}}
+        )
 
     logger.info(f"Brand kit saved for owner {owner_id} (business={business_id}, status={brand_status}, completed={is_completed}, completion={completion_percentage}%)")
     return serialize_brand(updated)
@@ -664,9 +715,10 @@ async def get_onboarding_status(db, current_user) -> BrandKitStatusResponse:
 
     # Case A: No Brand Kit at all
     if not brand:
+        is_dismissed = bool(business and business.get("brand_kit_dismissed", False))
         return BrandKitStatusResponse(
             role=role,
-            should_show_modal=True,
+            should_show_modal=not is_dismissed,
             brand_kit_status="not_started",
             brand_kit_completed=False,
             brand_kit_completed_at=None,

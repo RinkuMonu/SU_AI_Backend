@@ -126,6 +126,11 @@ class BusinessContextService:
                     "social_style": brand_kit.get("social_style"),
                     "tagline": brand_kit.get("tagline"),
                     "brand_values": brand_kit.get("brand_values", []),
+                    "sub_category": brand_kit.get("sub_category"),
+                    "differentiators": brand_kit.get("differentiators") or [],
+                    "products_services": brand_kit.get("products_services") or [],
+                    "online_presence": brand_kit.get("online_presence"),
+                    "logo_url": brand_kit.get("logo_url"),
                 }
 
             # 3. Retrieve authentic catalog products

@@ -95,6 +95,94 @@ CATEGORIES_TAXONOMY: List[Dict[str, Any]] = [
         ]
     },
     {
+        "id": "salon_spa",
+        "name": "Salon & Spa",
+        "icon": "scissors",
+        "description": "Hair salons, luxury day spas, nail art, skincare, and bridal grooming",
+        "subcategories": [
+            {"id": "hair_salon", "name": "Hair Styling & Care", "items": ["Haircuts & Styling", "Hair Coloring & Highlights", "Keratin & Smoothening", "Hair Spa Treatments"]},
+            {"id": "spa_treatments", "name": "Spa & Massage", "items": ["Aromatherapy", "Deep Tissue Massage", "Body Scrubs & Wraps", "Ayurvedic Spa"]},
+            {"id": "nail_care", "name": "Nail Salon", "items": ["Gel Nails & Extensions", "Manicure & Pedicure", "Nail Art", "Nail Polish"]},
+            {"id": "skin_facials", "name": "Facials & Skin Care", "items": ["Hydra Facials", "Bridal Glow Facials", "Anti-Aging Treatments", "Detox Facials"]},
+            {"id": "bridal_grooming", "name": "Bridal & Grooming", "items": ["Bridal Makeup", "Groom Makeover", "Pre-Bridal Packages", "Party Makeup"]}
+        ]
+    },
+    {
+        "id": "restaurant_cafe",
+        "name": "Restaurant & Cafe",
+        "icon": "coffee",
+        "description": "Cafes, fine dining, bistros, bakeries, bars, and fast casual eateries",
+        "subcategories": [
+            {"id": "cafes_coffee", "name": "Cafes & Coffee Shops", "items": ["Artisan Coffee", "Cold Brews", "Sandwiches & Bagels", "Specialty Teas", "Desserts"]},
+            {"id": "fine_dining", "name": "Fine Dining & Bistros", "items": ["Multi-Cuisine", "Continental", "Authentic Indian", "Italian & Pan-Asian", "Signature Chef Specials"]},
+            {"id": "quick_bites", "name": "Quick Bites & Street Food", "items": ["Burgers & Wraps", "Pizzas", "Tacos & Rolls", "Chaat & Snacks", "Momos"]},
+            {"id": "bars_lounges", "name": "Bars & Lounges", "items": ["Craft Cocktails", "Mocktails", "Appetizers & Platters", "Brewery Selections"]}
+        ]
+    },
+    {
+        "id": "home_living",
+        "name": "Home & Living",
+        "icon": "home",
+        "description": "Home improvement, furnishings, bathroom fittings, crockery, and outdoor decor",
+        "subcategories": [
+            {"id": "bathroom_fittings", "name": "Bathroom Fittings", "items": ["Faucets & Showers", "Sanitaryware", "Vanities & Basins", "Bath Accessories"]},
+            {"id": "cleaning_services", "name": "Cleaning Services", "items": ["Deep Home Cleaning", "Sofa & Carpet Cleaning", "Disinfection", "Water Tank Cleaning"]},
+            {"id": "crockery", "name": "Crockery & Tableware", "items": ["Ceramic Dinner Sets", "Bone China Plates", "Glassware", "Cutlery Sets", "Serving Bowls"]},
+            {"id": "furniture", "name": "Furniture", "items": ["Sofas", "Dining Tables", "Beds & Mattresses", "Wardrobes", "Recliners"]},
+            {"id": "garden_outdoor", "name": "Garden & Outdoor", "items": ["Planters & Pots", "Garden Tools", "Outdoor Furniture", "Balcony Decor", "Live Plants"]},
+            {"id": "home_decor", "name": "Home Decor", "items": ["Wall Art & Mirrors", "Vases & Sculptures", "Lamps & Lighting", "Candles & Scents"]},
+            {"id": "home_furnishings", "name": "Home Furnishings", "items": ["Curtains & Drapes", "Bed Sheets & Duvets", "Cushions & Throws", "Rugs & Carpets"]}
+        ]
+    },
+    {
+        "id": "education_coaching",
+        "name": "Education & Coaching",
+        "icon": "book-open",
+        "description": "Competitive coaching institutes, tutoring, language academies, and skill schools",
+        "subcategories": [
+            {"id": "competitive_exams", "name": "Competitive Exam Coaching", "items": ["JEE & NEET Coaching", "UPSC & Civil Services", "Bank & SSC Prep", "CAT & Management"]},
+            {"id": "k12_tutoring", "name": "School & Board Tutoring", "items": ["CBSE & ICSE Tuition", "Maths & Science Labs", "Commerce Classes", "Early Learning"]},
+            {"id": "language_training", "name": "Language & Study Abroad", "items": ["Spoken English", "IELTS & TOEFL Prep", "French & German", "Study Abroad Consulting"]},
+            {"id": "creative_skills", "name": "Skill & Hobby Academy", "items": ["Coding & AI Bootcamps", "Music & Dance Classes", "Digital Marketing Courses", "Art & Craft Workshops"]}
+        ]
+    },
+    {
+        "id": "agriculture",
+        "name": "Agriculture & Farming",
+        "icon": "sprout",
+        "description": "Organic seeds, fertilizers, farm machinery, dairy care, and nursery supplies",
+        "subcategories": [
+            {"id": "seeds_saplings", "name": "Seeds & Saplings", "items": ["Hybrid Seeds", "Organic Vegetable Seeds", "Fruit Saplings", "Flower Bulbs"]},
+            {"id": "fertilizers_nutrients", "name": "Fertilizers & Soil Health", "items": ["Organic Manure & Vermicompost", "Bio-Fertilizers", "Micronutrients", "Pest Protectors"]},
+            {"id": "farm_equipment", "name": "Farm Machinery & Tools", "items": ["Irrigation Pipes & Drip Systems", "Tractor Attachments", "Sprayers", "Harvesting Tools"]},
+            {"id": "dairy_livestock", "name": "Dairy & Livestock Care", "items": ["Cattle Feed & Supplements", "Milking Equipment", "Poultry Feeds", "Veterinary Care"]}
+        ]
+    },
+    {
+        "id": "travel_hospitality",
+        "name": "Travel & Hospitality",
+        "icon": "compass",
+        "description": "Resorts, boutique hotels, curated tour packages, homestays, and rental transport",
+        "subcategories": [
+            {"id": "hotels_resorts", "name": "Hotels & Resorts", "items": ["Luxury Heritage Resorts", "Boutique Hotels", "Eco-Lodges", "City Staycations"]},
+            {"id": "tour_packages", "name": "Tour Packages & Guides", "items": ["Domestic Holiday Tours", "International Trips", "Pilgrimage Tours", "Weekend Getaways"]},
+            {"id": "homestays_villas", "name": "Homestays & Private Villas", "items": ["Hill Station Cottages", "Pool Villas", "Heritage Havelis", "Farm Stays"]},
+            {"id": "transport_rentals", "name": "Transport & Car Rental", "items": ["Self-Drive Cars", "Chauffeur Cabs", "Bike Rentals", "Airport Transfers"]}
+        ]
+    },
+    {
+        "id": "arts_crafts_creative",
+        "name": "Arts, Crafts & Creative",
+        "icon": "palette",
+        "description": "Handicrafts, pottery, artisan gifts, paintings, and customized event decor",
+        "subcategories": [
+            {"id": "handicrafts_artisan", "name": "Handmade Crafts", "items": ["Wooden Carvings", "Brass Artifacts", "Embroidered Textiles", "Terracotta Items"]},
+            {"id": "pottery_ceramics", "name": "Pottery & Ceramics", "items": ["Handmade Mugs & Planters", "Studio Pottery", "Decorative Plates", "Ceramic Vases"]},
+            {"id": "painting_canvas", "name": "Fine Art & Paintings", "items": ["Oil & Acrylic Paintings", "Custom Portraits", "Abstract Canvas Art", "Miniature Paintings"]},
+            {"id": "custom_gifting", "name": "Personalized Gifts & Hampers", "items": ["Corporate Gift Boxes", "Wedding Favors", "Customized Keepsakes", "Curated Hampers"]}
+        ]
+    },
+    {
         "id": "other",
         "name": "Other & Custom Products",
         "icon": "tag",

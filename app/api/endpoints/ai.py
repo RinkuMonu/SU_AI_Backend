@@ -7,7 +7,8 @@ from app.models.ai import AIGenerationHistory
 from app.ai.services.business_context import BusinessContextService
 from app.ai.services.text_generation import TextGenerationService
 from app.services.business_service import BusinessService
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_optional
+from app.services.website_analysis_service import WebsiteAnalysisService
 from app.models.user import User
 from app.core.database import get_database
 from bson import ObjectId
@@ -374,17 +375,38 @@ async def analyze_competitors_endpoint(
 @router.post("/website-analysis", response_model=dict)
 async def analyze_website_endpoint(
     request: WebsiteAnalysisRequest,
-    current_user=Depends(get_current_user),
+    current_user=Depends(get_current_user_optional),
     db=Depends(get_database)
 ):
     """
-    Conducts an AI audit of conversion funnels, brand clarity, and SEO opportunities for the user's web storefront.
+    Directly crawls, scrapes, and analyzes the target website URL for dynamic onboarding.
+    Extracts authentic photos/images, CSS colors, brand voice, and business metadata.
     """
-    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
-    result = await MarketingIntelligenceService.analyze_website(db, user_id, request)
+    user_id = None
+    if current_user:
+        user_id = str(current_user.id if hasattr(current_user, "id") else (current_user.get("id") or current_user.get("_id")))
+
+    target_url = request.get_url()
+    if target_url:
+        result = await WebsiteAnalysisService.analyze_website_direct(
+            db=db,
+            url=target_url,
+            user_id=user_id,
+            primary_goal=request.primary_goal,
+            target_audience=request.target_audience
+        )
+        return {
+            "success": True,
+            "message": "Website analysis completed successfully",
+            "data": result
+        }
+
+    # Fallback to CRO audit if no URL provided
+    uid = user_id or "anonymous"
+    result = await MarketingIntelligenceService.analyze_website(db, uid, request)
     return {
         "success": True,
-        "message": "Website analysis completed successfully",
+        "message": "Website audit completed successfully",
         "data": result.model_dump()
     }
 

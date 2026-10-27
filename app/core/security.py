@@ -62,9 +62,9 @@ def get_token_from_header_or_cookie(request: Request) -> str:
 
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> CurrentUser:
+async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> CurrentUser:
     from app.core.database import get_database
     db = get_database()
     
@@ -73,6 +73,9 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    if not credentials or not credentials.credentials:
+        raise credentials_exception
     
     token = credentials.credentials
     payload = decode_access_token(token)
@@ -130,6 +133,11 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
         "email_verified": user_doc.get("email_verified", user_doc.get("emailVerified", True)),
         "emailVerified": user_doc.get("emailVerified", user_doc.get("email_verified", True)),
         "onboardingCompleted": user_doc.get("onboardingCompleted", False),
+        "onboarding_completed_at": user_doc.get("onboarding_completed_at"),
+        "online_presence": user_doc.get("online_presence") or (business.get("online_presence") if business else None),
+        "business_type": user_doc.get("business_type") or (business.get("business_type") if business else None),
+        "onboarding_step": user_doc.get("onboarding_step", 1),
+        "onboarding_status": user_doc.get("onboarding_status") or ("completed" if user_doc.get("onboardingCompleted") else ("in_progress" if (user_doc.get("online_presence") or user_doc.get("onboarding_step", 1) > 1) else "not_started")),
         "is_pending": is_pending,
         "business_id": str(business["_id"]) if business else None
     })
@@ -198,6 +206,11 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
             "role": user_role,
             "accountType": raw_account_type or ("business" if user_role == "businessman" else "personal"),
             "onboardingCompleted": user_doc.get("onboardingCompleted", False),
+            "onboarding_completed_at": user_doc.get("onboarding_completed_at"),
+            "online_presence": user_doc.get("online_presence") or (business.get("online_presence") if business else None),
+            "business_type": user_doc.get("business_type") or (business.get("business_type") if business else None),
+            "onboarding_step": user_doc.get("onboarding_step", 1),
+            "onboarding_status": user_doc.get("onboarding_status") or ("completed" if user_doc.get("onboardingCompleted") else ("in_progress" if (user_doc.get("online_presence") or user_doc.get("onboarding_step", 1) > 1) else "not_started")),
             "is_pending": is_pending,
             "business_id": str(business["_id"]) if business else None
         })
@@ -249,6 +262,31 @@ def require_role(*allowed_roles: str):
 
 require_businessman = require_role("businessman")
 require_influencer = require_role("influencer")
+
+async def require_completed_onboarding(current_user: CurrentUser = Depends(get_current_user)) -> CurrentUser:
+    """
+    Enforces authorization on protected businessman dashboard APIs.
+    If the user has role 'businessman' but has not completed onboarding,
+    access is forbidden with HTTP 403.
+    """
+    user_role = normalize_role_helper(current_user.get("role"))
+    if not user_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Role selection required before accessing this resource."
+        )
+
+    if user_role == "businessman":
+        is_completed = bool(
+            current_user.get("onboardingCompleted") or
+            current_user.get("onboarding_completed_at")
+        )
+        if not is_completed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Onboarding incomplete. Please complete business onboarding before accessing dashboard."
+            )
+    return current_user
 
 
 

@@ -66,21 +66,21 @@ class GeminiProvider(AIProvider):
             fallback_models = [
                 self._model_name,
                 "gemini-3.8-pro",
+                "gemini-3.1-pro-preview",
                 "gemini-3.8-flash",
+                "gemini-3.5-flash",
                 "gemini-pro-latest",
-                "gemini-2.5-pro",
-                "gemini-1.5-pro",
                 "gemini-flash-latest",
             ]
         else:
             fallback_models = [
                 self._model_name,
                 "gemini-3.8-flash",
+                "gemini-3.5-flash",
                 "gemini-flash-latest",
                 "gemini-flash-lite-latest",
-                "gemini-1.5-flash",
+                "gemini-3-flash-preview",
                 "gemini-3.8-pro",
-                "gemini-2.5-flash",
             ]
 
         seen = set()
@@ -198,8 +198,12 @@ class GeminiProvider(AIProvider):
     ) -> httpx.Response:
         """Calls the Gemini REST API endpoint with timeout and sanitized logging."""
         request_params = params if params is not None else ({"key": self.api_key} if self.api_key else {})
+        api_key = request_params.get("key") or self.api_key
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["x-goog-api-key"] = api_key
         async with httpx.AsyncClient(timeout=timeout) as client:
-            return await client.post(url, params=request_params, json=payload)
+            return await client.post(url, headers=headers, params=request_params, json=payload)
 
     def _clean_json_output(self, text: str) -> str:
         """Strips markdown code fences and extracts parseable JSON object/array."""
@@ -280,10 +284,12 @@ class GeminiProvider(AIProvider):
 
         last_error = None
         credits_depleted = False
+        credits_depleted = False
+        api_key = self.api_key or getattr(settings, "GEMINI_BACKUP_API_KEY", None)
 
         for current_model in self.models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent"
-            params = {"key": self.api_key}
+            params = {"key": api_key}
 
             # Retry up to 2 times per model on 429 / 503
             for attempt in range(2):
