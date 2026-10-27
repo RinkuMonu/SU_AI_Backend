@@ -18,8 +18,11 @@ from app.ai.services.post_generation import PostGenerationService
 from app.services.business_service import BusinessService
 from app.services.brand_service import get_brand_kit
 from app.services.product_service import get_products, serialize_product
+from datetime import datetime, timezone
 from app.services.content_service import ContentService
 from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
+from app.services.plan_onboarding_service import QUALIFYING_PAID_PLANS
 
 
 router = APIRouter(
@@ -417,32 +420,104 @@ async def generate_caption_content(
 # ============================================================================
 
 @router.put("/update")
+@router.put("/{content_id}")
+@router.patch("/{content_id}")
 async def save_content(
     content: dict,
+    content_id: Optional[str] = None,
     current_user=Depends(get_current_user),
 ):
+    """
+    Saves edits against the correct post in place without creating unintentional duplicates.
+    Enforces user ownership and plan entitlements on locked posts.
+    """
     db = get_database()
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     business = await BusinessService.get_business_by_owner(user_id)
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else None
 
-    if "_id" in content and len(str(content["_id"])) < 12:
-        del content["_id"]
+    now = datetime.now(timezone.utc)
+    if content_id and content_id.strip() == "update":
+        content_id = None
 
-    content["business_id"] = str(business.id)
-    content["user_id"] = user_id
+    target_id = (
+        content_id or
+        content.get("_id") or
+        content.get("id") or
+        content.get("content_id") or
+        content.get("post_id")
+    )
 
-    if "_id" in content:
-        if ObjectId.is_valid(content["_id"]):
-            content_id = content.pop("_id")
-            await db["contents"].update_one({"_id": ObjectId(content_id)}, {"$set": content})
-            content["_id"] = content_id
+    if target_id and str(target_id).strip():
+        target_str = str(target_id).strip()
+        if not ObjectId.is_valid(target_str):
+            raise HTTPException(status_code=400, detail="Invalid post ID format")
+
+        obj_id = ObjectId(target_str)
+        existing = await db["contents"].find_one({"_id": obj_id})
+        if not existing:
+            raise HTTPException(status_code=404, detail="Post not found")
+
+        # Strict ownership authorization: ensure user owns this post
+        doc_user_id = str(existing.get("user_id", ""))
+        doc_business_id = str(existing.get("business_id", ""))
+        is_owner = (doc_user_id == user_id) or (business_id and doc_business_id == business_id)
+        if not is_owner:
+            raise HTTPException(status_code=403, detail="You do not have permission to modify this post.")
+
+        # Entitlement check: if post is locked, user must have an active paid plan
+        if existing.get("is_locked", False):
+            sub = await SubscriptionService.get_or_create_subscription(db, user_id)
+            plan_id = str(sub.get("plan_id", "FREE")).upper()
+            sub_status = sub.get("status", "active")
+            is_paid = (plan_id in QUALIFYING_PAID_PLANS) and (sub_status == "active")
+            if not is_paid:
+                raise HTTPException(
+                    status_code=403,
+                    detail="This post is locked and requires an active Starter or Pro subscription plan to edit."
+                )
+
+        # Update post in place without creating duplicates
+        update_fields = dict(content)
+        for k in ["_id", "id", "content_id", "post_id"]:
+            update_fields.pop(k, None)
+
+        update_fields["updated_at"] = now
+        # Keep media_url and image_url in sync
+        if update_fields.get("image_url") and not update_fields.get("media_url"):
+            update_fields["media_url"] = update_fields["image_url"]
+        elif update_fields.get("media_url") and not update_fields.get("image_url"):
+            update_fields["image_url"] = update_fields["media_url"]
+
+        await db["contents"].update_one(
+            {"_id": obj_id},
+            {"$set": update_fields}
+        )
+
+        existing.update(update_fields)
+        existing["_id"] = str(obj_id)
+        existing["id"] = str(obj_id)
+        return {"success": True, "data": existing, "message": "Post updated successfully"}
+
     else:
-        result = await db["contents"].insert_one(content)
-        content["_id"] = str(result.inserted_id)
+        # Create new content item
+        clean_doc = dict(content)
+        for k in ["_id", "id", "content_id", "post_id"]:
+            clean_doc.pop(k, None)
 
-    return {"success": True, "data": content}
+        clean_doc["user_id"] = user_id
+        clean_doc["business_id"] = business_id or ""
+        clean_doc["created_at"] = now
+        clean_doc["updated_at"] = now
+        if clean_doc.get("image_url") and not clean_doc.get("media_url"):
+            clean_doc["media_url"] = clean_doc["image_url"]
+        elif clean_doc.get("media_url") and not clean_doc.get("image_url"):
+            clean_doc["image_url"] = clean_doc["media_url"]
+
+        res = await db["contents"].insert_one(clean_doc)
+        clean_doc["_id"] = str(res.inserted_id)
+        clean_doc["id"] = str(res.inserted_id)
+        return {"success": True, "data": clean_doc, "message": "Post created successfully"}
 
 
 @router.get("")
@@ -452,15 +527,19 @@ async def get_contents(
     db = get_database()
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     business = await BusinessService.get_business_by_owner(user_id)
-    if not business:
-        return {"success": True, "data": []}
+    business_id = str(business.id) if business else None
 
-    cursor = db["contents"].find({"business_id": str(business.id)}).sort("created_at", -1)
+    query = {"$or": [{"user_id": user_id}]}
+    if business_id:
+        query["$or"].append({"business_id": business_id})
+
+    cursor = db["contents"].find(query).sort("created_at", -1)
 
     contents = []
     async for item in cursor:
         if "_id" in item:
             item["_id"] = str(item["_id"])
+            item["id"] = str(item["_id"])
         contents.append(item)
 
     return {"success": True, "data": contents}
@@ -471,17 +550,46 @@ async def get_single_content(
     content_id: str,
     current_user=Depends(get_current_user),
 ):
-    """Retrieves a single content asset by ID verifying ownership."""
+    """
+    Retrieves a single generated post asset by ID with strict ownership authorization
+    and plan entitlement checks. Returns all fields needed to prepopulate the editor.
+    """
     db = get_database()
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     business = await BusinessService.get_business_by_owner(user_id)
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else None
 
     content_svc = ContentService(db)
-    doc = await content_svc.get_content_by_id(content_id, str(business.id))
+    doc = await content_svc.get_content_by_id(content_id, business_id=business_id, user_id=user_id)
     if not doc:
-        raise HTTPException(status_code=404, detail="Content not found")
+        # Check if the document exists under another user to return 403 Forbidden
+        if ObjectId.is_valid(content_id):
+            other_doc = await db["contents"].find_one({"_id": ObjectId(content_id)})
+            if other_doc:
+                raise HTTPException(status_code=403, detail="You do not have permission to access this post.")
+        raise HTTPException(status_code=404, detail="Post not found")
+
+    # Enforce plan entitlement on locked posts
+    if doc.get("is_locked", False):
+        sub = await SubscriptionService.get_or_create_subscription(db, user_id)
+        plan_id = str(sub.get("plan_id", "FREE")).upper()
+        sub_status = sub.get("status", "active")
+        is_paid = (plan_id in QUALIFYING_PAID_PLANS) and (sub_status == "active")
+        if not is_paid:
+            raise HTTPException(
+                status_code=403,
+                detail="This post is locked and requires an active Starter or Pro subscription plan."
+            )
+
+    # Ensure all prepopulation fields are present and synced
+    doc["_id"] = str(doc["_id"])
+    doc["id"] = str(doc["_id"])
+    if not doc.get("image_url") and doc.get("media_url"):
+        doc["image_url"] = doc["media_url"]
+    elif not doc.get("media_url") and doc.get("image_url"):
+        doc["media_url"] = doc["image_url"]
+    if not doc.get("caption") and doc.get("primary_text"):
+        doc["caption"] = doc["primary_text"]
 
     return {"success": True, "data": doc}
 
@@ -494,19 +602,22 @@ async def delete_content(
     db = get_database()
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     business = await BusinessService.get_business_by_owner(user_id)
-    if not business:
-        raise HTTPException(status_code=404, detail="Business not found")
+    business_id = str(business.id) if business else None
 
     if not ObjectId.is_valid(content_id):
         raise HTTPException(status_code=400, detail="Invalid ID format")
 
-    result = await db["contents"].delete_one({
-        "_id": ObjectId(content_id),
-        "business_id": str(business.id)
-    })
+    obj_id = ObjectId(content_id)
+    existing = await db["contents"].find_one({"_id": obj_id})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Post not found")
 
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Content not found")
+    doc_user_id = str(existing.get("user_id", ""))
+    doc_business_id = str(existing.get("business_id", ""))
+    is_owner = (doc_user_id == user_id) or (business_id and doc_business_id == business_id)
+    if not is_owner:
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this post.")
 
+    await db["contents"].delete_one({"_id": obj_id})
     return {"success": True, "message": "Content deleted"}
 

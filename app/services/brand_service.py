@@ -398,10 +398,12 @@ async def save_brand_kit_submission(
     for k, v in submission_data.items():
         if k in ["is_draft", "_id", "clear_fields", "cleared_fields"]:
             continue
-        # Skip null or empty string overwriting existing non-empty values
+        # Skip null, empty string, or empty collections overwriting existing non-empty values
         if v is None:
             continue
         if isinstance(v, str) and not v.strip() and existing and existing.get(k):
+            continue
+        if isinstance(v, (list, dict)) and not v and existing and existing.get(k):
             continue
         merged[k] = v
 
@@ -711,9 +713,45 @@ async def get_onboarding_status(db, current_user) -> BrandKitStatusResponse:
     business = await db["businesses"].find_one({"owner_id": owner_id})
     business_id = str(business["_id"]) if business else None
 
-    brand = await get_brand_kit_by_owner(db, owner_id)
+    # Source of truth: online_presence
+    online_presence = (
+        (business.get("online_presence") if business else None) or
+        current_user.get("online_presence")
+    )
+    if not online_presence and ObjectId.is_valid(owner_id):
+        u_doc = await db["users"].find_one({"_id": ObjectId(owner_id)})
+        if u_doc:
+            online_presence = u_doc.get("online_presence")
 
-    # Case A: No Brand Kit at all
+    brand = await get_brand_kit_by_owner(db, owner_id)
+    if not online_presence and brand and brand.get("online_presence"):
+        online_presence = brand.get("online_presence")
+
+    # A. Sources that do NOT require Brand Kit completion: website, google_maps, marketplace_seller, wholesale_b2b
+    is_brand_kit_applicable = (online_presence == "no_online_presence") or (not online_presence)
+
+    if not is_brand_kit_applicable:
+        # For website, google_maps, marketplace_seller, and wholesale_b2b:
+        # Brand Kit completion is not required to proceed.
+        # Do not infer Brand Kit is complete simply because a website or Google Maps profile exists.
+        is_completed = brand.get("brand_kit_completed", False) if brand else False
+        completion_pct = brand.get("completion_percentage", 0) if brand else 0
+        status_str = brand.get("brand_kit_status", "not_applicable") if brand else "not_applicable"
+        return BrandKitStatusResponse(
+            role=role,
+            should_show_modal=False,  # Not required for these sources!
+            brand_kit_status=status_str,
+            brand_kit_completed=is_completed,
+            brand_kit_completed_at=brand.get("brand_kit_completed_at") if brand else None,
+            business_id=business_id,
+            completion_percentage=completion_pct,
+            completed_sections=brand.get("completed_sections", []) if brand else [],
+            pending_sections=brand.get("pending_sections", []) if brand else list(BRAND_KIT_SECTIONS.keys()),
+            brand_kit=brand
+        )
+
+    # B. For no_online_presence: Brand Kit completion is applicable
+    # Case 1: No Brand Kit at all
     if not brand:
         is_dismissed = bool(business and business.get("brand_kit_dismissed", False))
         return BrandKitStatusResponse(
@@ -729,20 +767,25 @@ async def get_onboarding_status(db, current_user) -> BrandKitStatusResponse:
             brand_kit=None
         )
 
-    # Case B: Brand Kit exists
+    # Case 2: Brand Kit exists for no_online_presence
     is_completed = brand.get("brand_kit_completed", False)
     status_str = brand.get("brand_kit_status", "not_started")
 
-    # Legacy record support: check if already fully populated prior to status flags
-    if not is_completed:
-        has_name = bool(brand.get("business_name") or brand.get("brand_name"))
-        has_logo = bool(brand.get("logo_url"))
-        has_color = bool(brand.get("primary_color"))
-        if status_str == "completed" or (has_name and has_logo and has_color and status_str != "in_progress"):
-            is_completed = True
-            status_str = "completed"
+    # Determine whether required fields are complete
+    req_errors = validate_required_brand_kit_fields(brand)
+    if not req_errors:
+        is_completed = True
+        status_str = "completed"
+    else:
+        # Check legacy complete flags
+        if not is_completed:
+            has_name = bool(brand.get("business_name") or brand.get("brand_name"))
+            has_logo = bool(brand.get("logo_url"))
+            has_color = bool(brand.get("primary_color"))
+            if status_str == "completed" or (has_name and has_logo and has_color and status_str != "in_progress"):
+                is_completed = True
+                status_str = "completed"
 
-    # Stop forcing popup to reopen if user has already saved a partial profile or dismissed
     is_dismissed = bool(
         brand.get("brand_kit_dismissed", False) or
         (business and business.get("brand_kit_dismissed", False))

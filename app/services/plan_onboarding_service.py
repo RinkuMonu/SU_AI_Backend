@@ -152,12 +152,21 @@ class PlanOnboardingService:
             if ig_conn or fb_conn or li_conn:
                 social_connectivity_completed = True
 
-        # Check Brand Kit started or saved
-        brand_kit_started_or_saved = bool(
-            brand_kit_completed or
-            (brand_kit and (brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or brand_kit.get("completion_percentage", 0) > 0 or brand_kit.get("brand_kit_dismissed", False))) or
-            (business and business.get("brand_kit_dismissed", False))
+        # Check online_presence
+        online_presence = (
+            (business.get("online_presence") if business else None) or
+            current_user.get("online_presence")
         )
+
+        if online_presence and online_presence != "no_online_presence":
+            brand_kit_started_or_saved = True
+        else:
+            brand_kit_started_or_saved = bool(
+                brand_kit_completed or
+                (brand_kit and (brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or brand_kit.get("completion_percentage", 0) > 0 or brand_kit.get("brand_kit_dismissed", False))) or
+                (business and business.get("brand_kit_dismissed", False)) or
+                True  # Incomplete Brand Kit does not block plan activation
+            )
 
         # 5. Check Step 3: Plan Activation
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)

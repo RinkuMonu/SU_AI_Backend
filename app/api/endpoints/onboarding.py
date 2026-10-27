@@ -88,13 +88,23 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
         (business_doc and business_doc.get("brand_kit_dismissed", False))
     )
 
+    online_presence = (
+        (business_doc.get("online_presence") if business_doc else None) or
+        current_user.get("online_presence")
+    )
+    is_brand_kit_applicable = (online_presence == "no_online_presence") or (not online_presence)
+
     # Legacy business profile flag
-    business_completed = brand_kit_completed or (brand_kit_pct > 0)
-    if not business_completed and business:
-        name = getattr(business, "businessName", None) or getattr(business, "name", None) or ""
-        name = str(name).strip()
-        if name and name != "My Business":
-            business_completed = True
+    if not is_brand_kit_applicable:
+        # Website, google_maps, marketplace_seller, wholesale_b2b do not require Brand Kit completion
+        business_completed = True
+    else:
+        business_completed = brand_kit_completed or (brand_kit_pct > 0)
+        if not business_completed and business:
+            name = getattr(business, "businessName", None) or getattr(business, "name", None) or ""
+            name = str(name).strip()
+            if name and name != "My Business":
+                business_completed = True
 
     # 2. Social Media Connectivity (Step 2)
     social_status = await SocialConnectivityService.get_social_onboarding_status(db, current_user)
@@ -128,7 +138,7 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
 
     # Determine recommended next action and modal
     current_modal = None
-    if brand_status.should_show_modal:
+    if is_brand_kit_applicable and brand_status.should_show_modal:
         current_modal = "brand_kit"
         next_action = "Save your Brand Kit branding details"
     elif social_status.should_show_modal:
@@ -142,7 +152,10 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
         next_action = "Onboarding completed. Explore your AI workspace"
 
     # Overall completion percentage
-    step1_weight = 40.0 * (brand_kit_pct / 100.0)
+    if not is_brand_kit_applicable:
+        step1_weight = 40.0
+    else:
+        step1_weight = 40.0 * (brand_kit_pct / 100.0) if brand_kit_pct > 0 else (40.0 if is_brand_dismissed else 0.0)
     step2_weight = 30.0 if (is_social_completed or is_social_skipped) else 0.0
     step3_weight = 30.0 if (is_plan_completed or is_plan_skipped) else 0.0
     overall_pct = int(round(step1_weight + step2_weight + step3_weight))
@@ -198,13 +211,14 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
         "current_modal_to_show": current_modal,
         "steps": {
             "step_1_brand_kit": {
-                "status": "completed" if brand_kit_completed else ("in_progress" if brand_kit_pct > 0 else "not_started"),
+                "status": "not_applicable" if not is_brand_kit_applicable else ("completed" if brand_kit_completed else ("in_progress" if brand_kit_pct > 0 else "not_started")),
                 "is_completed": brand_kit_completed,
                 "is_dismissed": is_brand_dismissed,
                 "completion_percentage": brand_kit_pct,
                 "completed_sections": brand_status.completed_sections,
                 "pending_sections": brand_status.pending_sections,
-                "should_show_modal": brand_status.should_show_modal
+                "should_show_modal": brand_status.should_show_modal if is_brand_kit_applicable else False,
+                "is_applicable": is_brand_kit_applicable
             },
             "step_2_social_connectivity": {
                 "status": "completed" if is_social_completed else ("skipped" if is_social_skipped else "pending"),

@@ -3,6 +3,8 @@ from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
 from app.core.billing_config import PLANS
 
+QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER"}
+
 class SubscriptionService:
     @staticmethod
     async def get_or_create_subscription(db, user_id: str):

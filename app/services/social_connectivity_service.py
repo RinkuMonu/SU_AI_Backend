@@ -182,24 +182,41 @@ async def get_social_onboarding_status(db, current_user) -> SocialOnboardingStat
             create_account_urls=CREATE_ACCOUNT_URLS,
         )
 
-    # 3. Check Brand Kit prerequisite (started or saved)
+    # 3. Check Brand Kit prerequisite based on online_presence
+    business = await db["businesses"].find_one({"owner_id": user_id})
+    user_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else None
+    online_presence = (
+        (business.get("online_presence") if business else None) or
+        (user_doc.get("online_presence") if user_doc else None)
+    )
+
     brand_kit = await get_brand_kit_by_owner(db, user_id)
     brand_kit_completed = False
     brand_kit_started_or_saved = False
-    if brand_kit:
-        brand_kit_completed = brand_kit.get("brand_kit_completed", False)
-        if not brand_kit_completed:
-            has_name = bool(brand_kit.get("business_name") or brand_kit.get("brand_name"))
-            has_logo = bool(brand_kit.get("logo_url"))
-            has_color = bool(brand_kit.get("primary_color"))
-            if has_name and has_logo and has_color and brand_kit.get("brand_kit_status") != "in_progress":
-                brand_kit_completed = True
-        brand_kit_started_or_saved = bool(
-            brand_kit_completed or
-            brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or
-            brand_kit.get("completion_percentage", 0) > 0 or
-            brand_kit.get("brand_kit_dismissed", False)
-        )
+
+    if online_presence and online_presence != "no_online_presence":
+        # website, google_maps, marketplace_seller, wholesale_b2b do NOT require Brand Kit
+        brand_kit_completed = brand_kit.get("brand_kit_completed", False) if brand_kit else False
+        brand_kit_started_or_saved = True
+    else:
+        if brand_kit:
+            brand_kit_completed = brand_kit.get("brand_kit_completed", False)
+            if not brand_kit_completed:
+                has_name = bool(brand_kit.get("business_name") or brand_kit.get("brand_name"))
+                has_logo = bool(brand_kit.get("logo_url"))
+                has_color = bool(brand_kit.get("primary_color"))
+                if has_name and has_logo and has_color and brand_kit.get("brand_kit_status") != "in_progress":
+                    brand_kit_completed = True
+            brand_kit_started_or_saved = bool(
+                brand_kit_completed or
+                brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or
+                brand_kit.get("completion_percentage", 0) > 0 or
+                brand_kit.get("brand_kit_dismissed", False) or
+                (business and business.get("brand_kit_dismissed", False)) or
+                True  # Incomplete Brand Kit does not block social connectivity
+            )
+        else:
+            brand_kit_started_or_saved = True
 
     # 4. Check active platform connections
     platforms = await get_all_platform_connections(db, user_id)

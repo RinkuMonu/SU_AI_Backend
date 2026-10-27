@@ -76,13 +76,24 @@ class ContentService:
 
         return document
 
-    async def get_content_by_id(self, content_id: str, business_id: str):
+    async def get_content_by_id(self, content_id: str, business_id: str = None, user_id: str = None):
         if not ObjectId.is_valid(content_id):
             return None
-        doc = await self.db.contents.find_one({
-            "_id": ObjectId(content_id),
-            "business_id": business_id
-        })
+        query = {"_id": ObjectId(content_id)}
+        conditions = []
+        if business_id:
+            conditions.append({"business_id": business_id})
+        if user_id:
+            conditions.append({"user_id": user_id})
+        if conditions:
+            query["$or"] = conditions
+
+        doc = await self.db.contents.find_one(query)
         if doc:
             doc["_id"] = str(doc["_id"])
+            doc["id"] = str(doc["_id"])
+            if not doc.get("image_url") and doc.get("media_url"):
+                doc["image_url"] = doc["media_url"]
+            elif not doc.get("media_url") and doc.get("image_url"):
+                doc["media_url"] = doc["image_url"]
         return doc
