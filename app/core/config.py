@@ -167,6 +167,14 @@ class Settings(BaseSettings):
             self.FAST2SMS_API_KEY = os.getenv("FAST2SMS_API_KEY")
         if not self.FAST2SMS_OTP_ID and os.getenv("FAST2SMS_OTP_ID"):
             self.FAST2SMS_OTP_ID = os.getenv("FAST2SMS_OTP_ID")
+        if os.getenv("FAST2SMS_SENDER_ID"):
+            self.FAST2SMS_SENDER_ID = os.getenv("FAST2SMS_SENDER_ID")
+        if os.getenv("FAST2SMS_DLT_MESSAGE_ID"):
+            self.FAST2SMS_DLT_MESSAGE_ID = os.getenv("FAST2SMS_DLT_MESSAGE_ID")
+        if os.getenv("FAST2SMS_ROUTE"):
+            self.FAST2SMS_ROUTE = os.getenv("FAST2SMS_ROUTE")
+        if os.getenv("FAST2SMS_VARIABLES_FORMAT"):
+            self.FAST2SMS_VARIABLES_FORMAT = os.getenv("FAST2SMS_VARIABLES_FORMAT")
         if not self.GEMINI_API_KEY and self.GEMINI_BACKUP_API_KEY:
             self.GEMINI_API_KEY = self.GEMINI_BACKUP_API_KEY
         elif not self.GEMINI_API_KEY and os.getenv("GEMINI_API_KEY"):
@@ -185,6 +193,10 @@ class Settings(BaseSettings):
     # Fast2SMS Configuration
     FAST2SMS_API_KEY: Optional[str] = None
     FAST2SMS_OTP_ID: Optional[str] = None
+    FAST2SMS_SENDER_ID: str = "DGROW"
+    FAST2SMS_DLT_MESSAGE_ID: str = "229008"
+    FAST2SMS_ROUTE: str = "dlt"
+    FAST2SMS_VARIABLES_FORMAT: str = "{otp}|10"
 
     # MSG91 WhatsApp Configuration
     MSG91_WHATSAPP_AUTHKEY: Optional[str] = None
