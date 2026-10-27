@@ -9,8 +9,11 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
-from bs4 import BeautifulSoup
 from bson import ObjectId
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    BeautifulSoup = None
 from fastapi import HTTPException, status
 import httpx
 from PIL import Image
@@ -881,6 +884,10 @@ class WebsiteAnalysisService:
         """
         Extracts structural text, metadata, CSS colors, JSON-LD structured data, and images from HTML.
         """
+        if BeautifulSoup is None:
+            logger.warning("beautifulsoup4 is not installed. Using regex HTML parsing fallback. Run `pip install beautifulsoup4`.")
+            return cls._parse_html_fallback(html, base_url)
+
         soup = BeautifulSoup(html, "html.parser")
 
         # 1. Page Title & Meta
@@ -1122,6 +1129,119 @@ class WebsiteAnalysisService:
             "ld_city": city_candidate,
             "ld_tagline": ld_tagline,
             "ld_products": ld_products
+        }
+
+    @classmethod
+    def _parse_html_fallback(cls, html: str, base_url: str) -> Dict[str, Any]:
+        """
+        Lightweight fallback HTML parser using regex when beautifulsoup4 is missing.
+        Ensures the application never crashes on startup or basic extraction.
+        """
+        # 1. Page Title & Meta
+        title = ""
+        m_title = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+        if m_title:
+            title = re.sub(r"<[^>]+>", "", m_title.group(1)).strip()
+
+        og_title = re.search(r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\'](.*?)["\']', html, re.IGNORECASE)
+        if not title and og_title:
+            title = og_title.group(1).strip()
+
+        description = ""
+        m_desc = re.search(r'<meta[^>]+(?:name|property)=["\'](?:og:)?description["\'][^>]+content=["\'](.*?)["\']', html, re.IGNORECASE)
+        if m_desc:
+            description = m_desc.group(1).strip()
+
+        site_name = ""
+        m_site = re.search(r'<meta[^>]+property=["\']og:site_name["\'][^>]+content=["\'](.*?)["\']', html, re.IGNORECASE)
+        if m_site:
+            site_name = m_site.group(1).strip()
+
+        # Favicon / Icons
+        favicon_url = None
+        m_icon = re.search(r'<link[^>]+rel=["\'][^"\']*(?:icon|shortcut icon|apple-touch-icon)[^"\']*["\'][^>]+href=["\'](.*?)["\']', html, re.IGNORECASE)
+        if m_icon:
+            favicon_url = urljoin(base_url, m_icon.group(1).strip())
+
+        # CSS Hex Colors
+        theme_colors = []
+        m_theme = re.search(r'<meta[^>]+name=["\']theme-color["\'][^>]+content=["\'](#[0-9a-fA-F]{6})["\']', html, re.IGNORECASE)
+        if m_theme:
+            theme_colors.append(m_theme.group(1).upper())
+
+        hex_matches = re.findall(r"#[0-9a-fA-F]{6}\b", html)
+        color_counts = Counter([c.upper() for c in hex_matches if c.upper() not in NEUTRAL_HEX_COLORS])
+        top_css_colors = [c for c, _ in color_counts.most_common(8)]
+        if theme_colors:
+            top_css_colors = theme_colors + [c for c in top_css_colors if c not in theme_colors]
+
+        # Photos
+        photos: List[WebsitePhotoItem] = []
+        seen_sigs = set()
+        logo_candidate = favicon_url
+        hero_candidate = None
+
+        def add_photo(raw_url: Optional[str], p_type: str, alt: str = "") -> None:
+            nonlocal logo_candidate, hero_candidate
+            if not raw_url:
+                return
+            clean_url = raw_url.strip()
+            if not clean_url or clean_url.startswith("data:") or "pixel" in clean_url.lower():
+                return
+            full = urljoin(base_url, clean_url)
+            if not full.startswith("http"):
+                return
+            lower_full = full.lower()
+            if any(junk in lower_full for junk in ["1x1", "spacer", "chevron", "arrow-", "favicon.ico", "spinner", "loader"]):
+                return
+            sig = _get_image_signature(full)
+            if sig not in seen_sigs:
+                seen_sigs.add(sig)
+                is_logo = (p_type == "logo") or ("logo" in lower_full) or ("logo" in alt.lower())
+                is_hero = (p_type == "hero") or ("hero" in lower_full) or ("banner" in lower_full)
+                classified_type = "logo" if is_logo else ("hero" if is_hero else "product")
+                if is_logo and not logo_candidate:
+                    logo_candidate = full
+                if is_hero and not hero_candidate:
+                    hero_candidate = full
+                photos.append(WebsitePhotoItem(
+                    url=full,
+                    type=classified_type,
+                    alt=alt or f"Extracted {classified_type.title()}",
+                    selected=(len(photos) < 6)
+                ))
+
+        # OpenGraph image
+        m_og_img = re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\'](.*?)["\']', html, re.IGNORECASE)
+        if m_og_img:
+            add_photo(m_og_img.group(1), "hero", "Hero Banner")
+
+        # <img> tags
+        img_srcs = re.findall(r'<img[^>]+src=["\'](.*?)["\']', html, re.IGNORECASE)
+        for src in img_srcs:
+            add_photo(src, "product", "Product Image")
+
+        # Clean text
+        clean_html = re.sub(r"<(script|style|noscript|iframe|svg)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        clean_text = re.sub(r"<[^>]+>", " ", clean_html)
+        clean_text = re.sub(r"\s+", " ", clean_text).strip()[:4000]
+
+        parsed_domain = urlparse(base_url).netloc.replace("www.", "")
+
+        return {
+            "title": title or parsed_domain.title(),
+            "description": description or f"Official website of {parsed_domain.title()}",
+            "site_name": site_name or parsed_domain.title(),
+            "domain": parsed_domain,
+            "top_css_colors": top_css_colors,
+            "photos": photos,
+            "logo_candidate": logo_candidate,
+            "hero_candidate": hero_candidate,
+            "body_text": clean_text,
+            "ld_name": None,
+            "ld_city": None,
+            "ld_tagline": None,
+            "ld_products": []
         }
 
     @classmethod
