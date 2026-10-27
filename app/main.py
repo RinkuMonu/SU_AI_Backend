@@ -48,6 +48,9 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 if os.path.exists("assets"):
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
+from pymongo.errors import PyMongoError
+from fastapi.responses import JSONResponse
+
 # Set up CORS - works for localhost and all live deployments
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +61,19 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["*"],
 )
+
+
+@app.exception_handler(PyMongoError)
+async def pymongo_exception_handler(request: Request, exc: PyMongoError):
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Database connection error. Please verify MongoDB network access and IP whitelist in Atlas.",
+            "code": "DATABASE_UNAVAILABLE",
+            "error": str(exc)[:200]
+        }
+    )
+
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
 app.include_router(social.router)

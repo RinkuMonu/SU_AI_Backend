@@ -1,19 +1,12 @@
 try:
     import dns.resolver
     resolver = dns.resolver.Resolver(configure=True)
-    existing_ns = list(resolver.nameservers)
-    for ns in ['8.8.8.8', '1.1.1.1', '8.8.4.4']:
-        if ns not in existing_ns:
-            existing_ns.append(ns)
-    resolver.nameservers = existing_ns
+    for ns in ['8.8.8.8', '1.1.1.1']:
+        if ns not in resolver.nameservers:
+            resolver.nameservers.append(ns)
     dns.resolver.default_resolver = resolver
 except Exception:
-    try:
-        import dns.resolver
-        dns.resolver.default_resolver = dns.resolver.Resolver(configure=False)
-        dns.resolver.default_resolver.nameservers = ['8.8.8.8', '1.1.1.1']
-    except Exception:
-        pass
+    pass
 
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
