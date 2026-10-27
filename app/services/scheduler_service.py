@@ -18,7 +18,7 @@ class SchedulerService:
 
     async def start(self):
         logger.info("Starting Autopilot Scheduler Service...")
-        self.client = AsyncIOMotorClient(settings.MONGO_URI)
+        self.client = AsyncIOMotorClient(settings.MONGO_URI, readPreference="secondaryPreferred")
         self.db = self.client[settings.DATABASE_NAME]
         
         # Job 1: Executor - Runs every 5 minutes to check pending queued items

@@ -18,7 +18,7 @@ class Database:
 db_manager = Database()
 
 def connect_to_mongo():
-    db_manager.client = AsyncIOMotorClient(settings.MONGO_URI)
+    db_manager.client = AsyncIOMotorClient(settings.MONGO_URI, readPreference="secondaryPreferred")
     db_manager.db = db_manager.client[settings.DATABASE_NAME]
     print("Connected to MongoDB.")
 
