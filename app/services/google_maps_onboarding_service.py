@@ -513,9 +513,6 @@ class GoogleMapsOnboardingService:
             {
                 "$set": brand_updates,
                 "$setOnInsert": {
-                    "owner_id": str(user_id),
-                    "user_id": str(user_id),
-                    "business_id": str(user_id),
                     "created_at": now
                 }
             },
