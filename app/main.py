@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 # Reload trigger 10
 from app.core.config import settings
-from app.core.database import connect_to_mongo, close_mongo_connection
+from app.core.database import connect_to_mongo, close_mongo_connection, init_db_indexes
 from app.services.scheduler_service import scheduler_service
 from app.api.api_router import api_router
 from app.api.endpoints import content, insights, messages, reviews, social
@@ -28,6 +28,7 @@ from app.api.endpoints.influencer_marketplace import router as influencer_market
 async def lifespan(app: FastAPI):
     # Startup
     connect_to_mongo()
+    await init_db_indexes()
     await scheduler_service.start()
     yield
     # Shutdown
@@ -110,6 +111,9 @@ app.include_router(linkedin_router, prefix="/api/linkedin", include_in_schema=Fa
 app.include_router(linkedin_router, prefix="/api/v1/linkedin", include_in_schema=False)
 app.include_router(brand_router, prefix="/api/brands", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(brand_router, prefix="/api/brand", tags=["Brand Kit"], include_in_schema=False)
+app.include_router(brand_router, prefix="/api/brand-kit", tags=["Brand Kit"], include_in_schema=False)
+app.include_router(brand_router, prefix="/brand-kit", tags=["Brand Kit"], include_in_schema=False)
+app.include_router(brand_router, prefix="/brand", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")

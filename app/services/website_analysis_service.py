@@ -336,38 +336,53 @@ class WebsiteAnalysisService:
 
         # Update in businesses collection
         await db["businesses"].update_one(
-            {"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]},
-            {"$set": {
-                "owner_id": str(user_id),
-                "name": details.business_name,
-                "business_name": details.business_name,
-                "category": details.category,
-                "business_category": details.category,
-                "sub_category": details.sub_category,
-                "city": details.city,
-                "logo_url": details.logo_url,
-                "tagline": details.tagline,
-                "target_customer": details.target_audience,
-                "business_types": details.business_types,
-                "primary_business_type": details.primary_business_type,
-                "differentiators": details.differentiators,
-                "products_services": details.products_services,
-                "updated_at": now
-            }},
+            {"$or": [
+                {"owner_id": str(user_id)},
+                {"ownerId": str(user_id)},
+                {"user_id": str(user_id)},
+                {"userId": str(user_id)}
+            ]},
+            {
+                "$set": {
+                    "owner_id": str(user_id),
+                    "ownerId": str(user_id),
+                    "user_id": str(user_id),
+                    "name": details.business_name,
+                    "business_name": details.business_name,
+                    "category": details.category,
+                    "business_category": details.category,
+                    "sub_category": details.sub_category,
+                    "city": details.city,
+                    "logo_url": details.logo_url,
+                    "tagline": details.tagline,
+                    "target_customer": details.target_audience,
+                    "business_types": details.business_types,
+                    "primary_business_type": details.primary_business_type,
+                    "differentiators": details.differentiators,
+                    "products_services": details.products_services,
+                    "updated_at": now
+                },
+                "$setOnInsert": {
+                    "location": "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
         # Update in brand_kits collection
         await db["brand_kits"].update_one(
             {"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]},
-            {"$set": {
-                "business_id": str(user_id),
-                "owner_id": str(user_id),
-                "brand_name": details.business_name,
-                "business_name": details.business_name,
-                "business_category": details.category,
-                "sub_category": details.sub_category,
-                "city": details.city,
+            {
+                "$set": {
+                    "business_id": str(user_id),
+                    "owner_id": str(user_id),
+                    "user_id": str(user_id),
+                    "brand_name": details.business_name,
+                    "business_name": details.business_name,
+                    "business_category": details.category,
+                    "sub_category": details.sub_category,
+                    "city": details.city,
                 "logo_url": details.logo_url,
                 "tagline": details.tagline,
                 "target_audience": details.target_audience,
@@ -410,15 +425,30 @@ class WebsiteAnalysisService:
 
         # Update in businesses collection
         await db["businesses"].update_one(
-            {"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]},
-            {"$set": {
-                "owner_id": str(user_id),
-                "brand_colors": prefs.brand_colors[:5],
-                "tones": validated_tones,
-                "preferred_language": prefs.default_language,
-                "tagline": prefs.tagline,
-                "updated_at": now
-            }},
+            {"$or": [
+                {"owner_id": str(user_id)},
+                {"ownerId": str(user_id)},
+                {"user_id": str(user_id)},
+                {"userId": str(user_id)}
+            ]},
+            {
+                "$set": {
+                    "owner_id": str(user_id),
+                    "ownerId": str(user_id),
+                    "user_id": str(user_id),
+                    "brand_colors": prefs.brand_colors[:5],
+                    "tones": validated_tones,
+                    "preferred_language": prefs.default_language,
+                    "tagline": prefs.tagline,
+                    "updated_at": now
+                },
+                "$setOnInsert": {
+                    "name": "My Business",
+                    "business_name": "My Business",
+                    "location": "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
@@ -429,15 +459,17 @@ class WebsiteAnalysisService:
 
         await db["brand_kits"].update_one(
             {"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]},
-            {"$set": {
-                "business_id": str(user_id),
-                "owner_id": str(user_id),
-                "tagline": prefs.tagline,
-                "primary_color": primary_col,
-                "secondary_color": secondary_col,
-                "accent_color": accent_col,
-                "palette": prefs.brand_colors[:5],
-                "brand_colors": prefs.brand_colors[:5],
+            {
+                "$set": {
+                    "business_id": str(user_id),
+                    "owner_id": str(user_id),
+                    "user_id": str(user_id),
+                    "tagline": prefs.tagline,
+                    "primary_color": primary_col,
+                    "secondary_color": secondary_col,
+                    "accent_color": accent_col,
+                    "palette": prefs.brand_colors[:5],
+                    "brand_colors": prefs.brand_colors[:5],
                 "tones": validated_tones,
                 "brand_voice": ", ".join(validated_tones),
                 "language": prefs.default_language,
@@ -626,16 +658,22 @@ class WebsiteAnalysisService:
         if user_presence not in ("marketplace_seller", "wholesale_b2b", "google_maps", "no_online_presence"):
             user_presence = u_doc.get("online_presence") or "website"
 
-        target_coll = db["pending_users"] if (await db["pending_users"].find_one({"_id": ObjectId(user_id)})) else db["users"]
-        await target_coll.update_one(
+        # Always update canonical users collection
+        user_updates_map = {
+            "onboarding_step": 3,
+            "online_presence": user_presence,
+            "onboarding_status": "in_progress",
+            "updated_at": now
+        }
+        await db["users"].update_one(
             {"_id": ObjectId(user_id)},
-            {"$set": {
-                "onboarding_step": 3,
-                "online_presence": user_presence,
-                "onboarding_status": "in_progress",
-                "updated_at": now
-            }}
+            {"$set": user_updates_map}
         )
+        if await db["pending_users"].find_one({"_id": ObjectId(user_id)}):
+            await db["pending_users"].update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": user_updates_map}
+            )
 
         refreshed_kit = await db["brand_kits"].find_one({"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]}) or {}
         refreshed_bus = await db["businesses"].find_one({"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]}) or {}
@@ -1713,6 +1751,9 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             bus_updates["tones"] = b_pref.tones
             bus_updates["preferred_language"] = b_pref.default_language
 
+        bus_updates["owner_id"] = str(user_id)
+        bus_updates["ownerId"] = str(user_id)
+        bus_updates["user_id"] = str(user_id)
         await db["businesses"].update_one(
             {"$or": [
                 {"owner_id": str(user_id)},
@@ -1720,7 +1761,15 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
                 {"user_id": str(user_id)},
                 {"userId": str(user_id)}
             ]},
-            {"$set": bus_updates},
+            {
+                "$set": bus_updates,
+                "$setOnInsert": {
+                    "name": bus_updates.get("business_name") or "My Business",
+                    "business_name": bus_updates.get("business_name") or "My Business",
+                    "location": "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 

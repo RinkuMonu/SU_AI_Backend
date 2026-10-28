@@ -268,6 +268,8 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
 
     allowed_fields = {
         "onboarding_step",
+        "onboardingCompleted",
+        "onboarding_completed",
         "business_profile_completed",
         "social_connection_completed",
         "brand_kit_dismissed",
@@ -275,6 +277,7 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
         "social_skipped",
         "plan_selection_skipped",
         "plan_skipped",
+        "plan_selected",
         "online_presence",
         "business_type",
         "selected_services",
@@ -337,23 +340,57 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
 
         if business_updates:
             business_updates["updated_at"] = now
+            business_updates["owner_id"] = uid
+            business_updates["ownerId"] = uid
+            business_updates["user_id"] = uid
+            bus_defaults = {
+                "name": "My Business",
+                "business_name": "My Business",
+                "category": "General",
+                "location": "India",
+                "created_at": now
+            }
+            only_insert = {k: v for k, v in bus_defaults.items() if k not in business_updates}
+            b_op = {"$set": business_updates}
+            if only_insert:
+                b_op["$setOnInsert"] = only_insert
+
             await db["businesses"].update_one(
-                {"owner_id": uid},
-                {"$set": business_updates},
+                {"$or": [
+                    {"owner_id": uid},
+                    {"ownerId": uid},
+                    {"user_id": uid},
+                    {"userId": uid}
+                ]},
+                b_op,
                 upsert=True
             )
 
-        if update_data.get("social_connection_completed") or update_data.get("business_profile_completed"):
+        is_truly_completed = bool(
+            update_data.get("onboardingCompleted") is True or
+            update_data.get("onboarding_completed") is True or
+            (
+                (update_data.get("business_profile_completed") or business_updates.get("brand_kit_completed") or business_updates.get("business_name")) and
+                (update_data.get("social_connection_completed") or update_data.get("social_connectivity_skipped")) and
+                (update_data.get("plan_selected") or update_data.get("plan_selection_skipped"))
+            )
+        )
+
+        if is_truly_completed:
             update_data["onboarding_completed_at"] = now.isoformat()
             update_data["onboardingCompleted"] = True
             update_data["onboarding_status"] = "completed"
             await AuthService.commit_pending_user(uid, update_data)
         else:
-            coll = db["pending_users"] if current_user.get("is_pending") else db["users"]
-            await coll.update_one(
+            await db["users"].update_one(
                 {"_id": ObjectId(uid)},
                 {"$set": update_data}
             )
+            if current_user.get("is_pending") or await db["pending_users"].find_one({"_id": ObjectId(uid)}):
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(uid)},
+                    {"$set": update_data}
+                )
 
     return {"success": True, "message": "Onboarding progress updated"}
 
@@ -1088,11 +1125,23 @@ async def set_first_content_choice(
         )
 
     await db["businesses"].update_one(
-        {"$or": [{"owner_id": uid}, {"ownerId": uid}]},
-        {"$set": {
-            "first_content_choice": choice,
-            "updated_at": now
-        }},
+        {"$or": [{"owner_id": uid}, {"ownerId": uid}, {"user_id": uid}]},
+        {
+            "$set": {
+                "owner_id": uid,
+                "ownerId": uid,
+                "user_id": uid,
+                "first_content_choice": choice,
+                "updated_at": now
+            },
+            "$setOnInsert": {
+                "name": "My Business",
+                "business_name": "My Business",
+                "category": "General",
+                "location": "India",
+                "created_at": now
+            }
+        },
         upsert=True
     )
 

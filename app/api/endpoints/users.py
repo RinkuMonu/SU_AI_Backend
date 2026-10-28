@@ -111,22 +111,22 @@ async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_cur
     # If onboarding is completed, commit user to users collection permanently!
     if update_data.get("onboardingCompleted") == True:
         doc = await AuthService.commit_pending_user(user_id, update_data)
-    elif is_pending:
-        # Still in onboarding steps: update pending_users only (never save to users collection yet)
-        if update_data:
-            await db["pending_users"].update_one(
-                {"_id": ObjectId(user_id)},
-                {"$set": update_data}
-            )
-        doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
     else:
-        # Regular active user in users collection
+        # Always persist updates to canonical users collection
         if update_data:
             await db["users"].update_one(
                 {"_id": ObjectId(user_id)},
                 {"$set": update_data}
             )
+            # Also update pending_users if record exists there
+            if is_pending:
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": update_data}
+                )
         doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        if not doc and is_pending:
+            doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
     
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
@@ -165,14 +165,18 @@ async def upload_avatar(file: UploadFile = File(...), current_user: CurrentUser 
     db = get_database()
     user_id = str(current_user.get("id") or current_user.get("_id"))
     image_url = await save_image(file, "avatars")
-    coll = db["pending_users"] if current_user.get("is_pending") else db["users"]
-    await coll.update_one(
+    await db["users"].update_one(
         {"_id": ObjectId(user_id)},
         {"$set": {"profileImageUrl": image_url, "image": image_url}}
     )
-    doc = await coll.find_one({"_id": ObjectId(user_id)})
-    if not doc:
-        doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if current_user.get("is_pending"):
+        await db["pending_users"].update_one(
+            {"_id": ObjectId(user_id)},
+            {"$set": {"profileImageUrl": image_url, "image": image_url}}
+        )
+    doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+    if not doc and current_user.get("is_pending"):
+        doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
     if not doc:
         raise HTTPException(status_code=404, detail="User not found")
     doc["id"] = str(doc["_id"])

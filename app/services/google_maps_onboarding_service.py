@@ -474,9 +474,23 @@ class GoogleMapsOnboardingService:
         if website and not existing_bus.get("website"):
             business_updates["website"] = website
 
+        business_updates["owner_id"] = str(user_id)
+        business_updates["ownerId"] = str(user_id)
+        business_updates["user_id"] = str(user_id)
         await db["businesses"].update_one(
-            {"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]},
-            {"$set": business_updates},
+            {"$or": [
+                {"owner_id": str(user_id)},
+                {"ownerId": str(user_id)},
+                {"user_id": str(user_id)},
+                {"userId": str(user_id)}
+            ]},
+            {
+                "$set": business_updates,
+                "$setOnInsert": {
+                    "location": city or "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
@@ -484,7 +498,9 @@ class GoogleMapsOnboardingService:
         brand_updates: Dict[str, Any] = {
             "business_id": str(user_id),
             "owner_id": str(user_id),
+            "user_id": str(user_id),
             "brand_name": b_name,
+            "business_name": b_name,
             "updated_at": now
         }
         if city:
@@ -494,22 +510,36 @@ class GoogleMapsOnboardingService:
 
         await db["brand_kits"].update_one(
             {"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]},
-            {"$set": brand_updates},
+            {
+                "$set": brand_updates,
+                "$setOnInsert": {
+                    "owner_id": str(user_id),
+                    "user_id": str(user_id),
+                    "business_id": str(user_id),
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
-        # 3. Update users / pending_users collection
-        user_coll = db["pending_users"] if (await db["pending_users"].find_one({"_id": ObjectId(user_id)})) else db["users"]
-        await user_coll.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {
-                "online_presence": "google_maps",
-                "google_maps_url": maps_url,
-                "onboarding_step": 2,
-                "onboarding_status": "in_progress",
-                "updated_at": now
-            }}
-        )
+        # 3. Update users / pending_users collection - always persist to canonical users collection
+        user_updates_map = {
+            "online_presence": "google_maps",
+            "google_maps_url": maps_url,
+            "onboarding_step": 2,
+            "onboarding_status": "in_progress",
+            "updated_at": now
+        }
+        if ObjectId.is_valid(user_id):
+            await db["users"].update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": user_updates_map}
+            )
+            if await db["pending_users"].find_one({"_id": ObjectId(user_id)}):
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": user_updates_map}
+                )
 
         # 4. Upsert session in google_maps_onboarding_jobs
         photo_models = [
@@ -1118,26 +1148,43 @@ class GoogleMapsOnboardingService:
             }}
         )
 
-        # 2. Advance user stepper to Step 3 (Social Connectivity)
-        user_coll = db["pending_users"] if (await db["pending_users"].find_one({"_id": ObjectId(user_id)})) else db["users"]
-        await user_coll.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": {
-                "onboarding_step": 3,
-                "online_presence": "google_maps",
-                "onboarding_status": "in_progress",
-                "updated_at": now
-            }}
-        )
+        # 2. Advance user stepper to Step 3 (Social Connectivity) - always update canonical users collection
+        user_step_updates = {
+            "onboarding_step": 3,
+            "online_presence": "google_maps",
+            "onboarding_status": "in_progress",
+            "updated_at": now
+        }
+        if ObjectId.is_valid(user_id):
+            await db["users"].update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": user_step_updates}
+            )
+            if await db["pending_users"].find_one({"_id": ObjectId(user_id)}):
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": user_step_updates}
+                )
 
         # 3. Update business record
         await db["businesses"].update_one(
-            {"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]},
-            {"$set": {
-                "online_presence": "google_maps",
-                "onboarding_step": 3,
-                "updated_at": now
-            }}
+            {"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}, {"user_id": str(user_id)}]},
+            {
+                "$set": {
+                    "owner_id": str(user_id),
+                    "ownerId": str(user_id),
+                    "user_id": str(user_id),
+                    "online_presence": "google_maps",
+                    "onboarding_step": 3,
+                    "updated_at": now
+                },
+                "$setOnInsert": {
+                    "name": "My Business",
+                    "business_name": "My Business",
+                    "created_at": now
+                }
+            },
+            upsert=True
         )
 
         bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]}) or {}

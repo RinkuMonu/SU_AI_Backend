@@ -329,36 +329,58 @@ class PlatformOnboardingService:
 
         await db["businesses"].update_one(
             {"$or": [{"owner_id": uid}, {"ownerId": uid}, {"user_id": uid}, {"userId": uid}]},
-            {"$set": bus_update},
+            {
+                "$set": bus_update,
+                "$setOnInsert": {
+                    "name": "My Business",
+                    "business_name": "My Business",
+                    "category": "General",
+                    "location": "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
         # 5. Update brand_kits collection
         await db["brand_kits"].update_one(
             {"$or": [{"owner_id": uid}, {"user_id": uid}]},
-            {"$set": {
-                "owner_id": uid,
-                "business_type": source,
-                "online_presence": source,
-                "selected_platforms": norm_ids,
-                "updated_at": now
-            }},
+            {
+                "$set": {
+                    "owner_id": uid,
+                    "business_type": source,
+                    "online_presence": source,
+                    "selected_platforms": norm_ids,
+                    "updated_at": now
+                },
+                "$setOnInsert": {
+                    "owner_id": uid,
+                    "user_id": uid,
+                    "business_id": uid,
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
-        # 6. Update user collection
-        user_coll = db["pending_users"] if (await db["pending_users"].find_one({"_id": ObjectId(uid)})) else db["users"]
-        await user_coll.update_one(
+        # 6. Update user collection - always persist to canonical users collection
+        user_updates_dict = {
+            "online_presence": source,
+            "business_type": source,
+            "selected_platforms": norm_ids,
+            "onboarding_step": 2,
+            "onboarding_status": "in_progress",
+            "updated_at": now
+        }
+        await db["users"].update_one(
             {"_id": ObjectId(uid)},
-            {"$set": {
-                "online_presence": source,
-                "business_type": source,
-                "selected_platforms": norm_ids,
-                "onboarding_step": 2,
-                "onboarding_status": "in_progress",
-                "updated_at": now
-            }}
+            {"$set": user_updates_dict}
         )
+        if await db["pending_users"].find_one({"_id": ObjectId(uid)}):
+            await db["pending_users"].update_one(
+                {"_id": ObjectId(uid)},
+                {"$set": user_updates_dict}
+            )
 
         # 7. Update platform_onboarding_jobs session collection
         job_doc: Dict[str, Any] = {

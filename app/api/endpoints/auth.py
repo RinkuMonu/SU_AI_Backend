@@ -1846,8 +1846,12 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
     # 2. Update businesses
     biz_query = {
         "$or": [
+            {"owner_id": uid},
+            {"owner_id": user_oid},
             {"ownerId": uid},
             {"ownerId": user_oid},
+            {"user_id": uid},
+            {"user_id": user_oid},
             {"userId": uid},
             {"userId": user_oid},
         ]
@@ -1856,14 +1860,15 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
         biz_query,
         {
             "$set": {
+                "owner_id": uid,
+                "ownerId": uid,
+                "user_id": uid,
                 "linkedin_author_id": author_id,
                 "linkedin_access_token": access_token,
                 "linkedin_connected": connected,
                 "updated_at": now,
             },
             "$setOnInsert": {
-                "ownerId": uid,
-                "userId": uid,
                 "businessName": "My Business",
                 "business_name": "My Business",
                 "businessType": "Retail",

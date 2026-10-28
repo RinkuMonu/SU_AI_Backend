@@ -71,8 +71,15 @@ async def create_business(req: BusinessCreate, current_user: CurrentUser = Depen
 
 @router.get("/")
 async def get_businesses(current_user: CurrentUser = Depends(get_current_user)):
-    db = get_database()
-    docs = await db["businesses"].find({"ownerId": current_user["id"]}).to_list(length=100)
+    uid = str(current_user["id"])
+    docs = await db["businesses"].find({
+        "$or": [
+            {"owner_id": uid},
+            {"ownerId": uid},
+            {"user_id": uid},
+            {"userId": uid}
+        ]
+    }).to_list(length=100)
     for d in docs:
         d["id"] = str(d.pop("_id"))
     return {
@@ -197,25 +204,24 @@ async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_
     clean_req = {k: v for k, v in req.items() if v is not None}
     clean_req["updated_at"] = now
     
+    insert_defaults = {
+        "ownerId": owner_str,
+        "owner_id": owner_str,
+        "userId": owner_str,
+        "user_id": owner_str,
+        "businessName": clean_req.get("businessName") or clean_req.get("business_name") or "My Business",
+        "business_name": clean_req.get("business_name") or clean_req.get("businessName") or "My Business",
+        "businessType": "Retail",
+        "industry": "General",
+        "created_at": now,
+    }
+    only_insert = {k: v for k, v in insert_defaults.items() if k not in clean_req}
+    biz_op = {"$set": clean_req}
+    if only_insert:
+        biz_op["$setOnInsert"] = only_insert
+
     # Always allow upsert so that settings saved from social integration pages are NEVER lost
-    await db["businesses"].update_one(
-        query,
-        {
-            "$set": clean_req,
-            "$setOnInsert": {
-                "ownerId": owner_str,
-                "owner_id": owner_str,
-                "userId": owner_str,
-                "user_id": owner_str,
-                "businessName": clean_req.get("businessName") or clean_req.get("business_name") or "My Business",
-                "business_name": clean_req.get("business_name") or clean_req.get("businessName") or "My Business",
-                "businessType": "Retail",
-                "industry": "General",
-                "created_at": now,
-            }
-        },
-        upsert=True
-    )
+    await db["businesses"].update_one(query, biz_op, upsert=True)
     
     # Sync LinkedIn credentials to users and linkedin_connections if present
     li_author = clean_req.get("linkedin_author_id")

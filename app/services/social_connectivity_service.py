@@ -55,7 +55,14 @@ async def sync_business_social_status(db, user_id: str) -> Tuple[bool, List[str]
     is_completed = len(connected_platforms) > 0
 
     # Retrieve business
-    business = await db["businesses"].find_one({"owner_id": user_id})
+    business = await db["businesses"].find_one({
+        "$or": [
+            {"owner_id": str(user_id)},
+            {"ownerId": str(user_id)},
+            {"user_id": str(user_id)},
+            {"userId": str(user_id)}
+        ]
+    })
     completed_at = None
 
     if is_completed:
@@ -79,8 +86,11 @@ async def sync_business_social_status(db, user_id: str) -> Tuple[bool, List[str]
         )
     else:
         # Create lightweight business record if not already created
-        update_fields["owner_id"] = user_id
+        update_fields["owner_id"] = str(user_id)
+        update_fields["ownerId"] = str(user_id)
+        update_fields["user_id"] = str(user_id)
         update_fields["name"] = "My Business"
+        update_fields["business_name"] = "My Business"
         update_fields["category"] = "General"
         update_fields["location"] = "India"
         update_fields["created_at"] = now

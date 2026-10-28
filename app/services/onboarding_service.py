@@ -264,16 +264,23 @@ class OnboardingService:
         new_step = max(current_step, 2)
         user_updates["onboarding_step"] = new_step
 
-        target_coll = db["pending_users"] if is_pending else db["users"]
-        await target_coll.update_one(
-            {"_id": ObjectId(user_id)},
-            {"$set": user_updates}
-        )
+        # Always persist user updates to canonical users collection
+        if ObjectId.is_valid(user_id):
+            await db["users"].update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": user_updates}
+            )
+            if is_pending or await db["pending_users"].find_one({"_id": ObjectId(user_id)}):
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": user_updates}
+                )
 
         # Update or create business document
         business_updates: Dict[str, Any] = {
             "owner_id": str(user_id),
             "ownerId": str(user_id),
+            "user_id": str(user_id),
             "online_presence": presence,
             "business_type": user_updates["business_type"],
             "updated_at": now
@@ -290,6 +297,7 @@ class OnboardingService:
             business_updates["website"] = user_updates["website"]
         if payload_dict.get("business_name"):
             business_updates["business_name"] = str(payload_dict["business_name"]).strip()
+            business_updates["name"] = str(payload_dict["business_name"]).strip()
         if payload_dict.get("category"):
             business_updates["category"] = str(payload_dict["category"]).strip()
         if payload_dict.get("description"):
@@ -323,6 +331,18 @@ class OnboardingService:
         if payload_dict.get("has_storefront") is not None:
             business_updates["has_storefront"] = bool(payload_dict["has_storefront"])
 
+        bus_defaults = {
+            "name": business_updates.get("business_name") or "My Business",
+            "business_name": business_updates.get("business_name") or "My Business",
+            "category": "General",
+            "location": "India",
+            "created_at": now
+        }
+        only_bus_insert = {k: v for k, v in bus_defaults.items() if k not in business_updates}
+        bus_op = {"$set": business_updates}
+        if only_bus_insert:
+            bus_op["$setOnInsert"] = only_bus_insert
+
         await db["businesses"].update_one(
             {"$or": [
                 {"owner_id": str(user_id)},
@@ -330,7 +350,7 @@ class OnboardingService:
                 {"user_id": str(user_id)},
                 {"userId": str(user_id)}
             ]},
-            {"$set": business_updates},
+            bus_op,
             upsert=True
         )
 
@@ -338,7 +358,16 @@ class OnboardingService:
         try:
             await db["brand_kits"].update_one(
                 {"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]},
-                {"$set": {"business_type": user_updates["business_type"], "online_presence": presence, "updated_at": now}}
+                {
+                    "$set": {"business_type": user_updates["business_type"], "online_presence": presence, "updated_at": now},
+                    "$setOnInsert": {
+                        "owner_id": str(user_id),
+                        "user_id": str(user_id),
+                        "business_id": str(user_id),
+                        "created_at": now
+                    }
+                },
+                upsert=True
             )
         except Exception as e:
             logger.debug(f"Could not sync brand_kit online_presence: {e}")
@@ -424,9 +453,9 @@ class OnboardingService:
             except Exception:
                 pass
 
-        target_coll = db["pending_users"] if is_pending else db["users"]
-        try:
-            await target_coll.update_one(
+        # Always persist user updates to canonical users collection
+        if ObjectId.is_valid(user_id):
+            await db["users"].update_one(
                 {"_id": ObjectId(user_id)},
                 {"$set": {
                     "selected_services": norm_ids,
@@ -434,13 +463,21 @@ class OnboardingService:
                     "updated_at": now
                 }}
             )
-        except Exception as e:
-            logger.warning(f"Error updating user selected_services: {e}")
+            if is_pending or await db["pending_users"].find_one({"_id": ObjectId(user_id)}):
+                await db["pending_users"].update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": {
+                        "selected_services": norm_ids,
+                        "selectedServices": norm_ids,
+                        "updated_at": now
+                    }}
+                )
 
         # Update or upsert business document
         business_updates = {
             "owner_id": str(user_id),
             "ownerId": str(user_id),
+            "user_id": str(user_id),
             "selected_services": norm_ids,
             "selectedServices": norm_ids,
             "service_details": [item.model_dump() for item in service_items],
@@ -453,7 +490,16 @@ class OnboardingService:
                 {"user_id": str(user_id)},
                 {"userId": str(user_id)}
             ]},
-            {"$set": business_updates},
+            {
+                "$set": business_updates,
+                "$setOnInsert": {
+                    "name": "My Business",
+                    "business_name": "My Business",
+                    "category": "General",
+                    "location": "India",
+                    "created_at": now
+                }
+            },
             upsert=True
         )
 
