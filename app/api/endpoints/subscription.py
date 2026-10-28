@@ -99,17 +99,38 @@ async def get_my_subscription(
     plan_id = sub.get("plan_id", "FREE")
     sub["plan_details"] = PLANS.get(plan_id) or (PLANS.get("GROWTH") if plan_id == "PRO" else PLANS.get("FREE"))
     
-    # Check business plan onboarding completion
-    business = await db["businesses"].find_one({"owner_id": user_id})
-    sub["plan_activation_completed"] = bool(business and business.get("plan_activation_completed", False))
-    
+    # Check business plan onboarding completion and eligibility
+    plan_status = await PlanOnboardingService.get_plan_onboarding_status(db, current_user)
+    business = await db["businesses"].find_one({
+        "$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}, {"user_id": str(user_id)}]
+    })
+    sub["plan_activation_completed"] = plan_status.plan_activation_completed
+    sub["is_eligible"] = plan_status.is_eligible
+    sub["should_show_modal"] = plan_status.should_show_modal
+    sub["requires_plan_selection"] = plan_status.requires_plan_selection
+    sub["is_plan_required"] = plan_status.is_plan_required
+    sub["is_paid_plan"] = plan_status.is_paid_plan
+    sub["current_plan"] = plan_id
+    sub["subscription_status"] = sub.get("status", "inactive")
+
     # Exclude _id to avoid serialization issues
     if "_id" in sub:
         sub["id"] = str(sub.pop("_id"))
     if "_id" in sub["usage"]:
         del sub["usage"]["_id"]
-        
-    return {"success": True, "data": sub}
+
+    return {
+        "success": True,
+        "data": sub,
+        "requires_plan_selection": plan_status.requires_plan_selection,
+        "is_plan_required": plan_status.is_plan_required,
+        "is_eligible": plan_status.is_eligible,
+        "should_show_modal": plan_status.should_show_modal,
+        "is_paid_plan": plan_status.is_paid_plan,
+        "current_plan": plan_id,
+        "subscription_status": sub.get("status", "inactive"),
+    }
+
 
 @router.post("/checkout")
 async def checkout(

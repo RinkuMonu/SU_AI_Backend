@@ -138,7 +138,8 @@ async def facebook_connect(
         "created_at": datetime.now(timezone.utc),
     })
 
-    custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
+    custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if isinstance(scopes, str) and scopes else None
+    effective_rerequest = rerequest if isinstance(rerequest, bool) else True
     
     # If this is user authentication (login or signup), request ONLY public_profile and email
     is_user_auth = bool(
@@ -155,20 +156,22 @@ async def facebook_connect(
     else:
         effective_scopes = FACEBOOK_LOGIN_PERMISSIONS
 
-    if FacebookService.is_demo_mode():
-        logger.info(f"[DEMO MODE] Facebook connect for user {user_id}")
-        callback_uri = f"{settings.BACKEND_URL}/api/facebook/callback?code=demo_fb_code&state={state}"
+    if not FacebookService.is_configured():
+        logger.info(f"Facebook connect requested for user {user_id}, but Facebook credentials are not configured.")
         return FacebookConnectResponse(
-            authorization_url=callback_uri,
+            authorization_url=None,
             scopes=effective_scopes,
+            configured=False,
+            message="Facebook integration is not configured. Missing FACEBOOK_APP_ID or FACEBOOK_APP_SECRET.",
         )
 
     auth_url = FacebookService.get_authorization_url(state=state, custom_scopes=effective_scopes)
-    if rerequest and "auth_type=rerequest" not in auth_url:
+    if effective_rerequest and "auth_type=rerequest" not in auth_url:
         auth_url += "&auth_type=rerequest"
     return FacebookConnectResponse(
         authorization_url=auth_url,
         scopes=effective_scopes,
+        configured=True,
     )
 
 @router.get("/callback")
@@ -200,72 +203,13 @@ async def facebook_callback(
     if not code:
         return RedirectResponse(build_facebook_redirect(frontend_url, f"error=missing_code"))
 
-    # Demo mode handling
-    if FacebookService.is_demo_mode():
-        demo_user_id = (oauth_state and oauth_state.get("user_id")) or "60a7b45c342d3c148c2e6d5a"
-
-        demo_token = "DEMO_FB_ACCESS_TOKEN"
-        demo_pages = {
-            "pages": [
-                {
-                    "page_id": "100000000000001",
-                    "page_name": "Demo Business Page",
-                    "page_access_token": "DEMO_PAGE_TOKEN",
-                    "category": "Retail",
-                    "instagram_business_account": {
-                        "id": "17841400000000001",
-                        "username": "demo_business_ig",
-                        "name": "Demo Instagram Professional",
-                        "account_type": "BUSINESS",
-                        "profile_picture_url": "",
-                        "followers_count": 1250,
-                        "media_count": 48,
-                    },
-                }
-            ],
-            "instagram_account": {
-                "id": "17841400000000001",
-                "username": "demo_business_ig",
-                "name": "Demo Instagram Professional",
-                "account_type": "BUSINESS",
-                "profile_picture_url": "",
-                "followers_count": 1250,
-                "media_count": 48,
-                "linked_page_id": "100000000000001",
-                "linked_page_name": "Demo Business Page",
-                "page_access_token": "DEMO_PAGE_TOKEN",
-            },
-        }
-
-        await FacebookService.save_connection(
-            db=db,
-            user_id=demo_user_id,
-            token_data={"access_token": demo_token, "expires_in": 5184000},
-            pages_data=demo_pages,
-        )
-        now_demo = datetime.now(timezone.utc)
-        demo_conn = {
-            "user_id": demo_user_id,
-            "platform": "facebook",
-            "fb_page_id": "100000000000001",
-            "account_id": "100000000000001",
-            "fb_page_name": "Demo Business Page",
-            "account_name": "Demo Business Page",
-            "account_type": "PAGE",
-            "encrypted_access_token": encrypt_token(demo_token),
-            "connected": True,
-            "created_at": now_demo,
-            "updated_at": now_demo,
-        }
-        await db["facebook_connections"].update_one(
-            {"user_id": demo_user_id, "platform": "facebook"},
-            {"$set": demo_conn},
-            upsert=True
-        )
-        await sync_business_social_status(db, demo_user_id)
-
+    if not FacebookService.is_configured():
+        logger.warning("Facebook OAuth callback attempted while Facebook app credentials are not configured.")
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, "facebook_connected=true&fb_page_id=100000000000001")
+            build_facebook_redirect(
+                frontend_url,
+                "error=unconfigured&error_description=Facebook+integration+is+not+configured"
+            )
         )
 
     # Validate state parameter
@@ -450,22 +394,32 @@ async def facebook_status(
 ):
     """
     Check Facebook & linked Instagram Professional Account connection status.
+    Never exposes raw tokens, secrets, or encrypted blobs to the frontend.
     """
     user_id = str(current_user.get("id") or current_user.get("_id"))
+    is_conf = FacebookService.is_configured()
     conn = await FacebookService.get_connection(db, user_id)
 
-    if conn:
+    if conn and conn.get("connected"):
+        safe_pages = []
+        for p in conn.get("pages", []):
+            safe_p = dict(p)
+            safe_p.pop("page_access_token", None)
+            safe_p.pop("access_token", None)
+            safe_pages.append(safe_p)
+
         return FacebookStatusResponse(
             connected=True,
+            configured=is_conf,
             fb_page_id=conn.get("fb_page_id"),
             fb_page_name=conn.get("fb_page_name"),
-            page_access_token=conn.get("page_access_token"),
-            user_access_token=conn.get("user_access_token"),
-            pages=conn.get("pages", []),
+            page_access_token=None,
+            user_access_token=None,
+            pages=safe_pages,
             instagram_business_account=conn.get("instagram_business_account"),
         )
 
-    return FacebookStatusResponse(connected=False)
+    return FacebookStatusResponse(connected=False, configured=is_conf)
 
 @router.post("/disconnect", response_model=FacebookDisconnectResponse)
 async def facebook_disconnect(

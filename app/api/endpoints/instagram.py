@@ -117,7 +117,7 @@ async def instagram_connect(
         "created_at": datetime.now(timezone.utc),
     })
 
-    custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
+    custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if isinstance(scopes, str) and scopes else None
     effective_scopes = InstagramService.normalize_scopes(custom_scopes)
 
     if InstagramService.is_demo_mode():

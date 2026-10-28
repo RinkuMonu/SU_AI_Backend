@@ -20,16 +20,29 @@ DEMO_LI_DISPLAY_NAME = "Demo Business LinkedIn"
 
 class LinkedInService:
     @staticmethod
+    def is_configured() -> bool:
+        """Check if LinkedIn OAuth credentials are fully configured."""
+        client_id = getattr(settings, "LINKEDIN_CLIENT_ID", None) or getattr(settings, "Linkedin_client_id", None)
+        client_secret = getattr(settings, "LINKEDIN_CLIENT_SECRET", None) or getattr(settings, "Linkedin_client_secret", None)
+        return bool(client_id and client_secret)
+
+    @staticmethod
     def is_demo_mode() -> bool:
         """Check if LinkedIn API credentials are not configured."""
-        return not settings.LINKEDIN_CLIENT_ID or not settings.LINKEDIN_CLIENT_SECRET
+        return not LinkedInService.is_configured()
 
     @staticmethod
     def get_authorization_url(state: str) -> str:
         """Generate official LinkedIn OAuth 2.0 authorization URL."""
-        client_id = settings.LINKEDIN_CLIENT_ID
-        redirect_uri = settings.LINKEDIN_REDIRECT_URI
-        scope = "openid profile email w_member_social"
+        client_id = getattr(settings, "LINKEDIN_CLIENT_ID", None) or getattr(settings, "Linkedin_client_id", None)
+        redirect_uri = getattr(settings, "LINKEDIN_REDIRECT_URI", "https://dhandagrow.com/login/user")
+        scope = getattr(settings, "LINKEDIN_SCOPES", "openid profile email w_member_social")
+
+        if not client_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LinkedIn integration is not configured. Missing LINKEDIN_CLIENT_ID."
+            )
 
         return (
             f"{LINKEDIN_AUTH_BASE}/authorization"
@@ -39,6 +52,7 @@ class LinkedInService:
             f"&state={state}"
             f"&scope={scope}"
         )
+
 
     @staticmethod
     async def exchange_code_for_token(code: str) -> Dict[str, Any]:

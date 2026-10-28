@@ -425,7 +425,7 @@ async def save_brand_kit_submission(
         if biz and biz.get("name") and biz.get("name") not in ["My Business", "Draft Business"]:
             merged["business_name"] = str(biz["name"]).strip()
             merged["brand_name"] = str(biz["name"]).strip()
-        elif is_draft or not is_complete_action:
+        elif is_draft:
             default_name = (biz.get("name") if biz and biz.get("name") else None) or "My Business"
             merged["business_name"] = default_name
             merged["brand_name"] = default_name
@@ -433,7 +433,7 @@ async def save_brand_kit_submission(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail={
-                    "message": "Business name is required to complete Brand Kit.",
+                    "message": "Business name is required to save Brand Kit.",
                     "errors": {"business_name": "Business name is required."},
                     "missing_fields": {"business_name": "Business name is required."}
                 }
@@ -535,21 +535,237 @@ async def save_brand_kit_submission(
     return serialize_brand(updated)
 
 
+async def get_brand_kit_autofill_data(db, owner_id: str) -> dict:
+    """
+    Assembles available business details from Google Maps onboarding, Website analysis,
+    and business records in the Brand Kit-compatible schema.
+    Missing fields remain null/None so the frontend can clearly distinguish available data.
+    """
+    business = await db["businesses"].find_one({
+        "$or": [{"owner_id": str(owner_id)}, {"ownerId": str(owner_id)}, {"user_id": str(owner_id)}]
+    }) or {}
+    maps_job = await db["google_maps_onboarding_jobs"].find_one({"user_id": str(owner_id)}) or {}
+    web_job = await db["website_analysis_jobs"].find_one({"user_id": str(owner_id)}) or {}
+
+    selected_biz = maps_job.get("selected_business") or {}
+    maps_profile = maps_job.get("profile") or {}
+    web_res = web_job.get("results") or {}
+    web_biz = web_res.get("business_details") or {}
+    web_prefs = web_res.get("brand_preferences") or {}
+
+    # 1. Business Name
+    b_name = (
+        business.get("name") or business.get("business_name") or
+        selected_biz.get("business_name") or
+        web_biz.get("business_name") or web_res.get("website_title") or None
+    )
+
+    # 2. Category
+    b_cat = (
+        business.get("category") or business.get("business_category") or
+        (selected_biz.get("types", [None])[0] if selected_biz.get("types") else None) or
+        web_biz.get("category") or None
+    )
+
+    # 3. Description
+    b_desc = (
+        business.get("description") or business.get("business_description") or
+        maps_profile.get("tagline") or
+        web_res.get("meta_description") or None
+    )
+
+    # 4. Website URL
+    b_web = (
+        business.get("website") or business.get("website_url") or
+        selected_biz.get("website") or
+        web_job.get("url") or None
+    )
+
+    # 5. Phone & Contact
+    phone = (
+        business.get("phone") or business.get("phone_number") or
+        selected_biz.get("phone_number") or None
+    )
+    email = business.get("email") or None
+    contact = {"phone": phone, "email": email} if (phone or email) else None
+
+    # 6. Address & Location
+    addr = (
+        business.get("location") or
+        selected_biz.get("formatted_address") or None
+    )
+    city = (
+        business.get("city") or
+        selected_biz.get("city") or
+        web_biz.get("city") or None
+    )
+    state = (
+        business.get("state") or
+        selected_biz.get("state") or None
+    )
+    location = {"city": city, "state": state, "address": addr} if (city or state or addr) else None
+
+    # 7. Tagline
+    tagline = (
+        business.get("tagline") or
+        maps_profile.get("tagline") or
+        web_biz.get("tagline") or
+        web_prefs.get("tagline") or None
+    )
+
+    # 8. Genuine Logo URL (Only genuine logos; do NOT treat generic business photos as an official logo)
+    logo_url = (
+        business.get("logo_url") or
+        maps_profile.get("logo_url") or
+        web_biz.get("logo_url") or
+        web_res.get("logo_url") or None
+    )
+
+    # 9. Brand Colors
+    brand_colors = (
+        business.get("brand_colors") or
+        web_prefs.get("brand_colors") or []
+    )
+    primary_color = brand_colors[0] if len(brand_colors) > 0 else None
+    secondary_color = brand_colors[1] if len(brand_colors) > 1 else None
+    accent_color = brand_colors[2] if len(brand_colors) > 2 else None
+
+    # 10. Tones & Voice
+    tones = (
+        business.get("tones") or
+        web_prefs.get("tones") or []
+    )
+    brand_voice = ", ".join(tones) if tones else None
+
+    # 11. Target Audience & Differentiators
+    target_audience = (
+        business.get("target_customer") or
+        maps_profile.get("target_audience") or
+        web_biz.get("target_audience") or None
+    )
+    differentiators = (
+        business.get("differentiators") or
+        maps_profile.get("differentiators") or
+        web_biz.get("differentiators") or []
+    )
+    products_services = (
+        business.get("products_services") or
+        maps_profile.get("products_services") or
+        web_biz.get("products_services") or []
+    )
+
+    online_presence = (
+        business.get("online_presence") or
+        ("google_maps" if maps_job else ("website" if web_job else None))
+    )
+
+    return {
+        "business_name": b_name,
+        "brand_name": b_name,
+        "business_category": b_cat,
+        "business_description": b_desc,
+        "brand_description": b_desc,
+        "website": b_web,
+        "contact": contact,
+        "phone": phone,
+        "phone_number": phone,
+        "photos": business.get("photos", []) or selected_biz.get("photos", []),
+        "location": location,
+        "city": city,
+        "address": addr,
+        "tagline": tagline,
+        "logo_url": logo_url,
+        "primary_color": primary_color,
+        "secondary_color": secondary_color,
+        "accent_color": accent_color,
+        "brand_colors": brand_colors,
+        "palette": brand_colors,
+        "tones": tones,
+        "brand_voice": brand_voice,
+        "target_audience": target_audience,
+        "differentiators": differentiators,
+        "products_services": products_services,
+        "online_presence": online_presence,
+        "source": "google_maps" if maps_job else ("website" if web_job else "business_profile"),
+    }
+
+
 async def get_brand_kit_by_owner(db, owner_id: str) -> dict | None:
     """
     Retrieves Brand Kit for the authenticated owner.
+    - If saved Brand Kit exists: merges auto-fill fallback values for missing/null fields
+      while strictly preserving all user-saved/edited values.
+    - If no Brand Kit document exists yet: checks Google Maps onboarding and website analysis
+      to return available auto-filled business information so the form is never blank.
     """
     collection = db["brand_kits"]
-    brand = await collection.find_one({"owner_id": owner_id})
+    brand = await collection.find_one({"$or": [{"owner_id": str(owner_id)}, {"user_id": str(owner_id)}]})
     if not brand:
-        # Check by business ownership
-        business = await db["businesses"].find_one({"owner_id": owner_id})
+        business = await db["businesses"].find_one({"$or": [{"owner_id": str(owner_id)}, {"ownerId": str(owner_id)}, {"user_id": str(owner_id)}]})
         if business:
             brand = await collection.find_one({"business_id": business["_id"]})
 
-    if not brand:
-        return None
-    return serialize_brand(brand)
+    # Fetch available business data from Google Maps / Website / Businesses
+    autofill = await get_brand_kit_autofill_data(db, owner_id)
+
+    if brand:
+        # Merge autofill data into brand document ONLY for fields that are missing or empty in brand
+        # User-edited values are strictly preserved
+        updated_in_memory = dict(brand)
+        for key, val in autofill.items():
+            if val is not None and not is_field_meaningful(key, updated_in_memory):
+                updated_in_memory[key] = val
+
+        return serialize_brand(updated_in_memory)
+
+    # If no Brand Kit exists yet, but business data was retrieved via Google Maps or Website analysis
+    has_meaningful_autofill = bool(
+        autofill.get("business_name") or
+        autofill.get("website") or
+        autofill.get("business_category") or
+        autofill.get("location") or
+        autofill.get("contact")
+    )
+    if has_meaningful_autofill:
+        new_brand_doc = {
+            "owner_id": str(owner_id),
+            "business_name": autofill.get("business_name"),
+            "brand_name": autofill.get("brand_name"),
+            "business_category": autofill.get("business_category"),
+            "business_description": autofill.get("business_description"),
+            "brand_description": autofill.get("brand_description"),
+            "website": autofill.get("website"),
+            "contact": autofill.get("contact"),
+            "location": autofill.get("location"),
+            "city": autofill.get("city"),
+            "tagline": autofill.get("tagline"),
+            "logo_url": autofill.get("logo_url"),
+            "primary_color": autofill.get("primary_color"),
+            "secondary_color": autofill.get("secondary_color"),
+            "accent_color": autofill.get("accent_color"),
+            "brand_colors": autofill.get("brand_colors") or [],
+            "palette": autofill.get("palette") or [],
+            "tones": autofill.get("tones") or [],
+            "brand_voice": autofill.get("brand_voice"),
+            "target_audience": autofill.get("target_audience"),
+            "differentiators": autofill.get("differentiators") or [],
+            "products_services": autofill.get("products_services") or [],
+            "online_presence": autofill.get("online_presence"),
+            "brand_kit_status": "not_started",
+            "brand_kit_completed": False,
+            "completion_percentage": 0,
+            "completed_sections": [],
+            "pending_sections": list(BRAND_KIT_SECTIONS.keys()),
+            "partial_saved": False,
+            "brand_kit_dismissed": False,
+            "is_draft": False,
+            "created_at": None,
+            "updated_at": None,
+        }
+        return serialize_brand(new_brand_doc)
+
+    return None
+
 
 
 def verify_logo_asset(logo_url: Optional[str]) -> Optional[str]:

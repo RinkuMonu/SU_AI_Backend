@@ -49,7 +49,13 @@ class PlanOnboardingStatusResponse(BaseModel):
     plan_activation_completed_at: Optional[datetime] = None
     is_eligible: bool
     should_show_modal: bool
+    requires_plan_selection: bool = False
+    is_plan_required: bool = False
+    subscription_status: Optional[str] = "inactive"
+    current_plan: Optional[str] = None
+    is_paid_plan: bool = False
     active_plan: Optional[ActivePlanSummary] = None
     available_plans: List[PlanCard] = []
     billing_cycles: List[str] = ["monthly", "quarterly", "yearly"]
     currency: str = "INR"
+

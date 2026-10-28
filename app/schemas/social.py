@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 class PlatformConnectionInfo(BaseModel):
     platform: str
     connected: bool = False
+    configured: bool = True
     account_id: Optional[str] = None
     account_name: Optional[str] = None
     account_type: Optional[str] = None
@@ -28,6 +29,9 @@ class SocialOnboardingStatusResponse(BaseModel):
 class SocialConnectResponse(BaseModel):
     platform: str
     authorization_url: str
+    configured: bool = True
+    message: Optional[str] = None
+
 
 
 class SocialDisconnectResponse(BaseModel):

@@ -5,18 +5,22 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 
 class FacebookConnectResponse(BaseModel):
-    authorization_url: str
-    scopes: List[str]
+    authorization_url: Optional[str] = None
+    scopes: List[str] = []
+    configured: bool = True
+    message: Optional[str] = None
 
 class FacebookStatusResponse(BaseModel):
     connected: bool
     platform: str = "facebook"
+    configured: bool = True
     fb_page_id: Optional[str] = None
     fb_page_name: Optional[str] = None
     page_access_token: Optional[str] = None
     user_access_token: Optional[str] = None
     pages: List[Dict[str, Any]] = []
     instagram_business_account: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
 
 class FacebookDisconnectResponse(BaseModel):
     success: bool

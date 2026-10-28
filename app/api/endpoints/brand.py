@@ -8,20 +8,24 @@ from app.schemas.brand import (
     BrandKitActionResponse,
     AILogoGenerateRequest,
 )
+from app.schemas.ai import WebsiteAnalysisRequest
 
 from app.services.brand_service import (
     create_brand_kit,
     get_brand_kit,
     get_brand_kit_by_owner,
+    get_brand_kit_autofill_data,
     update_brand_kit,
     save_brand_kit_submission,
     get_onboarding_status,
     generate_and_save_ai_logo,
 )
+from app.services.website_analysis_service import WebsiteAnalysisService
 
 from app.core.security import get_current_user, require_businessman, CurrentUser
 from app.core.database import get_database
 from app.utils.upload import save_image, ALLOWED_EXTENSIONS, MAX_FILE_SIZE
+
 
 
 router = APIRouter(
@@ -238,5 +242,80 @@ async def dismiss_brand_kit_modal(
         "message": "Brand Kit modal dismissed",
         "should_show_modal": False
     }
+
+
+@router.get("/autofill", operation_id="brand_get_autofill")
+async def get_brand_autofill(
+    current_user: CurrentUser = Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Retrieves available business data from Google Maps onboarding, Website analysis,
+    and business records to autofill the Brand Kit.
+    Missing fields are returned as null so the frontend can distinguish available data.
+    """
+    owner_id = str(current_user["id"])
+    autofill_data = await get_brand_kit_autofill_data(db, owner_id)
+    return {
+        "success": True,
+        "message": "Brand Kit autofill data fetched successfully",
+        "data": autofill_data
+    }
+
+
+@router.post("/autofill", operation_id="brand_apply_autofill")
+async def apply_brand_autofill(
+    current_user: CurrentUser = Depends(require_businessman),
+    db=Depends(get_database)
+):
+    """
+    Applies available autofill data into the user's persistent Brand Kit draft.
+    Preserves any existing user-edited values.
+    """
+    owner_id = str(current_user["id"])
+    autofill_data = await get_brand_kit_autofill_data(db, owner_id)
+    brand = await save_brand_kit_submission(db, owner_id, autofill_data, is_draft=True, is_complete_action=False)
+    return {
+        "success": True,
+        "message": "Brand Kit autofill data applied successfully",
+        "data": brand,
+        "brand_kit": brand
+    }
+
+
+@router.post("/analyze-website", operation_id="brand_analyze_website")
+@router.post("/website-analysis", operation_id="brand_website_analysis")
+async def analyze_website_for_brand_kit(
+    request: WebsiteAnalysisRequest,
+    current_user: CurrentUser = Depends(require_businessman),
+    db=Depends(get_database)
+):
+    """
+    Crawls and analyzes a user-provided website URL directly from the Brand Kit flow.
+    Extracts business details, metadata, authentic logo, and CSS colors,
+    persisting results to Brand Kit and returning compatible schema for immediate form auto-fill.
+    """
+    owner_id = str(current_user["id"])
+    target_url = request.get_url()
+    if not target_url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Website URL is required."
+        )
+
+    result = await WebsiteAnalysisService.analyze_website_direct(
+        db=db,
+        url=target_url,
+        user_id=owner_id,
+        primary_goal=request.primary_goal,
+        target_audience=request.target_audience
+    )
+
+    return {
+        "success": True,
+        "message": "Website analysis completed successfully for Brand Kit",
+        "data": result
+    }
+
 
 

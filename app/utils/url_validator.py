@@ -186,3 +186,33 @@ def _is_ip_blocked(ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address) -> boo
         if ip_obj in net:
             return True
     return False
+
+
+def is_safe_redirect_target(target_url: str, allow_private_for_tests: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Validates that a redirect location URL is well-formed and targets a safe, public destination.
+    Returns: (is_safe, normalized_url, error_message)
+    """
+    try:
+        norm_url = normalize_website_url(target_url)
+    except Exception as e:
+        return False, None, f"Malformed redirect URL: {str(e)}"
+
+    is_safe, err = validate_url_safety(norm_url, allow_private_for_tests=allow_private_for_tests)
+    if not is_safe:
+        return False, None, err
+    return True, norm_url, None
+
+
+def is_safe_url(url: str, allow_private_for_tests: bool = False) -> bool:
+    """Convenience boolean helper for URL safety validation."""
+    try:
+        norm = normalize_website_url(url)
+    except Exception:
+        return False
+    is_safe, _ = validate_url_safety(norm, allow_private_for_tests=allow_private_for_tests)
+    return is_safe
+
+
+normalize_url = normalize_website_url
+

@@ -286,6 +286,11 @@ class InstagramService:
     """
 
     @staticmethod
+    def is_configured() -> bool:
+        """Check if Instagram credentials are fully configured."""
+        return not InstagramService.is_demo_mode()
+
+    @staticmethod
     def is_demo_mode() -> bool:
         """Check if Instagram credentials are not configured (demo/dev mode)."""
         app_id = settings.INSTAGRAM_APP_ID or getattr(settings, "INSTAGRAM_APPID", None) or getattr(settings, "FACEBOOK_APP_ID", None)
@@ -944,17 +949,6 @@ class InstagramService:
                     "account_type": "BUSINESS",
                     "connected": True,
                 }
-
-        # Smart fallback: Find any valid real Instagram connection in the database
-        active_conn = await db["instagram_connections"].find_one({
-            "platform": "instagram",
-            "connected": True,
-            "instagram_user_id": {"$nin": [None, "", "17841400000000001"]},
-            "encrypted_access_token": {"$nin": [None, "", "DEMO_PAGE_TOKEN", "DEMO_IG_ACCESS_TOKEN", "DEMO_MODE"]}
-        })
-        if active_conn:
-            logger.info(f"Using active verified Instagram connection ({active_conn.get('instagram_username')}) for user {user_id}")
-            return active_conn
 
         if conn:
             return conn

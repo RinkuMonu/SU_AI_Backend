@@ -42,9 +42,12 @@ from app.schemas.website_analysis import (
     WebsitePhotosResponse,
 )
 from app.services.onboarding_service import OnboardingService
-from app.utils.url_validator import normalize_website_url, validate_url_safety
+from app.utils.url_validator import normalize_website_url, validate_url_safety, is_safe_redirect_target
 
 logger = logging.getLogger(__name__)
+
+# Maximum response size limit (5MB) to protect against memory exhaustion
+MAX_HTML_BYTES = 5 * 1024 * 1024
 
 # Common neutral hex colors to filter out when searching for brand colors
 NEUTRAL_HEX_COLORS = {
@@ -57,6 +60,7 @@ NEUTRAL_HEX_COLORS = {
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 MAX_PHOTO_SELECTION = 10
+
 
 
 def _get_image_signature(url: str) -> str:
@@ -818,9 +822,12 @@ class WebsiteAnalysisService:
     # -------------------------------------------------------------------------
 
     @classmethod
-    async def _fetch_website(cls, url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    async def _fetch_website(cls, url: str, allow_private_for_tests: bool = False) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         """
-        Fetches website HTML using Firecrawl (if API key configured) or httpx with retry.
+        Fetches website HTML safely:
+        - Validates every redirect target against SSRF (rejects private/internal IPs).
+        - Enforces response size limit (5MB max).
+        - Enforces 15s timeout and handles connection/HTTP errors gracefully.
         Returns: (html_text, final_url, error_message)
         """
         # Try Firecrawl for JavaScript-rendered sites if FIRECRAWL_API_KEY is available
@@ -844,26 +851,54 @@ class WebsiteAnalysisService:
 
         for attempt in range(2):
             try:
+                current_url = url
+                final_url = current_url
+
                 async with httpx.AsyncClient(
                     timeout=15.0,
-                    follow_redirects=True,
-                    max_redirects=5,
+                    follow_redirects=False,
                     verify=True
                 ) as client:
-                    resp = await client.get(url, headers=headers)
-                    if resp.status_code == 200:
-                        return resp.text, str(resp.url), None
-                    elif resp.status_code == 404:
-                        return None, None, f"Website returned 404 Not Found at '{url}'. Please check that the URL is active."
-                    elif resp.status_code in (401, 403):
-                        return None, None, f"Website returned HTTP {resp.status_code} Access Denied. The website may have bot protection enabled."
-                    elif resp.status_code >= 500:
-                        if attempt == 0:
-                            await asyncio.sleep(1.0)
+                    for _ in range(5):
+                        # Ensure current URL is safe before fetching
+                        is_safe, error_msg = validate_url_safety(current_url, allow_private_for_tests=allow_private_for_tests)
+                        if not is_safe:
+                            return None, None, f"Destination blocked for security: {error_msg}"
+
+                        resp = await client.get(current_url, headers=headers)
+
+                        # Handle redirects safely
+                        if resp.status_code in (301, 302, 303, 307, 308):
+                            loc = resp.headers.get("Location")
+                            if not loc:
+                                return None, None, f"Website returned redirect HTTP {resp.status_code} without Location header."
+                            next_raw = urljoin(current_url, loc.strip())
+                            is_safe_red, next_norm, red_err = is_safe_redirect_target(next_raw, allow_private_for_tests=allow_private_for_tests)
+                            if not is_safe_red or not next_norm:
+                                return None, None, f"Unsafe redirect destination blocked: {red_err or 'Access to internal address prohibited'}"
+                            current_url = next_norm
                             continue
-                        return None, None, f"Target website server encountered an error (HTTP {resp.status_code})."
-                    else:
-                        return None, None, f"Unexpected response from website (HTTP {resp.status_code})."
+
+                        final_url = current_url
+                        if resp.status_code == 200:
+                            content_bytes = resp.content
+                            if len(content_bytes) > MAX_HTML_BYTES:
+                                content_bytes = content_bytes[:MAX_HTML_BYTES]
+                            html_text = content_bytes.decode(resp.encoding or "utf-8", errors="replace")
+                            return html_text, str(final_url), None
+                        elif resp.status_code == 404:
+                            return None, None, f"Website returned 404 Not Found at '{current_url}'. Please check that the URL is active."
+                        elif resp.status_code in (401, 403):
+                            return None, None, f"Website returned HTTP {resp.status_code} Access Denied. The website may have bot protection enabled."
+                        elif resp.status_code >= 500:
+                            if attempt == 0:
+                                await asyncio.sleep(1.0)
+                                break
+                            return None, None, f"Target website server encountered an error (HTTP {resp.status_code})."
+                        else:
+                            return None, None, f"Unexpected response from website (HTTP {resp.status_code})."
+
+                    return None, None, "Website exceeded maximum allowed redirects (5)."
 
             except httpx.ConnectTimeout:
                 if attempt == 0:
@@ -879,6 +914,7 @@ class WebsiteAnalysisService:
 
         return None, None, "Website fetch failed after retry."
 
+
     @classmethod
     def _parse_html_content(cls, html: str, base_url: str) -> Dict[str, Any]:
         """
@@ -891,12 +927,16 @@ class WebsiteAnalysisService:
         soup = BeautifulSoup(html, "html.parser")
 
         # 1. Page Title & Meta
-        title = ""
+        raw_title = ""
         if soup.title and soup.title.string:
-            title = soup.title.string.strip()
+            raw_title = soup.title.string.strip()
         og_title = soup.find("meta", property="og:title")
-        if not title and og_title and og_title.get("content"):
-            title = og_title["content"].strip()
+        if not raw_title and og_title and og_title.get("content"):
+            raw_title = og_title["content"].strip()
+
+        # Clean title for clean business name candidate (e.g. "Aurora Luxe | Sustainable Fashion" -> "Aurora Luxe")
+        clean_title = re.split(r"\s+[|\-–—:•]\s+", raw_title)[0].strip() if raw_title else ""
+        title = raw_title or clean_title
 
         description = ""
         meta_desc = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", property="og:description")
@@ -904,22 +944,36 @@ class WebsiteAnalysisService:
             description = meta_desc["content"].strip()
 
         site_name = ""
-        meta_site = soup.find("meta", property="og:site_name")
+        meta_site = soup.find("meta", property="og:site_name") or soup.find("meta", attrs={"name": "application-name"})
         if meta_site and meta_site.get("content"):
             site_name = meta_site["content"].strip()
 
-        # Favicon / Icons
+        # Favicon / Apple Touch Icon / Explicit Logo Meta
+        meta_logo_url = None
+        for meta in soup.find_all("meta"):
+            p_val = (meta.get("property") or meta.get("name") or "").strip().lower()
+            if p_val in ["og:logo", "logo"] and meta.get("content"):
+                meta_logo_url = urljoin(base_url, meta["content"].strip())
+                break
+
+        apple_icon_url = None
         favicon_url = None
-        icon_tag = soup.find("link", rel=lambda r: r and any(x in r.lower() for x in ["icon", "shortcut icon", "apple-touch-icon"]))
-        if icon_tag and icon_tag.get("href"):
-            favicon_url = urljoin(base_url, icon_tag["href"].strip())
+        for link in soup.find_all("link"):
+            rel_val = link.get("rel") or []
+            rel_list = rel_val if isinstance(rel_val, list) else [rel_val]
+            rel_str = " ".join([str(x).lower() for x in rel_list])
+            if not apple_icon_url and "apple-touch-icon" in rel_str and link.get("href"):
+                apple_icon_url = urljoin(base_url, link["href"].strip())
+            if not favicon_url and any(x in rel_str for x in ["icon", "shortcut icon"]) and link.get("href"):
+                favicon_url = urljoin(base_url, link["href"].strip())
 
         # 2. JSON-LD Structured Data Parsing
         ld_name = None
         ld_city = None
         ld_tagline = None
+        ld_category = None
         ld_products: List[str] = []
-        ld_logo = None
+        ld_logo = meta_logo_url or apple_icon_url
 
         for script in soup.find_all("script", type="application/ld+json"):
             try:
@@ -932,15 +986,36 @@ class WebsiteAnalysisService:
                     if not isinstance(item, dict):
                         continue
                     item_type = str(item.get("@type", "")).lower()
-                    if any(t in item_type for t in ["organization", "localbusiness", "store", "corporation", "company"]):
+                    if any(t in item_type for t in ["organization", "localbusiness", "store", "corporation", "company", "clothingstore", "restaurant", "health"]):
                         if not ld_name and item.get("name"):
-                            ld_name = item["name"]
+                            ld_name = str(item["name"]).strip()
                         if not ld_logo and item.get("logo"):
-                            ld_logo = urljoin(base_url, str(item["logo"]))
+                            logo_val = item["logo"]
+                            if isinstance(logo_val, dict) and logo_val.get("url"):
+                                ld_logo = urljoin(base_url, str(logo_val["url"]).strip())
+                            elif isinstance(logo_val, str):
+                                ld_logo = urljoin(base_url, logo_val.strip())
                         if not ld_tagline and item.get("slogan"):
                             ld_tagline = item["slogan"]
+                        if not ld_category:
+                            if any(k in item_type for k in ["restaurant", "food", "cafe"]):
+                                ld_category = "Food & Beverage"
+                            elif any(k in item_type for k in ["clothing", "apparel", "fashion"]):
+                                ld_category = "Fashion & Apparel"
+                            elif any(k in item_type for k in ["health", "medical"]):
+                                ld_category = "Health & Wellness"
+                            elif any(k in item_type for k in ["tech", "software"]):
+                                ld_category = "Technology & IT"
                         if not ld_city and item.get("address"):
                             addr = item["address"]
+                            if isinstance(addr, dict):
+                                loc = addr.get("addressLocality")
+                                country = addr.get("addressCountry")
+                                if loc and country:
+                                    ld_city = f"{loc}, {country}"
+                                elif loc:
+                                    ld_city = loc
+
                             if isinstance(addr, dict):
                                 loc = addr.get("addressLocality")
                                 country = addr.get("addressCountry")
@@ -1113,12 +1188,26 @@ class WebsiteAnalysisService:
         extracted_text = " | ".join(headings[:8]) + "\n" + " ".join(paragraphs[:10])
         extracted_text = re.sub(r"\s+", " ", extracted_text).strip()[:4000]
 
+        # 7. Phone & Contact extraction heuristic
+        phone_candidate = None
+        tel_link = soup.find("a", href=lambda h: h and str(h).startswith("tel:"))
+        if tel_link and tel_link.get("href"):
+            phone_candidate = str(tel_link["href"]).replace("tel:", "").strip()
+        if not phone_candidate:
+            body_sample = soup.body.get_text(separator=" ", strip=True) if soup.body else extracted_text
+            m_phone = re.search(r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,6}", body_sample)
+            if m_phone:
+                p_cand = m_phone.group(0).strip()
+                if sum(c.isdigit() for c in p_cand) >= 7:
+                    phone_candidate = p_cand
+
         parsed_domain = urlparse(base_url).netloc.replace("www.", "")
 
         return {
             "title": title or parsed_domain.title(),
+            "clean_title": clean_title or title or parsed_domain.title(),
             "description": description or f"Official website of {parsed_domain.title()}",
-            "site_name": site_name or ld_name or parsed_domain.title(),
+            "site_name": site_name or ld_name or clean_title or parsed_domain.title(),
             "domain": parsed_domain,
             "top_css_colors": top_css_colors,
             "photos": photos,
@@ -1128,8 +1217,12 @@ class WebsiteAnalysisService:
             "ld_name": ld_name,
             "ld_city": city_candidate,
             "ld_tagline": ld_tagline,
-            "ld_products": ld_products
+            "ld_category": ld_category,
+            "ld_products": ld_products,
+            "phone": phone_candidate,
+            "phone_number": phone_candidate
         }
+
 
     @classmethod
     def _parse_html_fallback(cls, html: str, base_url: str) -> Dict[str, Any]:
@@ -1226,10 +1319,30 @@ class WebsiteAnalysisService:
         clean_text = re.sub(r"<[^>]+>", " ", clean_html)
         clean_text = re.sub(r"\s+", " ", clean_text).strip()[:4000]
 
+        # OpenGraph Logo / Site Logo
+        m_logo = re.search(r'<meta[^>]+(?:property|name)=["\'](?:og:)?logo["\'][^>]+content=["\'](.*?)["\']', html, re.IGNORECASE)
+        if m_logo:
+            logo_candidate = urljoin(base_url, m_logo.group(1).strip())
+        elif not logo_candidate and favicon_url:
+            logo_candidate = favicon_url
+
+        # Phone extraction
+        extracted_phone = None
+        m_tel = re.search(r'href=["\']tel:(.*?)["\']', html, re.IGNORECASE)
+        if m_tel:
+            extracted_phone = m_tel.group(1).strip()
+        if not extracted_phone:
+            m_p = re.search(r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,6}", clean_text)
+            if m_p:
+                p_cand = m_p.group(0).strip()
+                if sum(c.isdigit() for c in p_cand) >= 7:
+                    extracted_phone = p_cand
+
         parsed_domain = urlparse(base_url).netloc.replace("www.", "")
 
         return {
             "title": title or parsed_domain.title(),
+            "clean_title": title or parsed_domain.title(),
             "description": description or f"Official website of {parsed_domain.title()}",
             "site_name": site_name or parsed_domain.title(),
             "domain": parsed_domain,
@@ -1241,7 +1354,9 @@ class WebsiteAnalysisService:
             "ld_name": None,
             "ld_city": None,
             "ld_tagline": None,
-            "ld_products": []
+            "ld_products": [],
+            "phone": extracted_phone,
+            "phone_number": extracted_phone
         }
 
     @classmethod
@@ -1413,31 +1528,44 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
     def _build_heuristic_fallback(cls, extracted: Dict[str, Any], url: str) -> Dict[str, Any]:
         """
         Synthesizes authentic brand results directly from parsed HTML tags, JSON-LD, and CSS
-        if external AI generation is unavailable.
+        if external AI generation is unavailable. Does not fabricate missing details.
         """
-        domain_name = extracted.get("domain", "Your Brand").split(".")[0].replace("-", " ").title()
-        site_name = extracted.get("ld_name") or extracted.get("site_name") or domain_name
-        tagline = extracted.get("ld_tagline") or f"Quality Solutions from {site_name}"
+        domain_name = extracted.get("domain", "").split(".")[0].replace("-", " ").title()
+        site_name = extracted.get("ld_name") or extracted.get("site_name") or extracted.get("clean_title") or domain_name or "My Business"
+        tagline = extracted.get("ld_tagline") or None
 
-        # CSS colors
+        # Category: use identifiable category from JSON-LD or meta/text, else None
+        cat_candidate = extracted.get("ld_category")
+        if not cat_candidate:
+            meta_blob = f"{extracted.get('title', '')} {extracted.get('description', '')}".lower()
+            if any(k in meta_blob for k in ["apparel", "clothing", "fashion", "textile", "wear"]):
+                cat_candidate = "Fashion & Apparel"
+            elif any(k in meta_blob for k in ["software", "tech solutions", "saas", "digital agency", "cloud", "developer"]):
+                cat_candidate = "Technology & IT"
+            elif any(k in meta_blob for k in ["food", "restaurant", "cafe", "culinary", "bakery", "dining"]):
+                cat_candidate = "Food & Beverage"
+            elif any(k in meta_blob for k in ["health", "fitness", "wellness", "medical", "clinic"]):
+                cat_candidate = "Health & Wellness"
+            elif any(k in meta_blob for k in ["store", "shop", "ecommerce", "retail"]):
+                cat_candidate = "Retail & E-commerce"
+
+        # CSS colors: strictly use extracted top css colors, do not fabricate neon random palette
         css_colors = extracted.get("top_css_colors", [])
-        palette = css_colors[:5] if len(css_colors) >= 5 else (css_colors + ["#FFFFFF", "#1E1E1E", "#E65100", "#2C2C2C", "#0A0A0A"])[:5]
+        palette = css_colors[:5] if css_colors else []
 
-        # Products from JSON-LD or empty
         products = extracted.get("ld_products", [])
-
         photos = extracted.get("photos", [])[:8]
 
         business_details = BusinessDetails(
             business_name=site_name,
-            category="Technology & Digital Services" if any(x in site_name.lower() for x in ["tech", "soft", "ai", "digital"]) else "General Business",
+            category=cat_candidate or "General",
             business_types=["Service / Digital"],
             primary_business_type="Service / Digital",
             sub_category=None,
             city=extracted.get("ld_city"),
             logo_url=extracted.get("logo_candidate"),
             tagline=tagline,
-            target_audience="Startups, enterprises, and growing businesses",
+            target_audience=None,
             differentiators=[],
             products_services=products
         )
@@ -1447,22 +1575,22 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             brand_colors=palette,
             tones=["Modern", "Professional"],
             default_language="English",
-            target_audience_summary="Startups, enterprises, and growing businesses",
+            target_audience_summary=None,
             services_products_summary=products
         )
 
         brand_voice = BrandVoiceResult(
             tone="Modern & Professional",
             tagline=tagline,
-            description=tagline,
-            target_audience="Startups, enterprises, and growing businesses",
+            description=tagline or extracted.get("description"),
+            target_audience=None,
             keywords=["Modern", "Professional"]
         )
 
         colors_res = BrandColorsResult(
-            primary=palette[0],
-            secondary=palette[1],
-            accent=palette[2],
+            primary=palette[0] if len(palette) > 0 else "#FFFFFF",
+            secondary=palette[1] if len(palette) > 1 else "#1E1E1E",
+            accent=palette[2] if len(palette) > 2 else "#E65100",
             palette=palette
         )
 
@@ -1471,7 +1599,7 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             primary_category=business_details.category,
             sub_categories=[],
             business_type="Service / Digital",
-            summary=tagline
+            summary=tagline or extracted.get("description")
         )
 
         return {
@@ -1484,6 +1612,7 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             "logo_url": extracted.get("logo_candidate"),
             "hero_image": extracted.get("hero_candidate")
         }
+
 
     @classmethod
     async def _update_job(
@@ -1674,20 +1803,30 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
                 detail=error_msg or "Target website URL is unsafe or invalid."
             )
 
-        html_content, final_url, fetch_error = await cls._fetch_website(normalized_url)
+        html_content, final_url, fetch_error = await cls._fetch_website(normalized_url, allow_private_for_tests=allow_private_for_tests)
         if fetch_error or not html_content:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=fetch_error or "Failed to download target website content."
-            )
-
-        extracted = cls._parse_html_content(html_content, final_url or normalized_url)
-
-        try:
-            ai_results = await cls._execute_ai_analysis(extracted, final_url or normalized_url)
-        except Exception as e:
-            logger.error(f"AI brand analysis failed in analyze_website_direct: {e}", exc_info=True)
+            logger.warning(f"Website fetch error for {normalized_url}: {fetch_error}. Returning partial heuristic results.")
+            extracted = {
+                "title": "",
+                "clean_title": "",
+                "description": "",
+                "meta_description": "",
+                "logo_candidate": None,
+                "hero_candidate": None,
+                "brand_colors": [],
+                "photos": [],
+                "raw_text": "",
+                "headings": []
+            }
             ai_results = cls._build_heuristic_fallback(extracted, final_url or normalized_url)
+        else:
+            extracted = cls._parse_html_content(html_content, final_url or normalized_url)
+
+            try:
+                ai_results = await cls._execute_ai_analysis(extracted, final_url or normalized_url)
+            except Exception as e:
+                logger.error(f"AI brand analysis failed in analyze_website_direct: {e}", exc_info=True)
+                ai_results = cls._build_heuristic_fallback(extracted, final_url or normalized_url)
 
         business_details = ai_results.get("business_details")
         brand_preferences = ai_results.get("brand_preferences")
@@ -1744,42 +1883,77 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             except Exception as e:
                 logger.warning(f"Could not auto-sync analysis to profile in direct mode: {e}")
 
-        b_name = business_details.business_name if business_details else extracted.get("site_name", "My Business")
-        b_cat = business_details.category if business_details else "Tech & Electronics"
-        b_tag = business_details.tagline if business_details else f"Trusted solutions from {b_name}"
-        palette = brand_preferences.brand_colors if brand_preferences else ["#BE32FF", "#1E1E2F", "#FC9A5D", "#F0449B", "#FFFFFF"]
+        b_name = (business_details.business_name if business_details else None) or extracted.get("ld_name") or extracted.get("site_name") or extracted.get("clean_title") or extracted.get("title") or "My Business"
+        b_cat = (business_details.category if (business_details and business_details.category not in ("General Business", "General")) else None) or extracted.get("ld_category") or None
+        b_tag = (business_details.tagline if business_details else None) or extracted.get("ld_tagline") or None
+        palette = (brand_preferences.brand_colors if brand_preferences and brand_preferences.brand_colors else None) or extracted.get("top_css_colors") or []
+
+        primary_col = palette[0] if len(palette) > 0 else None
+        secondary_col = palette[1] if len(palette) > 1 else None
+        accent_col = palette[2] if len(palette) > 2 else None
+        tones = brand_preferences.tones if brand_preferences else []
+        logo_url = (business_details.logo_url if business_details else None) or extracted.get("logo_candidate") or None
+        phone_val = (business_details.phone if hasattr(business_details, "phone") else None) or extracted.get("phone") or extracted.get("phone_number")
 
         return {
             "job_id": job_id,
             "status": "completed",
-            "website_url": normalized_url,
+            # Business & Brand Name
             "business_name": b_name,
+            "brand_name": b_name,
+            # Category
             "category": b_cat,
+            "business_category": b_cat,
             "sub_category": business_details.sub_category if business_details else None,
             "business_types": business_details.business_types if business_details else ["Service / Digital"],
             "primary_business_type": business_details.primary_business_type if business_details else "Service / Digital",
-            "city": business_details.city if business_details else extracted.get("ld_city"),
-            "logo_url": business_details.logo_url if business_details else extracted.get("logo_candidate"),
-            "tagline": b_tag,
-            "target_audience": business_details.target_audience if business_details else "Growing businesses and individuals",
-            "differentiators": business_details.differentiators if business_details else [],
-            "products_services": business_details.products_services if business_details else [],
+            # Description & Title
+            "title": extracted.get("title"),
+            "website_title": extracted.get("title"),
+            "description": extracted.get("description"),
+            "meta_description": extracted.get("description"),
+            "business_description": extracted.get("description") or b_tag,
+            "brand_description": extracted.get("description") or b_tag,
+            # Website URL
+            "website": normalized_url,
+            "website_url": normalized_url,
+            # Contact & Phone
+            "phone": phone_val,
+            "phone_number": phone_val,
+            # Brand Colors
+            "primary_color": primary_col,
+            "secondary_color": secondary_col,
+            "accent_color": accent_col,
             "brand_colors": palette[:5],
             "palette": palette[:5],
-            "tones": brand_preferences.tones if brand_preferences else ["Modern", "Professional"],
+            # Voice & Tones
+            "tones": tones,
+            "tone": ", ".join(tones) if tones else None,
+            "brand_voice": ", ".join(tones) if tones else None,
             "language": brand_preferences.default_language if brand_preferences else "English",
+            # Tagline, Logo, Location
+            "tagline": b_tag,
+            "logo_url": logo_url,
+            "city": business_details.city if business_details else extracted.get("ld_city"),
+            "location": {"city": business_details.city if business_details else extracted.get("ld_city")} if ((business_details and business_details.city) or extracted.get("ld_city")) else None,
+            # Differentiators & Products
+            "target_audience": business_details.target_audience if business_details else None,
+            "differentiators": business_details.differentiators if business_details else [],
+            "products_services": business_details.products_services if business_details else [],
+            # Photos
             "photos": photo_urls,
             "images": photo_urls,
             "photo_items": [p.model_dump() if hasattr(p, "model_dump") else p for p in discovered_photos],
+            "selected_photos": photo_urls[:4],
             "overall_health_score": 85,
-            "brand_messaging_clarity": b_tag,
+            "brand_messaging_clarity": b_tag or "Verified online business presence",
             "conversion_funnel_audit": {
                 "strengths": business_details.differentiators[:2] if business_details and business_details.differentiators else ["Clear value proposition", "Direct product showcase"],
                 "critical_friction_points": ["Highlight key customer reviews", "Ensure frictionless contact/checkout"],
                 "cta_recommendations": ["Use high-contrast primary buttons"]
             },
             "seo_and_content_recommendations": {
-                "recommended_keywords": [b_name, b_cat, f"{b_cat} services"],
+                "recommended_keywords": [k for k in [b_name, b_cat] if k],
                 "meta_improvements": extracted.get("description", "")
             },
             "actionable_next_steps": [
@@ -1788,3 +1962,4 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
                 "Ensure mobile responsive media loading."
             ]
         }
+

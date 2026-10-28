@@ -41,14 +41,22 @@ async def linkedin_connect(
         "created_at": datetime.now(timezone.utc),
     })
 
-    if LinkedInService.is_demo_mode():
-        logger.info(f"[DEMO MODE] LinkedIn connect initiated for user {user_id}")
+    if not LinkedInService.is_configured():
+        logger.info(f"LinkedIn connect requested for user {user_id}, but LinkedIn credentials are not configured.")
         return {
-            "authorization_url": f"http://localhost:8000/api/linkedin/callback?code=demo_li_code&state={state}"
+            "authorization_url": None,
+            "platform": "linkedin",
+            "configured": False,
+            "message": "LinkedIn integration is not configured. Missing LINKEDIN_CLIENT_ID or LINKEDIN_CLIENT_SECRET.",
         }
 
     auth_url = LinkedInService.get_authorization_url(state=state)
-    return {"authorization_url": auth_url}
+    return {
+        "authorization_url": auth_url,
+        "platform": "linkedin",
+        "configured": True,
+        "state": state,
+    }
 
 
 @router.get("/callback", operation_id="linkedin_callback")
@@ -77,6 +85,12 @@ async def linkedin_callback(
             url=f"{frontend_url}/social-platforms/linkedin?linkedin_error=Missing+code+or+state"
         )
 
+    if not LinkedInService.is_configured():
+        logger.warning("LinkedIn OAuth callback attempted while LinkedIn credentials are not configured.")
+        return RedirectResponse(
+            url=f"{frontend_url}/social-platforms/linkedin?linkedin_error=LinkedIn+integration+is+not+configured"
+        )
+
     # Validate and consume state token
     state_doc = await db["linkedin_oauth_states"].find_one_and_delete({"state": state})
     if not state_doc:
@@ -85,46 +99,6 @@ async def linkedin_callback(
         )
 
     user_id = state_doc["user_id"]
-
-    # Demo mode handling
-    if LinkedInService.is_demo_mode():
-        logger.info(f"[DEMO MODE] LinkedIn callback processing for user {user_id}")
-        now = datetime.now(timezone.utc)
-        demo_connection = {
-            "user_id": user_id,
-            "platform": "linkedin",
-            "linkedin_author_id": DEMO_LI_AUTHOR_ID,
-            "display_name": DEMO_LI_DISPLAY_NAME,
-            "account_type": "PROFILE",
-            "profile_picture_url": "",
-            "encrypted_access_token": encrypt_token("DEMO_LI_TOKEN"),
-            "connected": True,
-            "created_at": now,
-            "updated_at": now,
-        }
-        await db["linkedin_connections"].update_one(
-            {"user_id": user_id, "platform": "linkedin"},
-            {"$set": demo_connection},
-            upsert=True
-        )
-
-        await db["businesses"].update_one(
-            {"owner_id": user_id},
-            {"$set": {
-                "linkedin_author_id": DEMO_LI_AUTHOR_ID,
-                "linkedin_access_token": "DEMO_LI_TOKEN",
-                "linkedin_account_name": DEMO_LI_DISPLAY_NAME,
-                "updated_at": now,
-            }},
-            upsert=True
-        )
-
-        # Sync onboarding completion
-        await sync_business_social_status(db, user_id)
-
-        return RedirectResponse(
-            url=f"{frontend_url}/social-platforms/linkedin?linkedin_connected=true"
-        )
 
     # Real OAuth flow
     try:
@@ -160,11 +134,13 @@ async def linkedin_status(
     Never exposes raw tokens, secrets, or encrypted blobs.
     """
     user_id = str(current_user.get("id") or current_user.get("_id"))
+    is_conf = LinkedInService.is_configured()
     conn = await LinkedInService.get_connection(db, user_id)
 
-    if conn:
+    if conn and conn.get("connected"):
         return {
             "connected": True,
+            "configured": is_conf,
             "platform": "linkedin",
             "account_id": conn.get("linkedin_author_id"),
             "display_name": conn.get("display_name"),
@@ -174,6 +150,7 @@ async def linkedin_status(
 
     return {
         "connected": False,
+        "configured": is_conf,
         "platform": "linkedin",
         "account_id": None,
         "display_name": None,

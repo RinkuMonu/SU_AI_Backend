@@ -199,6 +199,66 @@ async def publish_linkedin_direct(
     )
     return {"success": True, "message": "Successfully published to LinkedIn", "data": result}
 
+
+# ─────────────────────────────────────────────────────────────
+# Unified Social Connect & Status Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/connect/{platform}", operation_id="social_connect_platform")
+@router.get("/{platform}/connect", operation_id="social_connect_platform_alias")
+async def connect_platform(
+    platform: str,
+    frontend_url: str | None = None,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Unified route to initiate OAuth connect for any supported platform (instagram, facebook, linkedin).
+    """
+    platform_lower = platform.lower().strip()
+    if platform_lower == "instagram":
+        from app.api.endpoints.instagram import instagram_connect
+        return await instagram_connect(frontend_url=frontend_url, current_user=current_user, db=db)
+    elif platform_lower == "facebook":
+        from app.api.endpoints.facebook import facebook_connect
+        return await facebook_connect(frontend_url=frontend_url, current_user=current_user, db=db)
+    elif platform_lower == "linkedin":
+        from app.api.endpoints.linkedin import linkedin_connect
+        return await linkedin_connect(current_user=current_user, db=db)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported social platform '{platform}'. Supported: instagram, facebook, linkedin"
+        )
+
+
+@router.get("/status/{platform}", operation_id="social_platform_status")
+@router.get("/{platform}/status", operation_id="social_platform_status_alias")
+async def get_single_platform_status(
+    platform: str,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database),
+):
+    """
+    Unified route to retrieve connection and configuration status for a specific platform.
+    """
+    platform_lower = platform.lower().strip()
+    if platform_lower == "instagram":
+        from app.api.endpoints.instagram import instagram_status
+        return await instagram_status(current_user=current_user, db=db)
+    elif platform_lower == "facebook":
+        from app.api.endpoints.facebook import facebook_status
+        return await facebook_status(current_user=current_user, db=db)
+    elif platform_lower == "linkedin":
+        from app.api.endpoints.linkedin import linkedin_status
+        return await linkedin_status(current_user=current_user, db=db)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported social platform '{platform}'. Supported: instagram, facebook, linkedin"
+        )
+
+
 # Alias router for /api/social
 api_social_router = APIRouter(prefix="/api/social", tags=["Social"])
 api_social_router.add_api_route("/onboarding-status", get_social_media_onboarding_status, methods=["GET"], response_model=SocialOnboardingStatusResponse)
@@ -208,4 +268,8 @@ api_social_router.add_api_route("/create-account-urls", get_create_account_urls,
 api_social_router.add_api_route("/create-account", get_create_account_urls, methods=["GET"], response_model=CreateAccountUrlsResponse)
 api_social_router.add_api_route("/signup-urls", get_create_account_urls, methods=["GET"], response_model=CreateAccountUrlsResponse)
 api_social_router.add_api_route("/disconnect/{platform}", disconnect_platform, methods=["POST"], response_model=SocialDisconnectResponse)
+api_social_router.add_api_route("/connect/{platform}", connect_platform, methods=["GET"])
+api_social_router.add_api_route("/{platform}/connect", connect_platform, methods=["GET"])
+api_social_router.add_api_route("/status/{platform}", get_single_platform_status, methods=["GET"])
+api_social_router.add_api_route("/{platform}/status", get_single_platform_status, methods=["GET"])
 

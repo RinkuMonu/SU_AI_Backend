@@ -243,11 +243,21 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
                 "is_completed": is_plan_completed,
                 "is_skipped": is_plan_skipped,
                 "is_eligible": plan_status.is_eligible,
-                "active_plan": plan_status.active_plan.dict() if plan_status.active_plan else None,
+                "requires_plan_selection": plan_status.requires_plan_selection,
+                "is_plan_required": plan_status.is_plan_required,
+                "is_paid_plan": plan_status.active_plan.is_paid_plan if plan_status.active_plan else False,
+                "subscription_status": sub.get("status", "free"),
+                "current_plan": sub.get("plan_id", "FREE"),
+                "active_plan": plan_status.active_plan.model_dump() if (plan_status.active_plan and hasattr(plan_status.active_plan, "model_dump")) else (plan_status.active_plan.dict() if plan_status.active_plan else None),
                 "should_show_modal": plan_status.should_show_modal
             }
-        }
+        },
+        "is_plan_eligible": plan_status.is_eligible,
+        "should_show_plan_modal": plan_status.should_show_modal,
+        "requires_plan_selection": plan_status.requires_plan_selection,
+        "is_paid_plan": plan_status.active_plan.is_paid_plan if plan_status.active_plan else False
     }
+
 
 
 @router.patch("/progress", response_model=Dict[str, Any])

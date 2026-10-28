@@ -113,6 +113,11 @@ class PlanOnboardingService:
                 plan_activation_completed_at=None,
                 is_eligible=False,
                 should_show_modal=False,
+                requires_plan_selection=False,
+                is_plan_required=False,
+                subscription_status="inactive",
+                current_plan=None,
+                is_paid_plan=False,
                 active_plan=None,
                 available_plans=get_formatted_plans(None),
                 billing_cycles=BILLING_CYCLES,
@@ -132,10 +137,15 @@ class PlanOnboardingService:
                     brand_kit_completed = True
 
         # 4. Check Step 2: Social Media Connectivity
-        business = await db["businesses"].find_one({"owner_id": user_id})
+        business = await db["businesses"].find_one({
+            "$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}, {"user_id": str(user_id)}]
+        })
         social_connectivity_completed = False
-        is_social_skipped = bool(business and business.get("social_connectivity_skipped", False))
-        
+        is_social_skipped = bool(
+            (business and business.get("social_connectivity_skipped", False)) or
+            current_user.get("social_connectivity_skipped", False)
+        )
+
         if business and business.get("social_connectivity_completed") is True:
             social_connectivity_completed = True
         else:
@@ -172,7 +182,10 @@ class PlanOnboardingService:
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
         sub_plan_id = (sub.get("plan_id") or "FREE").upper().strip()
         is_qualifying_paid = sub_plan_id in QUALIFYING_PAID_PLANS and sub.get("status") == "active"
-        is_plan_skipped = bool(business and business.get("plan_selection_skipped", False))
+        is_plan_skipped = bool(
+            (business and business.get("plan_selection_skipped", False)) or
+            current_user.get("plan_selection_skipped", False)
+        )
 
         plan_activation_completed = False
         completed_at = None
@@ -189,9 +202,12 @@ class PlanOnboardingService:
             )
 
         # Determine eligibility and popup display
-        # Eligible once Step 1 and Step 2 are completed or skipped
-        is_eligible = brand_kit_started_or_saved and (social_connectivity_completed or is_social_skipped)
-        should_show_modal = is_eligible and (not plan_activation_completed) and (not is_plan_skipped)
+        # A businessman is eligible for plan activation modal when prerequisites (Step 1 Brand Kit and Step 2 Social) are met
+        step1_met = bool(brand_kit_completed or (online_presence and online_presence != "no_online_presence") or (business and business.get("brand_kit_dismissed")))
+        step2_met = bool(social_connectivity_completed or is_social_skipped)
+        is_eligible = bool(role == "businessman" and step1_met and step2_met)
+        requires_plan_selection = (not plan_activation_completed) and (not is_plan_skipped)
+        should_show_modal = is_eligible and requires_plan_selection
 
         # Active plan summary
         plan_config = PLANS.get(sub_plan_id, PLANS["FREE"])
@@ -215,8 +231,14 @@ class PlanOnboardingService:
             plan_activation_completed_at=completed_at,
             is_eligible=is_eligible,
             should_show_modal=should_show_modal,
+            requires_plan_selection=requires_plan_selection,
+            is_plan_required=requires_plan_selection,
+            subscription_status=sub.get("status", "inactive"),
+            current_plan=sub_plan_id,
+            is_paid_plan=is_qualifying_paid,
             active_plan=active_summary,
             available_plans=get_formatted_plans(sub_plan_id if plan_activation_completed else None),
             billing_cycles=BILLING_CYCLES,
             currency="INR"
         )
+

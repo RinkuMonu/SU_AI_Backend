@@ -69,11 +69,16 @@ class FacebookService:
         return "http://localhost:8000/api/facebook/callback"
 
     @staticmethod
-    def is_demo_mode() -> bool:
-        """Returns True if Facebook App credentials are not configured."""
+    def is_configured() -> bool:
+        """Returns True if Facebook App credentials are fully configured."""
         app_id = getattr(settings, "FACEBOOK_APP_ID", None) or getattr(settings, "INSTAGRAM_APP_ID", None)
         app_secret = getattr(settings, "FACEBOOK_APP_SECRET", None) or getattr(settings, "INSTAGRAM_APP_SECRET", None)
-        return not bool(app_id and app_secret)
+        return bool(app_id and app_secret)
+
+    @staticmethod
+    def is_demo_mode() -> bool:
+        """Returns True if Facebook App credentials are not configured."""
+        return not FacebookService.is_configured()
 
     @classmethod
     def get_authorization_url(cls, state: str, custom_scopes: Optional[List[str]] = None) -> str:

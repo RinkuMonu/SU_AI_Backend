@@ -94,6 +94,14 @@ async def get_all_platform_connections(db, user_id: str) -> Dict[str, PlatformCo
     Gathers frontend-ready connection info for Instagram, Facebook, and LinkedIn.
     Never exposes raw tokens, secrets, or encrypted blobs.
     """
+    from app.services.instagram_service import InstagramService
+    from app.services.facebook_service import FacebookService
+    from app.services.linkedin_service import LinkedInService
+
+    ig_configured = InstagramService.is_configured()
+    fb_configured = FacebookService.is_configured()
+    li_configured = LinkedInService.is_configured()
+
     # Instagram
     ig_conn = await db["instagram_connections"].find_one(
         {"user_id": user_id, "platform": "instagram", "connected": True}
@@ -101,6 +109,7 @@ async def get_all_platform_connections(db, user_id: str) -> Dict[str, PlatformCo
     ig_info = PlatformConnectionInfo(
         platform="instagram",
         connected=bool(ig_conn),
+        configured=ig_configured,
         account_id=ig_conn.get("instagram_user_id") if ig_conn else None,
         account_name=ig_conn.get("instagram_username") if ig_conn else None,
         account_type=ig_conn.get("account_type", "BUSINESS") if ig_conn else None,
@@ -115,6 +124,7 @@ async def get_all_platform_connections(db, user_id: str) -> Dict[str, PlatformCo
     fb_info = PlatformConnectionInfo(
         platform="facebook",
         connected=bool(fb_conn),
+        configured=fb_configured,
         account_id=fb_conn.get("fb_page_id") or fb_conn.get("account_id") if fb_conn else None,
         account_name=fb_conn.get("fb_page_name") or fb_conn.get("account_name") if fb_conn else None,
         account_type=fb_conn.get("account_type", "PAGE") if fb_conn else None,
@@ -129,6 +139,7 @@ async def get_all_platform_connections(db, user_id: str) -> Dict[str, PlatformCo
     li_info = PlatformConnectionInfo(
         platform="linkedin",
         connected=bool(li_conn),
+        configured=li_configured,
         account_id=li_conn.get("linkedin_author_id") or li_conn.get("account_id") if li_conn else None,
         account_name=li_conn.get("display_name") or li_conn.get("account_name") if li_conn else None,
         account_type=li_conn.get("account_type", "PROFILE") if li_conn else None,
@@ -209,14 +220,11 @@ async def get_social_onboarding_status(db, current_user) -> SocialOnboardingStat
                     brand_kit_completed = True
             brand_kit_started_or_saved = bool(
                 brand_kit_completed or
-                brand_kit.get("brand_kit_status") in ["in_progress", "completed"] or
-                brand_kit.get("completion_percentage", 0) > 0 or
                 brand_kit.get("brand_kit_dismissed", False) or
-                (business and business.get("brand_kit_dismissed", False)) or
-                True  # Incomplete Brand Kit does not block social connectivity
+                (business and business.get("brand_kit_dismissed", False))
             )
         else:
-            brand_kit_started_or_saved = True
+            brand_kit_started_or_saved = False
 
     # 4. Check active platform connections
     platforms = await get_all_platform_connections(db, user_id)
