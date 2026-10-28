@@ -120,18 +120,20 @@ async def instagram_connect(
     custom_scopes = [s.strip() for s in scopes.split(",") if s.strip()] if isinstance(scopes, str) and scopes else None
     effective_scopes = InstagramService.normalize_scopes(custom_scopes)
 
-    if InstagramService.is_demo_mode():
-        logger.info(f"[DEMO MODE] Instagram connect for user {user_id}")
-        callback_uri = f"{settings.BACKEND_URL}/api/instagram/callback?code=demo_ig_code&state={state}"
+    if not InstagramService.is_configured():
+        logger.info(f"Instagram connect requested for user {user_id}, but Instagram credentials are not configured.")
         return InstagramConnectResponse(
-            authorization_url=callback_uri,
+            authorization_url=None,
             scopes=effective_scopes,
+            configured=False,
+            message="Instagram integration is not configured. Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET.",
         )
 
     auth_url = InstagramService.get_authorization_url(state=state, custom_scopes=effective_scopes)
     return InstagramConnectResponse(
         authorization_url=auth_url,
         scopes=effective_scopes,
+        configured=True,
     )
 
 
@@ -436,6 +438,9 @@ async def instagram_status(
     user_id = str(current_user.get("id") or current_user.get("_id"))
     conn = await InstagramService.get_connection(db, user_id)
 
+    configured = InstagramService.is_configured()
+    cfg_msg = None if configured else "Instagram integration is not configured. Missing INSTAGRAM_APP_ID or INSTAGRAM_APP_SECRET."
+
     if conn and conn.get("connected"):
         ig_user_id = conn.get("instagram_user_id") or conn.get("ig_account_id")
         username = conn.get("instagram_username") or conn.get("username")
@@ -443,6 +448,8 @@ async def instagram_status(
         return InstagramStatusResponse(
             connected=True,
             platform="instagram",
+            configured=configured,
+            message=cfg_msg,
             instagram_user_id=ig_user_id,
             ig_account_id=ig_user_id,
             username=username,
@@ -452,7 +459,7 @@ async def instagram_status(
             ig_access_token=token,
         )
 
-    return InstagramStatusResponse(connected=False)
+    return InstagramStatusResponse(connected=False, configured=configured, message=cfg_msg)
 
 
 @router.post("/disconnect", response_model=InstagramDisconnectResponse)

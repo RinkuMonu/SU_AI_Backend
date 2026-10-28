@@ -12,13 +12,17 @@ from datetime import datetime
 # ──────────────────────────────────────────────
 
 class InstagramConnectResponse(BaseModel):
-    authorization_url: str
+    authorization_url: Optional[str] = None
     scopes: Optional[List[str]] = None
+    configured: bool = True
+    message: Optional[str] = None
 
 
 class InstagramStatusResponse(BaseModel):
     connected: bool
     platform: str = "instagram"
+    configured: bool = True
+    message: Optional[str] = None
     instagram_user_id: Optional[str] = None
     ig_account_id: Optional[str] = None
     username: Optional[str] = None

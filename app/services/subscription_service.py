@@ -44,28 +44,67 @@ class SubscriptionService:
 
     @staticmethod
     async def check_feature_access(db, user_id: str, feature_name: str):
-        from app.core.config import settings
-        if getattr(settings, "ENVIRONMENT", "development") == "development" or getattr(settings, "GEMINI_API_KEY", None):
-            return True
-
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
-        plan_id = sub.get("plan_id", "FREE")
+        plan_id = (sub.get("plan_id") or "FREE").upper().strip()
         plan_config = PLANS.get(plan_id, PLANS["FREE"])
-        
-        if feature_name not in plan_config.get("features", []):
+        now = datetime.now(timezone.utc)
+
+        # 1. Check expiration if set
+        expires_at = sub.get("expires_at")
+        if expires_at:
+            if isinstance(expires_at, str):
+                try:
+                    expires_at = datetime.fromisoformat(expires_at)
+                except Exception:
+                    expires_at = None
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if expires_at and expires_at < now:
+                await db["subscriptions"].update_one(
+                    {"user_id": user_id},
+                    {"$set": {"status": "expired", "updated_at": now}}
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="SUBSCRIPTION_EXPIRED: Your subscription has expired. Please renew to continue using paid features."
+                )
+
+        # 2. Check active subscription status
+        if sub.get("status") != "active":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"FEATURE_NOT_AVAILABLE: '{feature_name}' is not available on the {plan_id} plan."
+                detail="SUBSCRIPTION_INACTIVE: Your subscription is not active. Please activate or renew your plan."
             )
+
+        # 3. Check if feature is included in the plan
+        features = plan_config.get("features", [])
+        if feature_name not in features:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"FEATURE_NOT_AVAILABLE: '{feature_name}' is not available on the {plan_id} plan. Please upgrade to access this feature."
+            )
+
+        # 4. If this is a paid plan (not FREE), verify that payment is confirmed
+        if plan_id != "FREE":
+            has_paid_tx = await db["payment_transactions"].find_one({
+                "user_id": user_id,
+                "status": "success"
+            })
+            has_paid_history = await db["subscription_history"].find_one({
+                "user_id": user_id,
+                "payment_status": "paid"
+            })
+            if not has_paid_tx and not has_paid_history and not sub.get("verified_payment"):
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail=f"PAYMENT_REQUIRED: Access to '{feature_name}' requires an active subscription with verified payment confirmation."
+                )
+
         return True
 
     @staticmethod
     async def check_usage_limit(db, user_id: str, feature_type: str):
         """feature_type can be 'post' or 'reel'"""
-        from app.core.config import settings
-        if getattr(settings, "ENVIRONMENT", "development") == "development" or getattr(settings, "GEMINI_API_KEY", None):
-            return True
-
         sub = await SubscriptionService.get_or_create_subscription(db, user_id)
         plan_id = sub.get("plan_id", "FREE")
         plan_config = PLANS.get(plan_id, PLANS["FREE"])
@@ -149,6 +188,7 @@ class SubscriptionService:
                     "billing_cycle": cycle,
                     "status": "active",
                     "features": plan_config.get("features", []),
+                    "verified_payment": True,
                     "activated_at": now,
                     "expires_at": expires_at,
                     "updated_at": now

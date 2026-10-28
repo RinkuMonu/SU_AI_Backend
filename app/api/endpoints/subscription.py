@@ -17,6 +17,7 @@ router = APIRouter(
 class UpgradeRequest(BaseModel):
     plan_id: str
     billing_cycle: Optional[str] = "monthly"
+    order_id: Optional[str] = None
 
 @router.get("/onboarding-status", response_model=PlanOnboardingStatusResponse)
 async def get_plan_onboarding_status(
@@ -156,12 +157,40 @@ async def upgrade_subscription(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
-    updated = await SubscriptionService.upgrade_plan(
-        db, str(current_user["id"]), request.plan_id, billing_cycle=request.billing_cycle or "monthly"
-    )
-    if "_id" in updated:
-        updated["id"] = str(updated.pop("_id"))
-    return {"success": True, "message": f"Upgraded to {request.plan_id} successfully", "data": updated}
+    normalized = (request.plan_id or "").upper().strip()
+    user_id = str(current_user["id"])
+    if normalized == "FREE":
+        sub = await SubscriptionService.activate_free_plan(db, user_id)
+        return {"success": True, "message": "Free plan activated successfully", "data": sub}
+
+    if normalized not in PLANS:
+        raise HTTPException(status_code=400, detail="Invalid plan")
+
+    from app.services.payin_service import PayinService
+    # For paid plans, require verified payment
+    if not request.order_id:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Payment required. Please create and complete payment via /api/v1/payments/payin/create first."
+        )
+
+    tx = await db["payment_transactions"].find_one({"order_id": request.order_id, "user_id": user_id})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Payment transaction not found")
+
+    if tx.get("status") != "success":
+        # Check provider status before deciding
+        verify_res = await PayinService.verify_payment_with_provider(db, request.order_id)
+        if not verify_res.get("verified"):
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Payment not verified. Current status: {tx.get('status')}"
+            )
+
+    sub = await db["subscriptions"].find_one({"user_id": user_id})
+    if sub and "_id" in sub:
+        sub["id"] = str(sub.pop("_id"))
+    return {"success": True, "message": f"Payment verified and upgraded to {normalized} successfully", "data": sub}
 
 @router.get("/credits")
 async def get_credits(

@@ -23,6 +23,7 @@ from app.api.endpoints.influencer_profile import router as influencer_profile_ro
 from app.api.endpoints.business_collaborations import router as business_collaborations_router
 from app.api.endpoints.influencer_content import router as influencer_content_router
 from app.api.endpoints.influencer_earnings import router as influencer_earnings_router
+from app.api.endpoints.payments import router as payments_router
 from app.api.endpoints.influencer_marketplace import router as influencer_marketplace_router
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -114,6 +115,8 @@ app.include_router(brand_router, prefix="/api/brand", tags=["Brand Kit"], includ
 app.include_router(brand_router, prefix="/api/brand-kit", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(brand_router, prefix="/brand-kit", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(brand_router, prefix="/brand", tags=["Brand Kit"], include_in_schema=False)
+app.include_router(payments_router, prefix="/api/payments", tags=["payments"], include_in_schema=False)
+app.include_router(payments_router, prefix="/payments", tags=["payments"], include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")

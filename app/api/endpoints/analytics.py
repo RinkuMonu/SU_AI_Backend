@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.database import get_database
 from app.core.security import get_current_user
+from app.api.dependencies import require_feature
 from app.services.analytics_service import AnalyticsService, VALID_RANGES
 from app.services.social_analytics_service import SocialAnalyticsService
 
@@ -112,7 +113,7 @@ async def sync_social_metrics(
         )
 
 
-@router.post("/visual-forecast")
+@router.post("/visual-forecast", dependencies=[Depends(require_feature("analytics"))])
 async def get_visual_forecast(
     request: dict = None,
     range_param: str = Query("30d", alias="range"),

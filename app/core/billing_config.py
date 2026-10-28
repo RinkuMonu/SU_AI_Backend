@@ -31,6 +31,10 @@ PLANS = {
             "5 AI credits/month"
         ],
         "features": ["ai_assistant"],
+        "gst_applicable": False,
+        "gst_rate": 0.0,
+        "gst_amount": 0.0,
+        "total_price": 0.0,
         "watermark": True,
         "multiple_businesses": False,
         "api_access": False,
@@ -75,6 +79,10 @@ PLANS = {
             "10 AI reels/month"
         ],
         "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar"],
+        "gst_applicable": True,
+        "gst_rate": 0.18,
+        "gst_amount": 143.82,
+        "total_price": 942.82,
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
@@ -82,18 +90,24 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 799,
+                "gst_amount": 143.82,
+                "total_price": 942.82,
                 "formatted_price": "₹799",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 2157,
+                "gst_amount": 388.26,
+                "total_price": 2545.26,
                 "formatted_price": "₹2,157",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 7670,
+                "gst_amount": 1380.60,
+                "total_price": 9050.60,
                 "formatted_price": "₹7,670",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -122,6 +136,10 @@ PLANS = {
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
             "ads", "website_builder", "instagram_ai", "analytics"
         ],
+        "gst_applicable": True,
+        "gst_rate": 0.18,
+        "gst_amount": 539.82,
+        "total_price": 3538.82,
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
@@ -129,18 +147,24 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 2999,
+                "gst_amount": 539.82,
+                "total_price": 3538.82,
                 "formatted_price": "₹2,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 8097,
+                "gst_amount": 1457.46,
+                "total_price": 9554.46,
                 "formatted_price": "₹8,097",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 28790,
+                "gst_amount": 5182.20,
+                "total_price": 33972.20,
                 "formatted_price": "₹28,790",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -167,9 +191,13 @@ PLANS = {
         ],
         "features": [
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "instagram_ai",
-            "advanced_analytics", "crm"
+            "ads", "website_builder", "instagram_ai", "analytics",
+            "advanced_analytics", "crm", "competitor_analysis"
         ],
+        "gst_applicable": True,
+        "gst_rate": 0.18,
+        "gst_amount": 899.82,
+        "total_price": 5898.82,
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
@@ -177,18 +205,24 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 4999,
+                "gst_amount": 899.82,
+                "total_price": 5898.82,
                 "formatted_price": "₹4,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 13497,
+                "gst_amount": 2429.46,
+                "total_price": 15926.46,
                 "formatted_price": "₹13,497",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 47990,
+                "gst_amount": 8638.20,
+                "total_price": 56628.20,
                 "formatted_price": "₹47,990",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -216,9 +250,13 @@ PLANS = {
         "features": [
             "influencer_discovery", "creator_audience", "brand_collaboration",
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "instagram_ai",
-            "advanced_analytics", "crm"
+            "ads", "website_builder", "instagram_ai", "analytics",
+            "advanced_analytics", "crm", "competitor_analysis"
         ],
+        "gst_applicable": True,
+        "gst_rate": 0.18,
+        "gst_amount": 1799.82,
+        "total_price": 11798.82,
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
@@ -226,18 +264,24 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 9999,
+                "gst_amount": 1799.82,
+                "total_price": 11798.82,
                 "formatted_price": "₹9,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 26997,
+                "gst_amount": 4859.46,
+                "total_price": 31856.46,
                 "formatted_price": "₹26,997",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 95990,
+                "gst_amount": 17278.20,
+                "total_price": 113268.20,
                 "formatted_price": "₹95,990",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -246,8 +290,9 @@ PLANS = {
     }
 }
 
-# Maintain "PRO" as backward-compatible alias for "GROWTH"
+# Maintain "PRO" as backward-compatible alias for "GROWTH" and "BASIC" for "STARTER"
 PLANS["PRO"] = PLANS["GROWTH"]
+PLANS["BASIC"] = PLANS["STARTER"]
 
 BILLING_CYCLES = ["monthly", "quarterly", "yearly"]
 
@@ -268,7 +313,12 @@ def get_formatted_plans(active_plan_id: str | None = None) -> list:
             "name": plan_data["name"],
             "plan_tier": plan_data.get("plan_tier", f"PLAN {len(result)+1}"),
             "price": plan_data["price"],
+            "base_price": plan_data["price"],
             "currency": plan_data.get("currency", "INR"),
+            "gst_applicable": plan_data.get("gst_applicable", False),
+            "gst_rate": plan_data.get("gst_rate", 0.0),
+            "gst_amount": plan_data.get("gst_amount", 0.0),
+            "total_price": plan_data.get("total_price", plan_data["price"]),
             "display_price": plan_data.get("billing_cycles", {}).get("monthly", {}).get("formatted_price", f"₹{plan_data['price']:,}"),
             "period_label": plan_data.get("period_label", "/ month + GST"),
             "credits": plan_data.get("credits", 0),
@@ -276,9 +326,14 @@ def get_formatted_plans(active_plan_id: str | None = None) -> list:
             "description": plan_data.get("description", ""),
             "post_limit": plan_data.get("post_limit", -1),
             "reel_limit": plan_data.get("reel_limit", -1),
+            "team_members": plan_data.get("team_members", 1),
             "highlights": plan_data.get("highlights", []),
             "features": plan_data.get("features", []),
             "billing_cycles": plan_data.get("billing_cycles", {}),
+            "watermark": plan_data.get("watermark", False),
+            "multiple_businesses": plan_data.get("multiple_businesses", False),
+            "api_access": plan_data.get("api_access", False),
+            "white_label": plan_data.get("white_label", False),
             "is_current": (key == normalized_active)
         }
         result.append(item)

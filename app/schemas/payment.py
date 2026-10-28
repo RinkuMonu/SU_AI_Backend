@@ -24,3 +24,15 @@ class PaymentStatusResponse(BaseModel):
     base_amount: Optional[float] = None
     gst_amount: Optional[float] = None
 
+class PaymentVerifyRequest(BaseModel):
+    order_id: str
+
+class PaymentVerifyResponse(BaseModel):
+    success: bool
+    status: str
+    order_id: str
+    verified: bool
+    message: str
+    plan_id: Optional[str] = None
+    amount: Optional[float] = None
+

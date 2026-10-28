@@ -422,7 +422,7 @@ from app.schemas.ai import (
 )
 
 
-@router.post("/competitor-analysis", response_model=dict)
+@router.post("/competitor-analysis", response_model=dict, dependencies=[Depends(require_feature("analytics"))])
 async def analyze_competitors_endpoint(
     request: CompetitorAnalysisRequest,
     current_user=Depends(get_current_user),
@@ -480,7 +480,7 @@ async def analyze_website_endpoint(
     }
 
 
-@router.post("/trend-analysis", response_model=dict)
+@router.post("/trend-analysis", response_model=dict, dependencies=[Depends(require_feature("content_calendar"))])
 async def analyze_social_trends_endpoint(
     request: SocialTrendAnalysisRequest,
     current_user=Depends(get_current_user),
@@ -498,7 +498,7 @@ async def analyze_social_trends_endpoint(
     }
 
 
-@router.post("/product-marketing", response_model=dict)
+@router.post("/product-marketing", response_model=dict, dependencies=[Depends(require_feature("ai_post"))])
 async def generate_product_marketing_endpoint(
     request: ProductMarketingRequest,
     current_user=Depends(get_current_user),
@@ -516,7 +516,7 @@ async def generate_product_marketing_endpoint(
     }
 
 
-@router.post("/brand-strategy", response_model=dict)
+@router.post("/brand-strategy", response_model=dict, dependencies=[Depends(require_feature("ai_caption"))])
 async def generate_brand_strategy_endpoint(
     request: BrandStrategyRequest,
     current_user=Depends(get_current_user),

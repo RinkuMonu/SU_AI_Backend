@@ -93,6 +93,8 @@ class Settings(BaseSettings):
 
     PAYIN_URL: str = ""
     PAYIN_TOKEN: str = ""
+    PAYIN_STATUS_URL: Optional[str] = None
+    PAYIN_CALLBACK_URL: Optional[str] = None
     
     GEOAPIFY_API_KEY: str = ""
     FIRECRAWL_API_KEY: Optional[str] = None
@@ -177,6 +179,11 @@ class Settings(BaseSettings):
             self.FAST2SMS_ROUTE = os.getenv("FAST2SMS_ROUTE")
         if os.getenv("FAST2SMS_VARIABLES_FORMAT"):
             self.FAST2SMS_VARIABLES_FORMAT = os.getenv("FAST2SMS_VARIABLES_FORMAT")
+        if not self.PAYIN_STATUS_URL and self.PAYIN_URL:
+            self.PAYIN_STATUS_URL = self.PAYIN_URL.replace("/payin", "/status")
+        if not self.PAYIN_CALLBACK_URL:
+            base = (self.BACKEND_URL or "https://api.dhandagrow.com").rstrip("/")
+            self.PAYIN_CALLBACK_URL = f"{base}/api/v1/payments/payin/callback"
         if not self.GEMINI_API_KEY and self.GEMINI_BACKUP_API_KEY:
             self.GEMINI_API_KEY = self.GEMINI_BACKUP_API_KEY
         elif not self.GEMINI_API_KEY and os.getenv("GEMINI_API_KEY"):
