@@ -34,7 +34,9 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.8-flash"
     GEMINI_FAST_MODEL: str = "gemini-3.8-flash"
     GEMINI_REASONING_MODEL: str = "gemini-3.8-pro"
+    GEMINI_MARKETING_MODEL: str = "gemini-2.5-flash"
     GEMINI_VIDEO_MODEL: str = "gemini-omni-1.1-flash"
+    GEMINI_IMAGE_MODEL: str = "gemini-nano-banana-2.1"
     VIDEO_PROVIDER: str = "mock"
     VOICE_PROVIDER: str = "gtts"
     VIDEO_API_KEY: Optional[str] = None

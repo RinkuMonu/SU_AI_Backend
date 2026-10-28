@@ -52,6 +52,10 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
     if not doc.get("role"):
         doc["role"] = "user"
 
+    services = doc.get("selected_services") or doc.get("selectedServices") or []
+    doc["selected_services"] = services
+    doc["selectedServices"] = services
+
     return {
         "success": True,
         "data": doc

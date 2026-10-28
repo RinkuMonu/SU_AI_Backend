@@ -37,6 +37,8 @@ class Business(MongoBaseModel):
     none_of_these_selected: Optional[bool] = None
     website_skipped: Optional[bool] = None
     has_storefront: Optional[bool] = None
+    selected_services: Optional[List[str]] = None
+    service_details: Optional[List[dict]] = None
 
     # Onboarding Status Fields
     brand_kit_status: str = "not_started"

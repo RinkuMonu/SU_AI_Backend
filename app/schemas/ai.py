@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 
 class CaptionRequest(BaseModel):
@@ -138,3 +138,34 @@ class BrandStrategyResponse(BaseModel):
     color_and_visual_strategy: Dict[str, Any] = Field(default_factory=dict)
     content_pillars: List[Dict[str, Any]] = Field(default_factory=list)
     growth_recommendations: List[str] = Field(default_factory=list)
+
+
+# ============================================================================
+# Centralized Gemini cURL & Generation Schemas
+# ============================================================================
+
+class MarketingContentPackage(BaseModel):
+    headline: str
+    bilingual_caption: Union[Dict[str, str], str]
+    hashtags: List[str] = Field(default_factory=list)
+    reel_script: Union[Dict[str, Any], str]
+    video_generation_prompt: str
+    image_generation_prompt: str
+
+
+class GeminiGenerateRequest(BaseModel):
+    task: str  # marketing_content/text, video_generation/video, image_generation/image
+    prompt: str
+    model: Optional[str] = None
+    options: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class GeminiGenerateResponse(BaseModel):
+    success: bool
+    task: str
+    model: str
+    endpoint: str
+    data: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
+    error: Optional[Dict[str, Any]] = None
+

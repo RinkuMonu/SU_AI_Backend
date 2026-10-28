@@ -29,6 +29,7 @@ class User(MongoBaseModel):
     role: Optional[str] = None
     onboarding_step: Optional[int] = 1
     online_presence: Optional[str] = None
+    selected_services: Optional[List[str]] = None
 
     # Business Registration Fields
     business_logo: Optional[str] = None

@@ -117,6 +117,8 @@ class UserResponse(BaseModel):
     onboarding_status: Optional[str] = None
     onboarding_step: Optional[int] = 1
     online_presence: Optional[str] = None
+    selected_services: Optional[List[str]] = Field(default_factory=list)
+    selectedServices: Optional[List[str]] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -132,6 +134,9 @@ class UserResponse(BaseModel):
             ev = data.get("email_verified", data.get("emailVerified", False))
             data["email_verified"] = ev
             data["emailVerified"] = ev
+            ss = data.get("selected_services") or data.get("selectedServices") or []
+            data["selected_services"] = ss
+            data["selectedServices"] = ss
         elif hasattr(data, "__dict__") or hasattr(data, "model_dump"):
             d = data.model_dump() if hasattr(data, "model_dump") else dict(data)
             fn = d.get("name") or getattr(data, "fullName", None) or getattr(data, "name", None)
@@ -144,6 +149,9 @@ class UserResponse(BaseModel):
             ev = d.get("email_verified", getattr(data, "emailVerified", False))
             d["email_verified"] = ev
             d["emailVerified"] = ev
+            ss = d.get("selected_services") or getattr(data, "selectedServices", None) or getattr(data, "selected_services", None) or []
+            d["selected_services"] = ss
+            d["selectedServices"] = ss
             return d
         return data
 
@@ -198,6 +206,8 @@ class UserUpdate(BaseModel):
     onboarding_step: Optional[int] = None
     online_presence: Optional[str] = None
     onboarding_status: Optional[str] = None
+    selected_services: Optional[List[str]] = None
+    selectedServices: Optional[List[str]] = None
 
     model_config = {
         "extra": "allow"

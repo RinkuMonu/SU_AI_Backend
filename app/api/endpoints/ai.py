@@ -1,8 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 import time
-from typing import List
+import logging
+from typing import List, Optional
 
-from app.schemas.ai import CaptionRequest, CaptionResponse, AIGenerationHistoryResponse, ImageGenerationRequest
+from app.schemas.ai import (
+    CaptionRequest,
+    CaptionResponse,
+    AIGenerationHistoryResponse,
+    ImageGenerationRequest,
+    GeminiGenerateRequest,
+    GeminiGenerateResponse,
+    MarketingContentPackage,
+)
+from app.services.gemini_service import generate_with_gemini, GeminiService
 from app.models.ai import AIGenerationHistory
 from app.ai.services.business_context import BusinessContextService
 from app.ai.services.text_generation import TextGenerationService
@@ -17,7 +27,66 @@ from app.api.dependencies import require_feature, require_credits, require_usage
 from app.services.credit_service import CreditService
 from app.services.subscription_service import SubscriptionService
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+@router.post("/generate", response_model=GeminiGenerateResponse)
+async def generate_with_gemini_endpoint(
+    request: GeminiGenerateRequest,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """
+    Centralized Gemini AI generation endpoint with automatic task-based model switching:
+      - task='marketing_content' or 'text': Generates complete marketing package via generateContent (Function A)
+      - task='video_generation' or 'video': Generates vertical 9:16 promotional video via interactions (Function B)
+      - task='image_generation' or 'image': Generates premium Instagram ad image via interactions (Function C)
+    """
+    try:
+        result = await generate_with_gemini(request)
+        return GeminiGenerateResponse(**result)
+    except Exception as e:
+        logger.error(f"Error in /generate endpoint: {e}")
+        return GeminiGenerateResponse(
+            success=False,
+            task=request.task,
+            model=request.model or "unknown",
+            endpoint="https://generativelanguage.googleapis.com/v1beta",
+            error={"code": "GENERATION_FAILED", "message": str(e)}
+        )
+
+
+@router.post("/marketing-content", response_model=dict)
+async def generate_marketing_content_endpoint(
+    prompt: str,
+    model: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Generates structured marketing content package using Gemini Function A."""
+    return await generate_with_gemini(task="marketing_content", prompt=prompt, model=model)
+
+
+@router.post("/promotional-video", response_model=dict)
+async def generate_promotional_video_endpoint(
+    prompt: str,
+    model: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Generates vertical 9:16 promotional video using Gemini Function B."""
+    return await generate_with_gemini(task="video_generation", prompt=prompt, model=model)
+
+
+@router.post("/advertisement-image", response_model=dict)
+async def generate_advertisement_image_endpoint(
+    prompt: str,
+    model: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """Generates premium advertisement image using Gemini Function C."""
+    return await generate_with_gemini(task="image_generation", prompt=prompt, model=model)
+
+
 async def get_history_collection():
     db = get_database()
     return db["ai_generations"]

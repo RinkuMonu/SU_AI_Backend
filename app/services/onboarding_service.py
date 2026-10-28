@@ -1,10 +1,17 @@
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime, timezone
 from bson import ObjectId
 from fastapi import HTTPException, status
 
-from app.schemas.onboarding import VALID_ONLINE_PRESENCE_OPTIONS, BusinessOnlinePresenceType
+from app.schemas.onboarding import (
+    VALID_ONLINE_PRESENCE_OPTIONS,
+    BusinessOnlinePresenceType,
+    SUPPORTED_BUSINESS_SERVICES,
+    VALID_BUSINESS_SERVICE_IDS,
+    BUSINESS_SERVICE_MAP,
+    BusinessServiceItem,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,11 +45,21 @@ class OnboardingService:
           - 'in_progress': User has chosen an online-presence or has begun onboarding steps, but not completed.
           - 'completed': Onboarding is explicitly finalized or all prerequisite steps are satisfied.
         """
+        selected_services = (
+            (business_doc.get("selected_services") if business_doc else None) or
+            (business_doc.get("selectedServices") if business_doc else None) or
+            (user_doc.get("selected_services") if user_doc else None) or
+            (user_doc.get("selectedServices") if user_doc else None) or
+            []
+        )
+
         if not user_doc:
             return {
                 "onboarding_status": "not_started",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": False,
                 "onboardingCompleted": False,
                 "can_access_dashboard": False,
@@ -74,6 +91,8 @@ class OnboardingService:
                 "onboarding_status": "not_started",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": False,
                 "onboardingCompleted": False,
                 "can_access_dashboard": False,
@@ -91,6 +110,8 @@ class OnboardingService:
                 "onboarding_status": "completed",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": True,
                 "onboardingCompleted": True,
                 "can_access_dashboard": True,
@@ -107,6 +128,8 @@ class OnboardingService:
                 "onboarding_status": "completed",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": True,
                 "onboardingCompleted": True,
                 "can_access_dashboard": True,
@@ -145,6 +168,8 @@ class OnboardingService:
                 "onboarding_step": max(onboarding_step, 2),
                 "online_presence": online_presence,
                 "business_type": business_type or online_presence,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": True,
                 "onboardingCompleted": True,
                 "can_access_dashboard": True,
@@ -163,6 +188,8 @@ class OnboardingService:
                 "onboarding_step": 1,
                 "online_presence": None,
                 "business_type": business_type,
+                "selected_services": selected_services,
+                "selectedServices": selected_services,
                 "onboarding_completed": False,
                 "onboardingCompleted": False,
                 "can_access_dashboard": False,
@@ -183,6 +210,8 @@ class OnboardingService:
             "onboarding_step": effective_step,
             "online_presence": online_presence,
             "business_type": business_type or online_presence,
+            "selected_services": selected_services,
+            "selectedServices": selected_services,
             "onboarding_completed": False,
             "onboardingCompleted": False,
             "can_access_dashboard": False,
@@ -215,6 +244,15 @@ class OnboardingService:
         if payload_dict.get("website_url") or payload_dict.get("website"):
             user_updates["website"] = str(payload_dict.get("website_url") or payload_dict.get("website")).strip()
 
+        # Optional selected_services in online_presence payload
+        srv_input = payload_dict.get("selected_services") or payload_dict.get("selectedServices")
+        norm_srv_ids = None
+        service_items = None
+        if srv_input is not None:
+            norm_srv_ids, service_items = OnboardingService.validate_and_normalize_services(srv_input)
+            user_updates["selected_services"] = norm_srv_ids
+            user_updates["selectedServices"] = norm_srv_ids
+
         # Check existing step; advance to 2 if currently <= 1
         u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
         is_pending = False
@@ -240,6 +278,12 @@ class OnboardingService:
             "business_type": user_updates["business_type"],
             "updated_at": now
         }
+        if norm_srv_ids is not None:
+            business_updates["selected_services"] = norm_srv_ids
+            business_updates["selectedServices"] = norm_srv_ids
+            if service_items:
+                business_updates["service_details"] = [item.model_dump() for item in service_items]
+
         if "google_maps_url" in user_updates:
             business_updates["google_maps_url"] = user_updates["google_maps_url"]
         if "website" in user_updates:
@@ -314,4 +358,176 @@ class OnboardingService:
             "next_step": state["next_step"],
             "can_access_dashboard": state["can_access_dashboard"],
             "data": state
+        }
+
+    @staticmethod
+    def validate_and_normalize_services(selected_services: Any) -> Tuple[List[str], List[BusinessServiceItem]]:
+        """
+        Validates an array of selected business service IDs against the supported service catalog.
+        - Enforces that input is a list/array.
+        - Rejects any unknown or invalid service IDs with a clear 400 validation error.
+        - Deduplicates IDs safely while preserving order.
+        - Returns a tuple of (normalized_ids, service_items).
+        """
+        if selected_services is None:
+            return [], []
+        if not isinstance(selected_services, list):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="selectedServices must be an array of service identifiers."
+            )
+
+        seen = set()
+        deduped: List[str] = []
+        for raw_id in selected_services:
+            if not isinstance(raw_id, str):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Service ID must be a string, got {type(raw_id).__name__}."
+                )
+            clean_id = raw_id.strip()
+            if not clean_id:
+                continue
+            if clean_id not in VALID_BUSINESS_SERVICE_IDS:
+                allowed_ids = ", ".join(sorted(list(VALID_BUSINESS_SERVICE_IDS)))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid business service '{raw_id}'. Allowed services are: {allowed_ids}."
+                )
+            if clean_id not in seen:
+                seen.add(clean_id)
+                deduped.append(clean_id)
+
+        items = [BusinessServiceItem(**BUSINESS_SERVICE_MAP[s_id]) for s_id in deduped]
+        return deduped, items
+
+    @staticmethod
+    async def save_selected_services(db, user_id: str, selected_services: Any) -> Dict[str, Any]:
+        """
+        Validates, deduplicates, and saves the business service selections for the authenticated user and their business.
+        Updates choices persistently in both users (or pending_users) and businesses collections.
+        """
+        norm_ids, service_items = OnboardingService.validate_and_normalize_services(selected_services)
+        now = datetime.now(timezone.utc)
+
+        # Check if user is in users or pending_users
+        is_pending = False
+        u_doc = None
+        try:
+            u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            pass
+        if not u_doc:
+            try:
+                u_doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
+                is_pending = True
+            except Exception:
+                pass
+
+        target_coll = db["pending_users"] if is_pending else db["users"]
+        try:
+            await target_coll.update_one(
+                {"_id": ObjectId(user_id)},
+                {"$set": {
+                    "selected_services": norm_ids,
+                    "selectedServices": norm_ids,
+                    "updated_at": now
+                }}
+            )
+        except Exception as e:
+            logger.warning(f"Error updating user selected_services: {e}")
+
+        # Update or upsert business document
+        business_updates = {
+            "owner_id": str(user_id),
+            "ownerId": str(user_id),
+            "selected_services": norm_ids,
+            "selectedServices": norm_ids,
+            "service_details": [item.model_dump() for item in service_items],
+            "updated_at": now
+        }
+        await db["businesses"].update_one(
+            {"$or": [
+                {"owner_id": str(user_id)},
+                {"ownerId": str(user_id)},
+                {"user_id": str(user_id)},
+                {"userId": str(user_id)}
+            ]},
+            {"$set": business_updates},
+            upsert=True
+        )
+
+        return {
+            "success": True,
+            "message": "Business services saved successfully.",
+            "selected_services": norm_ids,
+            "selectedServices": norm_ids,
+            "services": [item.model_dump() for item in service_items],
+            "service_details": [item.model_dump() for item in service_items],
+            "count": len(norm_ids)
+        }
+
+    @staticmethod
+    async def get_selected_services(db, user_id: str) -> Dict[str, Any]:
+        """
+        Retrieves the authenticated user's saved business service selections.
+        """
+        bus_doc = await db["businesses"].find_one({"$or": [
+            {"owner_id": str(user_id)},
+            {"ownerId": str(user_id)},
+            {"user_id": str(user_id)},
+            {"userId": str(user_id)}
+        ]}) or {}
+
+        u_doc = None
+        try:
+            u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        except Exception:
+            pass
+        if not u_doc:
+            try:
+                u_doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
+            except Exception:
+                pass
+        if not u_doc:
+            u_doc = {}
+
+        raw_services = (
+            bus_doc.get("selected_services") or
+            bus_doc.get("selectedServices") or
+            u_doc.get("selected_services") or
+            u_doc.get("selectedServices") or
+            []
+        )
+
+        valid_ids = [s for s in raw_services if s in VALID_BUSINESS_SERVICE_IDS]
+        seen = set()
+        deduped = []
+        for s in valid_ids:
+            if s not in seen:
+                seen.add(s)
+                deduped.append(s)
+
+        service_items = [BusinessServiceItem(**BUSINESS_SERVICE_MAP[s_id]) for s_id in deduped]
+
+        return {
+            "success": True,
+            "message": "Selected business services retrieved successfully.",
+            "selected_services": deduped,
+            "selectedServices": deduped,
+            "services": [item.model_dump() for item in service_items],
+            "service_details": [item.model_dump() for item in service_items],
+            "count": len(deduped)
+        }
+
+    @staticmethod
+    def get_services_catalog() -> Dict[str, Any]:
+        """
+        Returns the catalog of all supported business services.
+        """
+        items = [BusinessServiceItem(**s) for s in SUPPORTED_BUSINESS_SERVICES]
+        return {
+            "success": True,
+            "services": [item.model_dump() for item in items],
+            "count": len(items)
         }

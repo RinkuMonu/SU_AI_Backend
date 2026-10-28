@@ -43,7 +43,15 @@ from app.services.first_post_service import FirstPostService
 from app.services.platform_onboarding_service import PlatformOnboardingService
 from app.services.subscription_service import SubscriptionService
 from app.services.onboarding_service import OnboardingService
-from app.schemas.onboarding import OnlinePresenceRequest, OnlinePresenceResponse, VALID_ONLINE_PRESENCE_OPTIONS
+from app.schemas.onboarding import (
+    OnlinePresenceRequest,
+    OnlinePresenceResponse,
+    VALID_ONLINE_PRESENCE_OPTIONS,
+    BusinessServicesSelectionRequest,
+    BusinessServicesSelectionResponse,
+    BusinessServicesCatalogResponse,
+    SUPPORTED_BUSINESS_SERVICES,
+)
 from datetime import datetime, timezone
 from bson import ObjectId
 
@@ -199,6 +207,8 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
         "onboarding_status": onboarding_state["onboarding_status"],
         "online_presence": onboarding_state.get("online_presence"),
         "business_type": onboarding_state.get("business_type"),
+        "selected_services": onboarding_state.get("selected_services", []),
+        "selectedServices": onboarding_state.get("selectedServices", []),
         "can_access_dashboard": onboarding_state["can_access_dashboard"],
         "requires_onboarding": onboarding_state["requires_onboarding"],
         "next_step": onboarding_state["next_step"],
@@ -257,6 +267,8 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
         "plan_skipped",
         "online_presence",
         "business_type",
+        "selected_services",
+        "selectedServices",
         "onboarding_status",
         "google_maps_url",
         "website_url",
@@ -269,6 +281,13 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
         update_data["social_connectivity_skipped"] = update_data.pop("social_skipped")
     if "plan_skipped" in update_data:
         update_data["plan_selection_skipped"] = update_data.pop("plan_skipped")
+
+    # Normalize selected_services if passed
+    if "selected_services" in update_data or "selectedServices" in update_data:
+        raw_srv = update_data.get("selected_services") if "selected_services" in update_data else update_data.get("selectedServices")
+        norm_srv_ids, srv_items = OnboardingService.validate_and_normalize_services(raw_srv)
+        update_data["selected_services"] = norm_srv_ids
+        update_data["selectedServices"] = norm_srv_ids
 
     if "online_presence" in update_data:
         presence = OnboardingService.normalize_online_presence(update_data["online_presence"])
@@ -296,6 +315,9 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
             business_updates["online_presence"] = update_data["online_presence"]
         if "business_type" in update_data:
             business_updates["business_type"] = update_data["business_type"]
+        if "selected_services" in update_data:
+            business_updates["selected_services"] = update_data["selected_services"]
+            business_updates["selectedServices"] = update_data["selectedServices"]
         if "google_maps_url" in update_data:
             business_updates["google_maps_url"] = update_data["google_maps_url"]
         if "website" in update_data:
@@ -353,12 +375,52 @@ async def get_online_presence(current_user=Depends(get_current_user)):
         "success": True,
         "online_presence": state.get("online_presence"),
         "business_type": state.get("business_type"),
+        "selected_services": state.get("selected_services", []),
+        "selectedServices": state.get("selectedServices", []),
         "onboarding_step": state.get("onboarding_step", 1),
         "onboarding_status": state.get("onboarding_status", "not_started"),
         "next_step": state.get("next_step"),
         "can_access_dashboard": state.get("can_access_dashboard", False),
         "data": state
     }
+
+
+@router.post("/services", response_model=BusinessServicesSelectionResponse)
+@router.put("/services", response_model=BusinessServicesSelectionResponse)
+async def save_business_services(
+    payload: BusinessServicesSelectionRequest,
+    current_user=Depends(get_current_user)
+):
+    """
+    Saves the selected business services for the authenticated user and business.
+    Validates each service ID against the supported catalog, deduplicates safely,
+    and returns consistent response structure.
+    """
+    db = get_database()
+    uid = str(current_user.get("id"))
+    result = await OnboardingService.save_selected_services(db, uid, payload.selected_services)
+    return BusinessServicesSelectionResponse(**result)
+
+
+@router.get("/services", response_model=BusinessServicesSelectionResponse)
+async def get_business_services(current_user=Depends(get_current_user)):
+    """
+    Retrieves the authenticated user's saved business service selections.
+    Enables frontend to restore selections across browser refresh or login sessions.
+    """
+    db = get_database()
+    uid = str(current_user.get("id"))
+    result = await OnboardingService.get_selected_services(db, uid)
+    return BusinessServicesSelectionResponse(**result)
+
+
+@router.get("/services/catalog", response_model=BusinessServicesCatalogResponse)
+async def get_business_services_catalog():
+    """
+    Returns the supported catalog of selectable business services.
+    """
+    result = OnboardingService.get_services_catalog()
+    return BusinessServicesCatalogResponse(**result)
 
 
 @router.post("/complete", response_model=Dict[str, Any])
