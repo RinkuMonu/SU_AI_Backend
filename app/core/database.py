@@ -64,6 +64,11 @@ async def init_db_indexes():
         # 7. OTP collection
         await db["otps"].create_index("expires_at", expireAfterSeconds=0, background=True)
         await db["otps"].create_index("phone_number", sparse=True, background=True)
+
+        # 8. Leads collection
+        await db["leads"].create_index([("created_at", -1)], background=True)
+        await db["leads"].create_index("email", background=True)
+        await db["leads"].create_index("status", background=True)
     except Exception as e:
         print(f"Warning: Non-fatal error initializing MongoDB indexes: {e}")
 

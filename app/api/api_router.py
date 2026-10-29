@@ -13,6 +13,7 @@ from app.api.endpoints import (
     businesses,
     linkedin,
     brand,
+    leads,
 )
 
 api_router = APIRouter()
@@ -31,3 +32,5 @@ api_router.include_router(brand.router, prefix="/brands", tags=["Brand Kit"])
 api_router.include_router(brand.router, prefix="/brand", tags=["Brand Kit"])
 api_router.include_router(brand.router, prefix="/brand-kit", tags=["Brand Kit"])
 api_router.include_router(linkedin.router, prefix="/linkedin", tags=["LinkedIn"])
+api_router.include_router(leads.router, prefix="/leads", tags=["Leads"])
+api_router.include_router(leads.router, prefix="/contact", tags=["Contact"], include_in_schema=False)
