@@ -184,6 +184,20 @@ async def upgrade_subscription(
     if not tx:
         raise HTTPException(status_code=404, detail="Payment transaction not found")
 
+    # Match intended plan with transaction plan
+    tx_plan = (tx.get("plan_id") or "").upper().strip()
+    plan_matches = (
+        tx_plan == normalized or
+        (normalized in ["PRO", "GROWTH"] and tx_plan in ["PRO", "GROWTH"]) or
+        (normalized in ["TEST", "TEST_PLAN"] and tx_plan in ["TEST", "TEST_PLAN"]) or
+        (normalized in ["BASIC", "STARTER"] and tx_plan in ["BASIC", "STARTER"])
+    )
+    if not plan_matches:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payment order was created for {tx_plan}, not requested plan {normalized}."
+        )
+
     if tx.get("status") != "success":
         # Check provider status before deciding
         verify_res = await PayinService.verify_payment_with_provider(db, request.order_id)

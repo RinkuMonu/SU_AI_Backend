@@ -22,7 +22,8 @@ class PayinService:
         plan_id: str,
         billing_cycle: str = "monthly",
         user_name: Optional[str] = None,
-        user_mobile: Optional[str] = None
+        user_mobile: Optional[str] = None,
+        frontend_url: Optional[str] = None
     ) -> Dict[str, Any]:
         normalized_plan_id = (plan_id or "").upper().strip()
         if normalized_plan_id not in PLANS:
@@ -91,8 +92,8 @@ class PayinService:
         await db["payment_transactions"].insert_one(transaction)
 
         callback_url = getattr(settings, "PAYIN_CALLBACK_URL", None) or f"{(settings.BACKEND_URL or 'https://api.dhandagrow.com').rstrip('/')}/api/v1/payments/payin/callback"
-        frontend_url = (settings.FRONTEND_URL or "https://dhandagrow.com").rstrip("/")
-        redirect_url = f"{frontend_url}/subscription?order_id={order_id}"
+        base_frontend = (frontend_url or settings.FRONTEND_URL or "https://dhandagrow.com").rstrip("/")
+        redirect_url = f"{base_frontend}/subscription?order_id={order_id}&tab=transactions"
 
         payload = {
             "amount": total_amount,
@@ -197,6 +198,54 @@ class PayinService:
             raise HTTPException(status_code=504, detail="Payment Gateway timeout")
 
     @staticmethod
+    async def query_provider_order_status(order_id: str) -> Dict[str, Any]:
+        """
+        Directly queries Finunique's official server-side API to retrieve official transaction status.
+        Uses GET https://server.finuniques.in/api/v1/payment/payin/{order_id} with authorized PAYIN_TOKEN.
+        """
+        if not settings.PAYIN_URL or not settings.PAYIN_TOKEN:
+            return {"confirmed_success": False, "provider_status": "unconfigured", "data": None}
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+        }
+        status_url = getattr(settings, "PAYIN_STATUS_URL", None)
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                finunique_get_url = f"{settings.PAYIN_URL.rstrip('/')}/{order_id}"
+                res = await client.get(finunique_get_url, headers=headers)
+                if res.status_code != 200 and status_url:
+                    res = await client.post(status_url, json={"reference": order_id, "orderId": order_id}, headers=headers)
+
+                if res.status_code == 200:
+                    data = res.json()
+                    status_payload = data.get("data") if isinstance(data.get("data"), dict) else data
+                    raw_status = str(status_payload.get("status") or status_payload.get("responseCode") or status_payload.get("code") or "").strip().upper()
+                    is_paid = raw_status in ["SUCCESS", "PAID", "COMPLETED", "100", "200"]
+                    return {
+                        "confirmed_success": is_paid,
+                        "provider_status": raw_status,
+                        "data": status_payload,
+                        "remark": status_payload.get("remark") or status_payload.get("responseDescription") or status_payload.get("message")
+                    }
+                else:
+                    return {
+                        "confirmed_success": False,
+                        "provider_status": f"HTTP_{res.status_code}",
+                        "data": None,
+                        "remark": f"Provider returned HTTP {res.status_code}"
+                    }
+        except Exception as e:
+            logger.error(f"Error querying provider status for {order_id}: {e}")
+            return {
+                "confirmed_success": False,
+                "provider_status": "error",
+                "data": None,
+                "remark": str(e)
+            }
+
+    @staticmethod
     async def verify_payment_with_provider(db, order_id: str) -> Dict[str, Any]:
         """
         Officially verifies payment status server-side with the Payin provider (Finunique).
@@ -235,7 +284,9 @@ class PayinService:
                     status_payload = data.get("data") if isinstance(data.get("data"), dict) else data
                     if not status_payload.get("orderId") and not status_payload.get("reference"):
                         status_payload["orderId"] = order_id
-                    callback_res = await PayinService.process_callback(db, status_payload, headers=dict(res.headers))
+                    callback_res = await PayinService.process_callback(
+                        db, status_payload, headers=dict(res.headers), from_provider_verification=True
+                    )
                     return {
                         "success": callback_res.get("success", False),
                         "status": callback_res.get("status", transaction.get("status")),
@@ -261,7 +312,12 @@ class PayinService:
             }
 
     @staticmethod
-    async def process_callback(db, payload: Dict[str, Any], headers: Dict[str, str] = None) -> Dict[str, Any]:
+    async def process_callback(
+        db, 
+        payload: Dict[str, Any], 
+        headers: Dict[str, str] = None,
+        from_provider_verification: bool = False
+    ) -> Dict[str, Any]:
         order_id = (
             payload.get("orderId")
             or payload.get("reference")
@@ -281,6 +337,7 @@ class PayinService:
             
         response_code = str(payload.get("responseCode") or payload.get("code") or payload.get("status") or payload.get("txnStatus") or "").strip().upper()
         payload_status = str(payload.get("status") or payload.get("txnStatus") or payload.get("payment_status") or "").strip().upper()
+        remark_text = payload.get("remark") or payload.get("responseDescription") or payload.get("message")
         now = datetime.now(timezone.utc)
         
         is_success = (response_code in ["100", "SUCCESS", "PAID", "COMPLETED", "200"] or payload_status in ["SUCCESS", "PAID", "COMPLETED"])
@@ -290,6 +347,7 @@ class PayinService:
             transaction_amount = float(transaction["amount"])
             base_amount = float(transaction.get("base_amount") or transaction_amount)
             
+            # 1. Match amount (handling rupee vs paise representation)
             amount_matches = False
             for expected in [transaction_amount, base_amount]:
                 if abs(payload_amount - expected) < 0.05 or \
@@ -301,15 +359,98 @@ class PayinService:
             if not amount_matches:
                 await db["payment_transactions"].update_one(
                     {"order_id": order_id},
-                    {"$set": {"status": "failed", "failure_reason": f"Amount mismatch: received {payload_amount}, expected {transaction_amount}", "updated_at": now}}
+                    {"$set": {
+                        "status": "failed",
+                        "failure_reason": f"Amount mismatch: received {payload_amount}, expected {transaction_amount}",
+                        "completed_at": now,
+                        "updated_at": now
+                    }}
                 )
                 return {"success": False, "status": "failed", "message": "Amount mismatch"}
+
+            # 2. Match currency if provided
+            payload_currency = payload.get("currency") or payload.get("cu")
+            if payload_currency and str(payload_currency).strip().upper() != str(transaction.get("currency", "INR")).strip().upper():
+                await db["payment_transactions"].update_one(
+                    {"order_id": order_id},
+                    {"$set": {
+                        "status": "failed",
+                        "failure_reason": f"Currency mismatch: received {payload_currency}, expected {transaction.get('currency', 'INR')}",
+                        "completed_at": now,
+                        "updated_at": now
+                    }}
+                )
+                return {"success": False, "status": "failed", "message": "Currency mismatch"}
+
+            # 3. Match intended user if provided
+            payload_user_id = payload.get("userId") or payload.get("user_id")
+            if payload_user_id and str(payload_user_id).strip() != str(transaction.get("user_id")).strip():
+                await db["payment_transactions"].update_one(
+                    {"order_id": order_id},
+                    {"$set": {
+                        "status": "failed",
+                        "failure_reason": "User mismatch",
+                        "completed_at": now,
+                        "updated_at": now
+                    }}
+                )
+                return {"success": False, "status": "failed", "message": "User mismatch"}
+
+            # 4. Match intended plan if provided
+            payload_plan_id = payload.get("plan_id") or payload.get("plan")
+            if payload_plan_id:
+                norm_p = str(payload_plan_id).strip().upper()
+                tx_p = str(transaction.get("plan_id", "")).strip().upper()
+                plan_ok = (
+                    norm_p == tx_p or
+                    (norm_p in ["PRO", "GROWTH"] and tx_p in ["PRO", "GROWTH"]) or
+                    (norm_p in ["TEST", "TEST_PLAN"] and tx_p in ["TEST", "TEST_PLAN"]) or
+                    (norm_p in ["BASIC", "STARTER"] and tx_p in ["BASIC", "STARTER"])
+                )
+                if not plan_ok:
+                    await db["payment_transactions"].update_one(
+                        {"order_id": order_id},
+                        {"$set": {
+                            "status": "failed",
+                            "failure_reason": f"Plan mismatch: received {norm_p}, expected {tx_p}",
+                            "completed_at": now,
+                            "updated_at": now
+                        }}
+                    )
+                    return {"success": False, "status": "failed", "message": "Plan mismatch"}
+
+            # 5. Direct server-side verification check with payment provider if received externally
+            is_live_provider = (
+                bool(settings.PAYIN_URL) and
+                "mock" not in str(settings.PAYIN_URL).lower() and
+                bool(settings.PAYIN_TOKEN) and
+                "mock" not in str(settings.PAYIN_TOKEN).lower()
+            )
+            if not from_provider_verification and is_live_provider:
+                provider_check = await PayinService.query_provider_order_status(order_id)
+                if not provider_check.get("confirmed_success"):
+                    remark = provider_check.get("remark") or f"Provider reported {provider_check.get('provider_status')}"
+                    logger.warning(f"Rejecting unconfirmed callback for order {order_id}: {remark}")
+                    await db["payment_transactions"].update_one(
+                        {"order_id": order_id, "status": {"$ne": "success"}},
+                        {"$set": {
+                            "status": "failed",
+                            "failure_reason": f"Payment unconfirmed by provider: {remark}",
+                            "completed_at": now,
+                            "updated_at": now
+                        }}
+                    )
+                    return {"success": False, "status": "failed", "message": f"Payment not confirmed by payment gateway: {remark}"}
                 
             external_tx_id = (
                 payload.get("pgTransId")
                 or payload.get("txnId")
                 or payload.get("bank_ref_no")
+                or payload.get("bankRefNo")
+                or payload.get("utr")
+                or payload.get("rrn")
                 or payload.get("provider_reference")
+                or payload.get("reference")
                 or order_id
             )
             updated_tx = await db["payment_transactions"].find_one_and_update(
@@ -318,9 +459,12 @@ class PayinService:
                     "status": "success", 
                     "external_transaction_id": external_tx_id,
                     "verified_at": now,
+                    "completed_at": now,
                     "updated_at": now,
                     "raw_callback": {k: str(v) for k, v in payload.items() if k not in ["secret", "token", "password"]}
-                }},
+                },
+                "$unset": {"failure_reason": ""}
+                },
                 return_document=ReturnDocument.AFTER
             )
             
@@ -353,32 +497,52 @@ class PayinService:
         elif response_code in ["101", "PENDING", "INITIATED"] or payload_status in ["PENDING", "INITIATED"]:
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {"status": "pending", "failure_reason": payload.get("responseDescription", "Payment pending"), "updated_at": now}}
+                {"$set": {
+                    "status": "pending",
+                    "failure_reason": remark_text or "Payment pending",
+                    "updated_at": now
+                }}
             )
             return {"success": False, "status": "pending", "message": "Payment pending"}
             
         elif response_code in ["103", "CANCELLED", "CANCELED"] or payload_status in ["CANCELLED", "CANCELED"]:
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {"status": "cancelled", "failure_reason": payload.get("responseDescription", "Payment cancelled by user"), "updated_at": now}}
+                {"$set": {
+                    "status": "cancelled",
+                    "cancelled_at": now,
+                    "completed_at": now,
+                    "failure_reason": remark_text or "Payment cancelled by user",
+                    "updated_at": now
+                }}
             )
             return {"success": False, "status": "cancelled", "message": "Payment cancelled"}
             
         elif response_code in ["104", "EXPIRED"] or payload_status in ["EXPIRED"]:
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {"status": "expired", "failure_reason": payload.get("responseDescription", "Payment expired"), "updated_at": now}}
+                {"$set": {
+                    "status": "expired",
+                    "completed_at": now,
+                    "failure_reason": remark_text or "Payment expired",
+                    "updated_at": now
+                }}
             )
             return {"success": False, "status": "expired", "message": "Payment expired"}
         elif response_code in ["102", "FAILED", "FAILURE", "ERROR"] or payload_status in ["FAILED", "FAILURE", "ERROR"]:
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {"status": "failed", "failure_reason": payload.get("responseDescription", "Payment failed"), "updated_at": now}}
+                {"$set": {
+                    "status": "failed",
+                    "completed_at": now,
+                    "failure_reason": remark_text or "Payment failed",
+                    "updated_at": now
+                }}
             )
             return {"success": False, "status": "failed", "message": "Payment failed"}
         else:
             current_status = transaction.get("status", "pending")
-            return {"success": False, "status": current_status, "message": payload.get("responseDescription", "Payment pending or status inconclusive")}
+            return {"success": False, "status": current_status, "message": remark_text or "Payment pending or status inconclusive"}
 
     @staticmethod
     async def cancel_payment(
@@ -522,9 +686,11 @@ class PayinService:
 
             items.append({
                 "id": str(doc["_id"]),
+                "transaction_id": str(doc["_id"]),
                 "order_id": doc.get("order_id", ""),
                 "provider_reference": provider_ref,
                 "external_transaction_id": doc.get("external_transaction_id"),
+                "user_id": str(doc.get("user_id")),
                 "plan_id": p_id,
                 "plan_name": doc.get("plan_name") or p_config.get("name", p_id),
                 "amount": float(doc.get("amount", 0.0)),
@@ -536,10 +702,12 @@ class PayinService:
                 "failure_reason": doc.get("failure_reason"),
                 "payment_url": doc.get("payment_url"),
                 "purchased_credits": p_credits,
+                "credits_granted": p_credits if doc.get("status") == "success" else 0,
                 "created_at": created,
-                "completed_at": completed,
+                "completed_at": doc.get("completed_at") or completed,
                 "verified_at": verified,
-                "cancelled_at": cancelled
+                "cancelled_at": cancelled,
+                "updated_at": doc.get("updated_at")
             })
 
         total_pages = max(1, (total + safe_limit - 1) // safe_limit)

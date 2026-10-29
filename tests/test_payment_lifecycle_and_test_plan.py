@@ -477,3 +477,174 @@ async def test_09_test_plan_reset_and_flow_repeat(mock_post):
         me_res2 = await ac.get("/api/v1/subscription/me", headers={"Authorization": f"Bearer {token}"})
         assert me_res2.json()["data"]["plan_id"] == "TEST_PLAN"
         assert me_res2.json()["data"]["credits_remaining"] == 25
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 10. Every Available Plan Uses Payin with Correct Price and Validation
+# ─────────────────────────────────────────────────────────────────────────────
+@patch("httpx.AsyncClient.post", autospec=True, side_effect=mock_finunique_create)
+async def test_10_all_plans_create_order_with_correct_prices(mock_post):
+    db = get_database()
+    user_id, token = await create_clean_test_user(db, name="Lifecycle User 10")
+
+    plans_to_test = [
+        {"plan_id": "TEST_PLAN", "expected_amount": 1.0, "expected_credits": 20},
+        {"plan_id": "STARTER", "expected_amount": 799.0, "expected_credits": 100},
+        {"plan_id": "GROWTH", "expected_amount": 2999.0, "expected_credits": 400},
+        {"plan_id": "BUSINESS", "expected_amount": 4999.0, "expected_credits": 1000},
+        {"plan_id": "INFLUENCER", "expected_amount": 9999.0, "expected_credits": 2500},
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for p in plans_to_test:
+            res = await ac.post(
+                "/api/v1/payments/payin/create",
+                json={"plan_id": p["plan_id"], "billing_cycle": "monthly"},
+                headers={"Authorization": f"Bearer {token}"}
+            )
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["amount"] == p["expected_amount"]
+            assert data["currency"] == "INR"
+            assert "upi://" in data["qr_code"] or "http" in data["payment_url"]
+
+            # Verify DB: status is pending/initiated, NOT activated
+            tx = await db["payment_transactions"].find_one({"order_id": data["order_id"]})
+            assert tx["status"] == "initiated"
+            assert tx["amount"] == p["expected_amount"]
+            assert tx["purchased_credits"] == p["expected_credits"]
+
+        # Ensure user's subscription is STILL FREE (creation never activates)
+        sub = await db["subscriptions"].find_one({"user_id": user_id})
+        assert sub["plan_id"] == "FREE"
+        assert sub["credits_remaining"] == 5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. Eliminate False Success: Rejection of Mismatched Callbacks and Upgrade Tampering
+# ─────────────────────────────────────────────────────────────────────────────
+@patch("httpx.AsyncClient.post", autospec=True, side_effect=mock_finunique_create)
+async def test_11_eliminate_false_success_and_mismatches(mock_post):
+    db = get_database()
+    user_id, token = await create_clean_test_user(db, name="Lifecycle User 11")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Create an order for STARTER (799 INR)
+        res = await ac.post(
+            "/api/v1/payments/payin/create",
+            json={"plan_id": "STARTER"},
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        order_id = res.json()["order_id"]
+
+        # 1. Amount mismatch: callback sends 1.0 instead of 799.0
+        res_amt = await ac.post(
+            "/api/v1/payments/payin/callback",
+            json={"orderId": order_id, "responseCode": "100", "amount": "1.0"}
+        )
+        assert res_amt.json()["success"] is False
+        assert "Amount mismatch" in res_amt.json()["message"]
+
+        # 2. Currency mismatch: callback sends USD
+        res_curr = await ac.post(
+            "/api/v1/payments/payin/callback",
+            json={"orderId": order_id, "responseCode": "100", "amount": "799.0", "currency": "USD"}
+        )
+        assert res_curr.json()["success"] is False
+        assert "Currency mismatch" in res_curr.json()["message"]
+
+        # 3. User mismatch: callback sends another user's ID
+        res_usr = await ac.post(
+            "/api/v1/payments/payin/callback",
+            json={"orderId": order_id, "responseCode": "100", "amount": "799.0", "userId": "some_other_user"}
+        )
+        assert res_usr.json()["success"] is False
+        assert "User mismatch" in res_usr.json()["message"]
+
+        # 4. Plan mismatch: callback sends BUSINESS for STARTER order
+        res_plan = await ac.post(
+            "/api/v1/payments/payin/callback",
+            json={"orderId": order_id, "responseCode": "100", "amount": "799.0", "plan_id": "BUSINESS"}
+        )
+        assert res_plan.json()["success"] is False
+        assert "Plan mismatch" in res_plan.json()["message"]
+
+        # 5. Tampering via /subscription/upgrade: trying to upgrade to BUSINESS using STARTER order
+        upg_res = await ac.post(
+            "/api/v1/subscription/upgrade",
+            json={"plan_id": "BUSINESS", "order_id": order_id},
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        assert upg_res.status_code == 400
+        assert "Payment order was created for STARTER, not requested plan BUSINESS" in upg_res.json()["detail"]
+
+        # Confirm user remains FREE and no credits granted
+        sub = await db["subscriptions"].find_one({"user_id": user_id})
+        assert sub["plan_id"] == "FREE"
+        assert sub["credits_remaining"] == 5
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 12. User-Scoped Isolation in Transaction Report
+# ─────────────────────────────────────────────────────────────────────────────
+@patch("httpx.AsyncClient.post", autospec=True, side_effect=mock_finunique_create)
+async def test_12_user_scoped_isolation_in_transaction_report(mock_post):
+    db = get_database()
+    user_a_id, token_a = await create_clean_test_user(db, name="User A")
+    user_b_id, token_b = await create_clean_test_user(db, name="User B")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # User A creates 2 orders
+        res_a1 = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "TEST_PLAN"}, headers={"Authorization": f"Bearer {token_a}"})
+        res_a2 = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "STARTER"}, headers={"Authorization": f"Bearer {token_a}"})
+
+        # User B creates 1 order
+        res_b1 = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "GROWTH"}, headers={"Authorization": f"Bearer {token_b}"})
+
+        # User A fetches transactions
+        rep_a = await ac.get("/api/v1/payments/transactions", headers={"Authorization": f"Bearer {token_a}"})
+        assert rep_a.status_code == 200
+        data_a = rep_a.json()["data"]
+        assert len(data_a) == 2
+        for tx in data_a:
+            assert tx["user_id"] == user_a_id
+            assert tx["user_id"] != user_b_id
+
+        # User B fetches transactions
+        rep_b = await ac.get("/api/v1/payments/transactions", headers={"Authorization": f"Bearer {token_b}"})
+        assert rep_b.status_code == 200
+        data_b = rep_b.json()["data"]
+        assert len(data_b) == 1
+        assert data_b[0]["user_id"] == user_b_id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 13. Failed and Cancelled Callbacks Do Not Activate Entitlements
+# ─────────────────────────────────────────────────────────────────────────────
+@patch("httpx.AsyncClient.post", autospec=True, side_effect=mock_finunique_create)
+async def test_13_failed_and_cancelled_callbacks_no_activation(mock_post):
+    db = get_database()
+    user_id, token = await create_clean_test_user(db, name="Lifecycle User 13")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Create order
+        res = await ac.post("/api/v1/payments/payin/create", json={"plan_id": "PRO"}, headers={"Authorization": f"Bearer {token}"})
+        order_id = res.json()["order_id"]
+
+        # 1. Failed callback
+        fail_cb = await ac.post(
+            "/api/v1/payments/payin/callback",
+            json={"orderId": order_id, "status": "Failed", "remark": "User aborted bank authentication"}
+        )
+        assert fail_cb.json()["status"] == "failed"
+
+        # Check status endpoint
+        st_res = await ac.get(f"/api/v1/payments/payin/status/{order_id}", headers={"Authorization": f"Bearer {token}"})
+        assert st_res.json()["status"] == "failed"
+        assert st_res.json()["can_cancel"] is False
+
+        # Confirm user is still on FREE plan
+        sub = await db["subscriptions"].find_one({"user_id": user_id})
+        assert sub["plan_id"] == "FREE"
+        assert sub["credits_remaining"] == 5

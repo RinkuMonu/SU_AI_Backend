@@ -67,9 +67,11 @@ class PaymentVerifyResponse(BaseModel):
 
 class PaymentTransactionItem(BaseModel):
     id: str
+    transaction_id: Optional[str] = None
     order_id: str
     provider_reference: Optional[str] = None
     external_transaction_id: Optional[str] = None
+    user_id: Optional[str] = None
     plan_id: str
     plan_name: str
     amount: float
@@ -81,10 +83,12 @@ class PaymentTransactionItem(BaseModel):
     failure_reason: Optional[str] = None
     payment_url: Optional[str] = None
     purchased_credits: Optional[int] = 0
+    credits_granted: Optional[int] = 0
     created_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
     cancelled_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 class PaymentTransactionListResponse(BaseModel):
     success: bool = True

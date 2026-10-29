@@ -25,6 +25,7 @@ router = APIRouter()
 @router.post("/payin/create", response_model=PaymentCreateResponse)
 async def create_payment(
     request: PaymentCreateRequest,
+    raw_req: Request,
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(get_database)
 ):
@@ -34,6 +35,15 @@ async def create_payment(
     user_name = current_user.get("name") or current_user.get("fullName") or "User"
     user_mobile = current_user.get("phone_number") or current_user.get("phone")
 
+    # Detect caller's origin/referer so gateway redirects back to where user is (e.g. localhost:3000)
+    origin = raw_req.headers.get("origin") or raw_req.headers.get("referer") or ""
+    caller_frontend_url = None
+    if origin:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        if parsed.scheme and parsed.netloc:
+            caller_frontend_url = f"{parsed.scheme}://{parsed.netloc}"
+
     result = await PayinService.create_payment(
         db,
         user_id,
@@ -41,7 +51,8 @@ async def create_payment(
         request.plan_id,
         billing_cycle=request.billing_cycle,
         user_name=user_name,
-        user_mobile=user_mobile
+        user_mobile=user_mobile,
+        frontend_url=caller_frontend_url
     )
     return result
 
@@ -168,7 +179,7 @@ async def payment_status(
         "provider_reference": transaction.get("provider_reference") or transaction.get("external_transaction_id"),
         "created_at": transaction.get("created_at"),
         "verified_at": transaction.get("verified_at"),
-        "message": transaction.get("failure_reason") or ("Payment verified" if transaction.get("status") == "success" else "Payment pending")
+        "message": "Payment verified and subscription is active" if transaction.get("status") == "success" else (transaction.get("failure_reason") or "Payment pending")
     }
 
 @router.post("/payin/cancel", response_model=PaymentCancelResponse)
