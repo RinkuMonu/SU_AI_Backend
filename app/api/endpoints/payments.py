@@ -1,5 +1,8 @@
-from fastapi import APIRouter, Depends, Request, HTTPException
-from typing import Any, Dict
+from fastapi import APIRouter, Depends, Request, HTTPException, Query
+from typing import Any, Dict, Optional, List
+from datetime import datetime, timezone
+from pymongo.database import Database
+
 from app.api.dependencies import get_current_user, get_database
 from app.schemas.payment import (
     PaymentCreateRequest,
@@ -8,9 +11,14 @@ from app.schemas.payment import (
     PaymentStatusResponse,
     PaymentVerifyRequest,
     PaymentVerifyResponse,
+    PaymentCancelRequest,
+    PaymentCancelResponse,
+    PaymentTransactionItem,
+    PaymentTransactionListResponse,
+    TestPlanResetRequest,
+    TestPlanResetResponse,
 )
 from app.services.payin_service import PayinService
-from pymongo.database import Database
 
 router = APIRouter()
 
@@ -61,7 +69,6 @@ async def payment_callback(
                 payload = dict(form)
             except Exception:
                 payload = {}
-        # If payload was empty in body, check query params
         if not payload and request.query_params:
             payload = dict(request.query_params)
 
@@ -97,6 +104,7 @@ async def verify_payment(
             verified=True,
             plan_id=transaction.get("plan_id"),
             amount=transaction.get("amount"),
+            provider_reference=transaction.get("provider_reference") or transaction.get("external_transaction_id"),
             message="Payment already verified and subscription is active"
         )
 
@@ -109,8 +117,18 @@ async def verify_payment(
         verified=result.get("verified", False),
         plan_id=transaction.get("plan_id"),
         amount=transaction.get("amount"),
+        provider_reference=transaction.get("provider_reference") or transaction.get("external_transaction_id"),
         message=result.get("message", "Payment verification completed")
     )
+
+@router.post("/payin/verify/{order_id}", response_model=PaymentVerifyResponse)
+@router.get("/payin/verify/{order_id}", response_model=PaymentVerifyResponse)
+async def verify_payment_by_path(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    return await verify_payment(PaymentVerifyRequest(order_id=order_id), current_user=current_user, db=db)
 
 @router.get("/payin/status/{order_id}", response_model=PaymentStatusResponse)
 async def payment_status(
@@ -136,12 +154,83 @@ async def payment_status(
         except Exception:
             pass
 
+    can_cancel = transaction.get("status") in ["initiated", "pending"]
     return {
         "order_id": order_id,
         "status": transaction["status"],
+        "can_cancel": can_cancel,
         "amount": transaction["amount"],
         "base_amount": transaction.get("base_amount"),
-        "gst_amount": transaction.get("gst_amount")
+        "gst_amount": transaction.get("gst_amount"),
+        "currency": transaction.get("currency", "INR"),
+        "plan_id": transaction.get("plan_id"),
+        "plan_name": transaction.get("plan_name"),
+        "provider_reference": transaction.get("provider_reference") or transaction.get("external_transaction_id"),
+        "created_at": transaction.get("created_at"),
+        "verified_at": transaction.get("verified_at"),
+        "message": transaction.get("failure_reason") or ("Payment verified" if transaction.get("status") == "success" else "Payment pending")
     }
 
+@router.post("/payin/cancel", response_model=PaymentCancelResponse)
+@router.post("/payin/cancel/{order_id}", response_model=PaymentCancelResponse)
+async def cancel_payment_endpoint(
+    request: Optional[PaymentCancelRequest] = None,
+    order_id: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Cancels a pending payment order upon user cancellation or back-navigation.
+    Refuses cancellation if payment already succeeded or verified with provider.
+    """
+    target_order_id = (order_id or (request.order_id if request else "")).strip()
+    if not target_order_id:
+        raise HTTPException(status_code=400, detail="order_id is required")
 
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    reason = request.reason if request and request.reason else "User navigated back or cancelled payment"
+
+    result = await PayinService.cancel_payment(db, user_id, target_order_id, reason)
+    return PaymentCancelResponse(**result)
+
+@router.get("/transactions", response_model=PaymentTransactionListResponse)
+@router.get("/history", response_model=PaymentTransactionListResponse)
+async def get_user_transactions(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: Optional[str] = Query(None, description="Filter by status (success, pending, cancelled, failed)"),
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Returns authenticated user-scoped payment transactions history with pagination and date sorting.
+    Preserves all historical attempts including cancelled and failed transactions.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    return await PayinService.get_user_transactions(db, user_id, page=page, limit=limit, status=status)
+
+@router.post("/test-plan/reset", response_model=TestPlanResetResponse)
+async def reset_test_plan_endpoint(
+    request: Optional[TestPlanResetRequest] = None,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Safely resets a test user's ₹1 TEST_PLAN subscription and entitlements.
+    Preserves genuinely paid transactions for audit integrity while allowing repeated test flows.
+    """
+    caller_id = str(current_user.get("id") or current_user.get("_id"))
+    caller_role = str(current_user.get("role", "")).lower()
+
+    target_user_id = caller_id
+    admin_override = False
+
+    if request and request.target_user_id:
+        if caller_role in ["admin", "administrator", "superuser"]:
+            target_user_id = request.target_user_id.strip()
+            admin_override = True
+        elif request.target_user_id.strip() != caller_id:
+            raise HTTPException(status_code=403, detail="Only administrators can reset test plans for other users.")
+
+    result = await PayinService.reset_test_subscription(db, target_user_id, admin_override=admin_override)
+    return TestPlanResetResponse(**result)

@@ -249,6 +249,7 @@ class CreditService:
             total_granted = total_in_sub
 
         return {
+            "plan_id": sub.get("plan_id", "FREE"),
             "credits_total": max(total_granted, total_in_sub),
             "credits_granted": max(total_granted, total_in_sub),
             "credits_consumed": max(total_consumed, 0),

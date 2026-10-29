@@ -14,7 +14,7 @@ from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
 
-QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER"}
+QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER", "TEST_PLAN", "TEST"}
 
 
 class PlanOnboardingService:

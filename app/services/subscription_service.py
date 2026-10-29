@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
 from app.core.billing_config import PLANS
 
-QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER"}
+QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER", "TEST_PLAN", "TEST"}
 
 class SubscriptionService:
     @staticmethod
@@ -393,10 +393,22 @@ class SubscriptionService:
         sub_history = await SubscriptionService.get_subscription_history(db, user_id)
 
         # 3. Payment transactions
+        from app.core.billing_config import PLANS
         tx_cursor = db["payment_transactions"].find({"user_id": user_id}).sort("created_at", -1)
         transactions = []
         async for tx in tx_cursor:
             tx["id"] = str(tx.pop("_id"))
+            if not tx.get("purchased_credits"):
+                plan_key = str(tx.get("plan_id") or "").upper()
+                plan_cfg = PLANS.get(plan_key)
+                if plan_cfg and "credits" in plan_cfg:
+                    tx["purchased_credits"] = plan_cfg["credits"]
+                elif tx.get("plan_name") and "₹1" in str(tx.get("plan_name")):
+                    tx["purchased_credits"] = 20
+            if not tx.get("provider_reference"):
+                tx["provider_reference"] = tx.get("external_transaction_id") or tx.get("order_id")
+            if not tx.get("completed_at"):
+                tx["completed_at"] = tx.get("verified_at") or (tx.get("updated_at") if tx.get("status") in ["success", "failed", "cancelled", "expired"] else None)
             transactions.append(tx)
 
         # 4. Credit summary and recent ledger

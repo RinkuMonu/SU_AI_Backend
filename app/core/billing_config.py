@@ -267,12 +267,62 @@ PLANS = {
 }
 
 # Maintain "PRO" as backward-compatible alias for "GROWTH" and "BASIC" for "STARTER"
+PLANS["TEST_PLAN"] = {
+    "name": "Test Plan (₹1)",
+    "plan_tier": "TEST",
+    "price": 1,
+    "currency": "INR",
+    "billing_cycle": "monthly",
+    "credits": 20,
+    "credits_badge": "20 Credits",
+    "post_limit": 10,
+    "reel_limit": 5,
+    "team_members": 1,
+    "description": "Dummy ₹1 test plan for testing payment gateway. Safe to delete.",
+    "period_label": "/ test",
+    "highlights": [
+        "₹1 live gateway test",
+        "20 test credits",
+        "Instant activation test"
+    ],
+    "features": ["ai_caption", "ai_post", "ai_reel", "ai_photoshoot"],
+    "gst_applicable": False,
+    "gst_rate": 0.0,
+    "gst_amount": 0.0,
+    "total_price": 1.0,
+    "watermark": False,
+    "multiple_businesses": False,
+    "api_access": False,
+    "white_label": False,
+    "billing_cycles": {
+        "monthly": {
+            "price": 1,
+            "formatted_price": "₹1",
+            "period_label": "/ test",
+            "duration_days": 30
+        },
+        "quarterly": {
+            "price": 1,
+            "formatted_price": "₹1",
+            "period_label": "/ test",
+            "duration_days": 90
+        },
+        "yearly": {
+            "price": 1,
+            "formatted_price": "₹1",
+            "period_label": "/ test",
+            "duration_days": 365
+        }
+    }
+}
+
 PLANS["PRO"] = PLANS["GROWTH"]
 PLANS["BASIC"] = PLANS["STARTER"]
+PLANS["TEST"] = PLANS["TEST_PLAN"]
 
 BILLING_CYCLES = ["monthly", "quarterly", "yearly"]
 
-DISPLAY_PLAN_ORDER = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER"]
+DISPLAY_PLAN_ORDER = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER", "TEST_PLAN"]
 
 
 def get_formatted_plans(active_plan_id: str | None = None) -> list:

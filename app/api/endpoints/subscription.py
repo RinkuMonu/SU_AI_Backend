@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from pydantic import BaseModel
 from typing import Optional, List
 from app.core.security import get_current_user, get_current_user_optional
@@ -6,6 +6,12 @@ from app.core.database import get_database
 from app.services.subscription_service import SubscriptionService
 from app.services.credit_service import CreditService
 from app.services.plan_onboarding_service import PlanOnboardingService
+from app.services.payin_service import PayinService
+from app.schemas.payment import (
+    PaymentTransactionListResponse,
+    TestPlanResetRequest,
+    TestPlanResetResponse,
+)
 from app.schemas.billing_onboarding import PlanOnboardingStatusResponse
 from app.core.billing_config import PLANS, BILLING_CYCLES, get_formatted_plans
 
@@ -292,3 +298,43 @@ async def get_subscription_history_endpoint(
         "data": history
     }
 
+
+
+@router.get("/transactions", response_model=PaymentTransactionListResponse)
+async def get_subscription_transactions_endpoint(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    status: Optional[str] = Query(None, description="Filter by status (success, pending, cancelled, failed)"),
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Returns user-scoped payment transactions history with pagination and date sorting.
+    """
+    user_id = str(current_user["id"])
+    return await PayinService.get_user_transactions(db, user_id, page=page, limit=limit, status=status)
+
+@router.post("/test-plan/reset", response_model=TestPlanResetResponse)
+async def reset_subscription_test_plan_endpoint(
+    request: Optional[TestPlanResetRequest] = None,
+    current_user=Depends(get_current_user),
+    db=Depends(get_database)
+):
+    """
+    Safely resets a test user's ₹1 TEST_PLAN subscription back to FREE state.
+    """
+    caller_id = str(current_user.get("id") or current_user.get("_id"))
+    caller_role = str(current_user.get("role", "")).lower()
+
+    target_user_id = caller_id
+    admin_override = False
+
+    if request and request.target_user_id:
+        if caller_role in ["admin", "administrator", "superuser"]:
+            target_user_id = request.target_user_id.strip()
+            admin_override = True
+        elif request.target_user_id.strip() != caller_id:
+            raise HTTPException(status_code=403, detail="Only administrators can reset test plans for other users.")
+
+    result = await PayinService.reset_test_subscription(db, target_user_id, admin_override=admin_override)
+    return TestPlanResetResponse(**result)

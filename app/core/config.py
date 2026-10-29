@@ -67,7 +67,8 @@ class Settings(BaseSettings):
     FACEBOOK_SCOPES: str = "public_profile,email,pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish"
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
-    GOOGLE_REDIRECT_URI: str = "https://dhandagrow.com/login/user"
+    GOOGLE_REDIRECT_URI: str = "https://api.dhandagrow.com/api/v1/auth/google/callback"
+    GOOGLE_CALLBACK_URL: str = "https://api.dhandagrow.com/api/v1/auth/google/callback"
     google_client_id: Optional[str] = None
     google_client_secret: Optional[str] = None
     NEXT_PUBLIC_GOOGLE_CLIENT_ID: Optional[str] = None
