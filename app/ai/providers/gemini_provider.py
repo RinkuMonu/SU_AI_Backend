@@ -9,6 +9,7 @@ import httpx
 
 from app.ai.base import AIProvider
 from app.core.config import settings
+from app.ai.prompts.system_persona import get_trained_system_instruction
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,14 @@ class GeminiProvider(AIProvider):
         model: Optional[str] = None,
         tier: str = "fast",
     ):
-        self.api_key = api_key or getattr(settings, "GEMINI_API_KEY", None)
+        if api_key:
+            self.api_keys = [api_key]
+        elif hasattr(settings, "get_gemini_api_keys"):
+            self.api_keys = settings.get_gemini_api_keys()
+        else:
+            self.api_keys = [getattr(settings, "GEMINI_API_KEY", None)]
+        self.api_keys = [k for k in self.api_keys if k and isinstance(k, str) and k.strip()]
+        self.api_key = self.api_keys[0] if self.api_keys else getattr(settings, "GEMINI_API_KEY", None)
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is missing from configuration.")
 
@@ -65,18 +73,18 @@ class GeminiProvider(AIProvider):
         if self.tier == "reasoning":
             fallback_models = [
                 self._model_name,
+                "gemini-3.5-flash",
+                "gemini-3.8-flash",
                 "gemini-3.8-pro",
                 "gemini-3.1-pro-preview",
-                "gemini-3.8-flash",
-                "gemini-3.5-flash",
                 "gemini-pro-latest",
                 "gemini-flash-latest",
             ]
         else:
             fallback_models = [
                 self._model_name,
-                "gemini-3.8-flash",
                 "gemini-3.5-flash",
+                "gemini-3.8-flash",
                 "gemini-flash-latest",
                 "gemini-flash-lite-latest",
                 "gemini-3-flash-preview",
@@ -181,9 +189,10 @@ class GeminiProvider(AIProvider):
                 "maxOutputTokens": max_tokens,
             }
         }
-        if system_instruction:
+        actual_instruction = system_instruction or get_trained_system_instruction(mode="general")
+        if actual_instruction:
             payload["systemInstruction"] = {
-                "parts": [{"text": system_instruction}]
+                "parts": [{"text": actual_instruction}]
             }
         if is_json:
             payload["generationConfig"]["responseMimeType"] = "application/json"
@@ -240,34 +249,38 @@ class GeminiProvider(AIProvider):
             full_prompt += "\n\nRespond ONLY with valid JSON. No markdown, no explanation, no code fences."
 
         # Attempt SDK call first if client is available and no custom images passed
-        if self._genai_client and not images:
-            try:
-                from google.genai import types
+        if not images:
+            for k_idx, k in enumerate(self.api_keys):
+                try:
+                    from google import genai
+                    from google.genai import types
 
-                response = await self._genai_client.aio.models.generate_content(
-                    model=self._model_name,
-                    contents=full_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=kwargs.get("temperature", 0.7),
-                        max_output_tokens=kwargs.get("max_tokens", 4096),
-                    ),
-                )
-                content = response.text if response.text else ""
-                return {
-                    "text": content,
-                    "metadata": {
-                        "provider": self._provider_name,
-                        "model": self._model_name,
-                        "tier": self.tier,
-                        "usage": {},
-                    },
-                }
-            except Exception as e:
-                err_text = str(e)
-                if "402" in err_text or "prepayment" in err_text.lower():
-                    logger.warning(sanitize_log_message(f"Gemini GenAI SDK credit check: {err_text}"))
-                else:
+                    client = genai.Client(api_key=k)
+                    response = await client.aio.models.generate_content(
+                        model=self._model_name,
+                        contents=full_prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=kwargs.get("temperature", 0.7),
+                            max_output_tokens=kwargs.get("max_tokens", 4096),
+                        ),
+                    )
+                    content = response.text if response.text else ""
+                    return {
+                        "text": content,
+                        "metadata": {
+                            "provider": self._provider_name,
+                            "model": self._model_name,
+                            "tier": self.tier,
+                            "usage": {},
+                        },
+                    }
+                except Exception as e:
+                    err_text = str(e)
+                    if "429" in err_text or "RESOURCE_EXHAUSTED" in err_text or "402" in err_text:
+                        logger.warning(sanitize_log_message(f"Gemini SDK call quota limit on key {k_idx}: {e}. Trying fallback key..."))
+                        continue
                     logger.warning(sanitize_log_message(f"Google GenAI SDK call fallback to REST: {e}"))
+                    break
 
         # Fallback to direct REST API via httpx
         temperature = kwargs.get("temperature", 0.7)
@@ -289,72 +302,73 @@ class GeminiProvider(AIProvider):
 
         for current_model in self.models_to_try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{current_model}:generateContent"
-            params = {"key": api_key}
 
-            # Retry up to 2 times per model on 429 / 503
-            for attempt in range(2):
-                try:
-                    response = await self._call_api(url, payload=payload, params=params)
+            for k_idx, current_key in enumerate(self.api_keys):
+                params = {"key": current_key}
+                for attempt in range(2):
+                    try:
+                        response = await self._call_api(url, payload=payload, params=params)
 
-                    if response.status_code == 200:
-                        data = response.json()
-                        candidates = data.get("candidates", [])
-                        if not candidates:
-                            raise ValueError(f"No candidates returned by Gemini model {current_model}")
+                        if response.status_code == 200:
+                            data = response.json()
+                            candidates = data.get("candidates", [])
+                            if not candidates:
+                                raise ValueError(f"No candidates returned by Gemini model {current_model}")
 
-                        candidate = candidates[0]
-                        parts_resp = candidate.get("content", {}).get("parts", [])
-                        content = parts_resp[0].get("text", "") if parts_resp else ""
+                            candidate = candidates[0]
+                            parts_resp = candidate.get("content", {}).get("parts", [])
+                            content = parts_resp[0].get("text", "") if parts_resp else ""
 
-                        usage_meta = data.get("usageMetadata", {})
-                        usage = {
-                            "prompt_tokens": usage_meta.get("promptTokenCount", 0),
-                            "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
-                            "total_tokens": usage_meta.get("totalTokenCount", 0),
-                        }
+                            usage_meta = data.get("usageMetadata", {})
+                            usage = {
+                                "prompt_tokens": usage_meta.get("promptTokenCount", 0),
+                                "completion_tokens": usage_meta.get("candidatesTokenCount", 0),
+                                "total_tokens": usage_meta.get("totalTokenCount", 0),
+                            }
 
-                        return {
-                            "text": content,
-                            "metadata": {
-                                "provider": "gemini",
-                                "model": current_model,
-                                "tier": self.tier,
-                                "usage": usage,
-                            },
-                        }
+                            return {
+                                "text": content,
+                                "metadata": {
+                                    "provider": "gemini",
+                                    "model": current_model,
+                                    "tier": self.tier,
+                                    "usage": usage,
+                                },
+                            }
 
-                    elif response.status_code == 402:
-                        credits_depleted = True
-                        last_error = "Gemini API prepayment credits are depleted. Please check billing or add credits in Google AI Studio."
-                        logger.warning(sanitize_log_message(f"Gemini {current_model} credits depleted (HTTP 402)"))
-                        # No need to retry same model on 402
+                        elif response.status_code == 402:
+                            credits_depleted = True
+                            last_error = "Gemini API prepayment credits are depleted. Please check billing or add credits in Google AI Studio."
+                            logger.warning(sanitize_log_message(f"Gemini {current_model} credits depleted (HTTP 402) on key {k_idx}"))
+                            break
+
+                        elif response.status_code == 429:
+                            last_error = f"Model {current_model} rate limit (HTTP 429)"
+                            logger.warning(sanitize_log_message(f"Gemini rate limit 429 on {current_model} (key {k_idx}), backing off..."))
+                            await asyncio.sleep(min(1.5 * (attempt + 1), 4.0))
+                            if len(self.api_keys) > 1 and k_idx < len(self.api_keys) - 1:
+                                break
+                            continue
+
+                        elif response.status_code in (503, 502):
+                            last_error = f"Model {current_model} service unavailable (HTTP {response.status_code})"
+                            logger.warning(sanitize_log_message(f"Gemini 503/502 on {current_model}, retrying..."))
+                            await asyncio.sleep(1.0)
+                            continue
+
+                        else:
+                            last_error = f"HTTP {response.status_code}: {response.text[:120]}"
+                            logger.warning(sanitize_log_message(f"Gemini API error ({response.status_code}) on {current_model}"))
+                            break
+
+                    except httpx.TimeoutException:
+                        last_error = f"Timeout with {current_model}"
+                        logger.warning(sanitize_log_message(f"Timeout calling Gemini model {current_model}"))
                         break
-
-                    elif response.status_code == 429:
-                        last_error = f"Model {current_model} rate limit (HTTP 429)"
-                        logger.warning(sanitize_log_message(f"Gemini rate limit 429 on {current_model}, backing off..."))
-                        await asyncio.sleep(min(1.5 * (attempt + 1), 4.0))
-                        continue
-
-                    elif response.status_code in (503, 502):
-                        last_error = f"Model {current_model} service unavailable (HTTP {response.status_code})"
-                        logger.warning(sanitize_log_message(f"Gemini 503/502 on {current_model}, retrying..."))
-                        await asyncio.sleep(1.0)
-                        continue
-
-                    else:
-                        last_error = f"HTTP {response.status_code}: {response.text[:120]}"
-                        logger.warning(sanitize_log_message(f"Gemini API error ({response.status_code}) on {current_model}"))
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.error(sanitize_log_message(f"Error calling Gemini model {current_model}: {e}"))
                         break
-
-                except httpx.TimeoutException:
-                    last_error = f"Timeout with {current_model}"
-                    logger.warning(sanitize_log_message(f"Timeout calling Gemini model {current_model}"))
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    logger.error(sanitize_log_message(f"Error calling Gemini model {current_model}: {e}"))
-                    break
 
         clean_err = sanitize_log_message(last_error or "Unknown error")
         logger.error(f"All Gemini models failed. Last error: {clean_err}")

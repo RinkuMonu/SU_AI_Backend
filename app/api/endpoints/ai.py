@@ -12,6 +12,7 @@ from app.schemas.ai import (
     GeminiGenerateResponse,
     MarketingContentPackage,
 )
+from app.core.config import settings
 from app.services.gemini_service import generate_with_gemini, GeminiService
 from app.models.ai import AIGenerationHistory
 from app.ai.services.business_context import BusinessContextService
@@ -85,6 +86,64 @@ async def generate_advertisement_image_endpoint(
 ):
     """Generates premium advertisement image using Gemini Function C."""
     return await generate_with_gemini(task="image_generation", prompt=prompt, model=model)
+
+
+@router.post("/generateContent", response_model=dict)
+@router.post("/generate-content", response_model=dict)
+async def generate_content_endpoint(
+    payload: dict,
+    model: Optional[str] = None,
+    current_user: Optional[User] = Depends(get_current_user_optional)
+):
+    """
+    Direct endpoint matching Google Gemini REST API generateContent:
+    Accepts:
+      - Google Gemini native format: {"contents": [{"parts": [{"text": "..."}]}]}
+      - Or simple format: {"prompt": "...", "model": "gemini-3.5-flash"}
+    Executes using the integrated Gemini key with trained system instructions and automatic backup key failover.
+    """
+    extracted_prompt = ""
+    contents = payload.get("contents")
+    if isinstance(contents, list) and len(contents) > 0:
+        first_item = contents[0]
+        if isinstance(first_item, dict):
+            parts = first_item.get("parts", [])
+            for part in parts:
+                if isinstance(part, dict) and "text" in part:
+                    extracted_prompt += part["text"] + " "
+    if not extracted_prompt.strip():
+        extracted_prompt = str(payload.get("prompt") or payload.get("text") or "").strip()
+
+    if not extracted_prompt:
+        raise HTTPException(status_code=400, detail="Missing required 'contents' or 'prompt' in request payload.")
+
+    selected_model = model or payload.get("model") or getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
+    service = GeminiService()
+    try:
+        res = await service.generate_text_content(
+            prompt=extracted_prompt.strip(),
+            model=selected_model,
+            options=payload.get("options") or {}
+        )
+        return {
+            "success": True,
+            "candidates": [
+                {
+                    "content": {
+                        "parts": [{"text": res["text"]}],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }
+            ],
+            "text": res["text"],
+            "model": res["model"],
+            "provider": "gemini",
+            "usageMetadata": res.get("usage", {})
+        }
+    except Exception as e:
+        logger.error(f"Error in /generateContent endpoint: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 async def get_history_collection():

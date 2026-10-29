@@ -19,15 +19,21 @@ class AgentService:
     or returns conversational marketing advice and generation.
     """
 
+    def _get_gemini_clients(self):
+        clients = []
+        keys = getattr(settings, "get_gemini_api_keys", lambda: [])() or ([settings.GEMINI_API_KEY] if settings.GEMINI_API_KEY else [])
+        for k in keys:
+            if k:
+                try:
+                    import google.genai as genai
+                    clients.append(genai.Client(api_key=k))
+                except Exception as e:
+                    logger.warning(f"Could not initialize google.genai Client for key: {e}")
+        return clients
+
     def _get_gemini_client(self):
-        if not settings.GEMINI_API_KEY:
-            return None
-        try:
-            import google.genai as genai
-            return genai.Client(api_key=settings.GEMINI_API_KEY)
-        except Exception as e:
-            logger.warning(f"Could not initialize google.genai Client: {e}")
-            return None
+        clients = self._get_gemini_clients()
+        return clients[0] if clients else None
 
     async def _parse_intent_and_respond(self, command: str, business_info: dict, language: str) -> Dict[str, Any]:
         prompt = f"""You are 'UNI AI Assistant', an intelligent, conversational, and energetic AI marketing co-pilot designed specifically for Indian businesses, entrepreneurs, and creators.
@@ -62,21 +68,19 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
   "conversational_response": "A warm, natural, and highly engaging response written in {language} (Hindi/Hinglish). If generating an asset or intelligence report, introduce what was prepared enthusiastically. If chat, provide insightful advice."
 }}
 """
-        client = self._get_gemini_client()
+        clients = self._get_gemini_clients()
         models_to_try = [
-            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-            getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
+            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash"),
+            "gemini-3.5-flash",
             "gemini-3.8-flash",
             "gemini-flash-latest",
-            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro"),
+            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.5-flash"),
             "gemini-3.8-pro",
             "gemini-pro-latest",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
         ]
 
         raw_text = ""
-        if client:
+        for client in clients:
             for model_name in models_to_try:
                 try:
                     logger.info(f"Calling Gemini ({model_name}) for UNI AI intent and response...")
@@ -90,7 +94,11 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
                         break
                 except Exception as e:
                     logger.warning(f"Gemini intent parsing failed with {model_name}: {e}")
+                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                        break
                     continue
+            if raw_text:
+                break
 
         if not raw_text:
             try:

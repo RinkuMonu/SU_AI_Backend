@@ -31,10 +31,10 @@ class Settings(BaseSettings):
     AI_PROVIDER: str = "gemini"
     GEMINI_API_KEY: str | None = None
     GEMINI_BACKUP_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-3.8-flash"
-    GEMINI_FAST_MODEL: str = "gemini-3.8-flash"
-    GEMINI_REASONING_MODEL: str = "gemini-3.8-pro"
-    GEMINI_MARKETING_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-3.5-flash"
+    GEMINI_FAST_MODEL: str = "gemini-3.5-flash"
+    GEMINI_REASONING_MODEL: str = "gemini-3.5-flash"
+    GEMINI_MARKETING_MODEL: str = "gemini-3.5-flash"
     GEMINI_VIDEO_MODEL: str = "gemini-omni-1.1-flash"
     GEMINI_IMAGE_MODEL: str = "gemini-nano-banana-2.1"
     VIDEO_PROVIDER: str = "mock"
@@ -190,6 +190,14 @@ class Settings(BaseSettings):
         elif not self.GEMINI_API_KEY and os.getenv("GEMINI_API_KEY"):
             self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
         return self
+
+    def get_gemini_api_keys(self) -> List[str]:
+        """Returns ordered list of available Gemini API keys for primary and failover execution."""
+        keys: List[str] = []
+        for key in [self.GEMINI_API_KEY, self.GEMINI_BACKUP_API_KEY, os.getenv("GEMINI_API_KEY"), os.getenv("GEMINI_BACKUP_API_KEY")]:
+            if key and isinstance(key, str) and key.strip() and key.strip() not in keys:
+                keys.append(key.strip())
+        return keys
 
 
     # SMS / MSG91 Configuration

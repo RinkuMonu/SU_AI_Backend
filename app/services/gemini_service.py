@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Union
 import httpx
 
 from app.core.config import settings
+from app.ai.prompts.system_persona import get_trained_system_instruction
 from app.schemas.ai import (
     GeminiGenerateRequest,
     GeminiGenerateResponse,
@@ -72,16 +73,28 @@ class GeminiService:
     BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
     def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key or settings.GEMINI_API_KEY or getattr(settings, "GEMINI_BACKUP_API_KEY", None)
+        if api_key:
+            self.api_keys = [api_key]
+        elif hasattr(settings, "get_gemini_api_keys"):
+            self.api_keys = settings.get_gemini_api_keys()
+        else:
+            self.api_keys = [settings.GEMINI_API_KEY] if settings.GEMINI_API_KEY else []
+        self.api_key = self.api_keys[0] if self.api_keys else (settings.GEMINI_API_KEY or getattr(settings, "GEMINI_BACKUP_API_KEY", None))
 
-    def _get_api_key(self) -> str:
-        if not self.api_key:
+    def _get_api_keys(self) -> List[str]:
+        keys = [k for k in self.api_keys if k and isinstance(k, str) and k.strip()]
+        if not keys and self.api_key:
+            keys = [self.api_key]
+        if not keys:
             raise GeminiServiceError(
                 "GEMINI_API_KEY is not configured in environment.",
                 status_code=500,
                 error_code="MISSING_API_KEY"
             )
-        return self.api_key
+        return keys
+
+    def _get_api_key(self) -> str:
+        return self._get_api_keys()[0]
 
     def _clean_json_output(self, text: str) -> str:
         """Strips markdown code fences and extracts parseable JSON object/array."""
@@ -98,10 +111,128 @@ class GeminiService:
                 text = obj_match.group(0).strip()
         return text
 
+    async def _post_with_key_failover(
+        self,
+        endpoint: str,
+        payload: Dict[str, Any],
+        model_name: str,
+        timeout: float = 45.0,
+    ) -> httpx.Response:
+        """Executes REST POST against Gemini API with resilient multi-key failover on 429/402."""
+        keys = self._get_api_keys()
+        last_quota_error: Optional[Any] = None
+
+        for idx, key in enumerate(keys):
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": key
+            }
+            params = {"key": key}
+
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                try:
+                    response = await client.post(endpoint, headers=headers, params=params, json=payload)
+                except httpx.TimeoutException:
+                    raise GeminiServiceError(f"Request to {endpoint} timed out after {timeout}s", status_code=504, error_code="TIMEOUT")
+                except Exception as e:
+                    raise GeminiServiceError(f"HTTP connection error: {sanitize_secrets(str(e))}", status_code=502, error_code="CONNECTION_ERROR")
+
+            if response.status_code == 200:
+                return response
+
+            if response.status_code == 404:
+                err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
+                raise GeminiModelUnavailableError(model=model_name, endpoint=endpoint, details=err_data)
+
+            if response.status_code in (429, 402):
+                err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
+                last_quota_error = err_data
+                logger.warning(
+                    sanitize_secrets(f"Gemini API quota reached (HTTP {response.status_code}) on key index {idx}. Retrying with next available key...")
+                )
+                continue
+
+            raise GeminiServiceError(
+                f"Gemini API returned error ({response.status_code}): {sanitize_secrets(response.text[:300])}",
+                status_code=response.status_code,
+                error_code="API_ERROR",
+                details=response.text
+            )
+
+        raise GeminiQuotaExceededError(model=model_name, endpoint=endpoint, details=last_quota_error)
+
+    # =========================================================================
+    # Function 0 — Direct Text & Conversational Content Generation
+    # Endpoint: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
+    # Requested Model: gemini-3.5-flash
+    # =========================================================================
+    async def generate_text_content(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Generates direct, lucid, trained AI responses for general or business questions
+        (e.g., 'Explain how AI works in a few words', marketing advice, brand recommendations).
+        """
+        options = options or {}
+        model_name = model or getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
+        endpoint = f"{self.BASE_URL}/models/{model_name}:generateContent"
+
+        system_instruction = options.get("system_instruction") or get_trained_system_instruction(
+            mode="general",
+            business_context=options.get("context")
+        )
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": prompt}]
+                }
+            ],
+            "generationConfig": {
+                "temperature": options.get("temperature", 0.7),
+                "maxOutputTokens": options.get("max_tokens", 2048),
+            },
+            "systemInstruction": {
+                "parts": [{"text": system_instruction}]
+            }
+        }
+
+        timeout = options.get("timeout", 35.0)
+        logger.info(f"Executing Gemini generate_text_content with model '{model_name}' at {endpoint}")
+
+        response = await self._post_with_key_failover(
+            endpoint=endpoint,
+            payload=payload,
+            model_name=model_name,
+            timeout=timeout
+        )
+
+        try:
+            resp_data = response.json()
+            candidates = resp_data.get("candidates", [])
+            if not candidates:
+                raise ValueError("No candidates returned by Gemini API")
+            parts = candidates[0].get("content", {}).get("parts", [])
+            raw_text = parts[0].get("text", "") if parts else ""
+        except Exception as e:
+            raise GeminiServiceError(f"Failed to read Gemini response structure: {e}", status_code=500, error_code="PARSE_ERROR")
+
+        return {
+            "text": raw_text.strip(),
+            "model": model_name,
+            "provider": "gemini",
+            "usage": resp_data.get("usageMetadata", {}),
+            "candidates": candidates
+        }
+
     # =========================================================================
     # Function A — Marketing Content Generation
     # Endpoint: POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent
-    # Requested Model: gemini-2.5-flash
+    # Requested Model: gemini-3.5-flash
     # =========================================================================
     async def generate_marketing_content(
         self,
@@ -118,13 +249,13 @@ class GeminiService:
           - Video-generation prompt
           - Image-generation prompt
         """
-        api_key = self._get_api_key()
         options = options or {}
-        model_name = model or getattr(settings, "GEMINI_MARKETING_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+        model_name = model or getattr(settings, "GEMINI_MARKETING_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
         endpoint = f"{self.BASE_URL}/models/{model_name}:generateContent"
 
         system_instruction = (
-            "You are an elite marketing strategist, copywriter, and creative director for modern brands.\n"
+            get_trained_system_instruction(mode="marketing_content", business_context=options.get("context")) +
+            "\n\nJSON Output Requirements:\n"
             "Given the user's business, product, or campaign prompt, generate a complete marketing content package in strictly valid JSON format.\n"
             "The JSON must have EXACTLY the following keys:\n"
             "1. 'headline': An impactful, high-converting marketing headline (1 sentence).\n"
@@ -157,38 +288,15 @@ class GeminiService:
             }
         }
 
-        headers = {
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key
-        }
-        params = {"key": api_key}
         timeout = options.get("timeout", 45.0)
-
         logger.info(f"Executing Gemini Function A (Marketing Content) with model '{model_name}' at {endpoint}")
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                response = await client.post(endpoint, headers=headers, params=params, json=payload)
-            except httpx.TimeoutException:
-                raise GeminiServiceError(f"Request to {endpoint} timed out after {timeout}s", status_code=504, error_code="TIMEOUT")
-            except Exception as e:
-                raise GeminiServiceError(f"HTTP connection error: {sanitize_secrets(str(e))}", status_code=502, error_code="CONNECTION_ERROR")
-
-        if response.status_code == 404:
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiModelUnavailableError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code in (429, 402):
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiQuotaExceededError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code != 200:
-            raise GeminiServiceError(
-                f"Gemini API returned error ({response.status_code}): {sanitize_secrets(response.text[:300])}",
-                status_code=response.status_code,
-                error_code="API_ERROR",
-                details=response.text
-            )
+        response = await self._post_with_key_failover(
+            endpoint=endpoint,
+            payload=payload,
+            model_name=model_name,
+            timeout=timeout
+        )
 
         try:
             resp_data = response.json()
@@ -269,29 +377,12 @@ class GeminiService:
 
         logger.info(f"Executing Gemini Function B (Promotional Video) with model '{model_name}' at {endpoint}")
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                response = await client.post(endpoint, headers=headers, params=params, json=payload)
-            except httpx.TimeoutException:
-                raise GeminiServiceError(f"Request to {endpoint} timed out after {timeout}s", status_code=504, error_code="TIMEOUT")
-            except Exception as e:
-                raise GeminiServiceError(f"HTTP connection error: {sanitize_secrets(str(e))}", status_code=502, error_code="CONNECTION_ERROR")
-
-        if response.status_code == 404:
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiModelUnavailableError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code in (429, 402):
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiQuotaExceededError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code != 200:
-            raise GeminiServiceError(
-                f"Gemini Interactions API returned error ({response.status_code}): {sanitize_secrets(response.text[:300])}",
-                status_code=response.status_code,
-                error_code="API_ERROR",
-                details=response.text
-            )
+        response = await self._post_with_key_failover(
+            endpoint=endpoint,
+            payload=payload,
+            model_name=model_name,
+            timeout=timeout
+        )
 
         data = response.json()
         interaction_id = data.get("id")
@@ -403,29 +494,12 @@ class GeminiService:
 
         logger.info(f"Executing Gemini Function C (Advertisement Image) with model '{model_name}' at {endpoint}")
 
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                response = await client.post(endpoint, headers=headers, params=params, json=payload)
-            except httpx.TimeoutException:
-                raise GeminiServiceError(f"Request to {endpoint} timed out after {timeout}s", status_code=504, error_code="TIMEOUT")
-            except Exception as e:
-                raise GeminiServiceError(f"HTTP connection error: {sanitize_secrets(str(e))}", status_code=502, error_code="CONNECTION_ERROR")
-
-        if response.status_code == 404:
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiModelUnavailableError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code in (429, 402):
-            err_data = response.json() if response.headers.get("content-type", "").startswith("application/json") else response.text
-            raise GeminiQuotaExceededError(model=model_name, endpoint=endpoint, details=err_data)
-
-        if response.status_code != 200:
-            raise GeminiServiceError(
-                f"Gemini Interactions API returned error ({response.status_code}): {sanitize_secrets(response.text[:300])}",
-                status_code=response.status_code,
-                error_code="API_ERROR",
-                details=response.text
-            )
+        response = await self._post_with_key_failover(
+            endpoint=endpoint,
+            payload=payload,
+            model_name=model_name,
+            timeout=timeout
+        )
 
         data = response.json()
         interaction_id = data.get("id")
@@ -522,9 +596,43 @@ async def generate_with_gemini(
     service = GeminiService()
 
     # 2. Automatic task routing
-    # Task Category 1: Marketing Content / Text
-    if normalized_task in ("text", "marketing_content", "marketing", "content", "caption", "copy"):
-        target_model = req_model or getattr(settings, "GEMINI_MARKETING_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash"
+    # Task Category 0: Direct Text / General / Chat Generation
+    if normalized_task in ("text", "generatecontent", "generate_content", "chat", "general", "ask") and not req_options.get("marketing_package"):
+        target_model = req_model or getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
+        target_endpoint = f"{service.BASE_URL}/models/{target_model}:generateContent"
+        try:
+            result = await service.generate_text_content(
+                prompt=req_prompt,
+                model=target_model,
+                options=req_options
+            )
+            return {
+                "success": True,
+                "task": "text",
+                "model": target_model,
+                "endpoint": target_endpoint,
+                "data": result,
+                "message": result["text"],
+                "error": None
+            }
+        except GeminiServiceError as ge:
+            return {
+                "success": False,
+                "task": "text",
+                "model": target_model,
+                "endpoint": target_endpoint,
+                "data": None,
+                "error": {
+                    "code": ge.error_code,
+                    "status_code": ge.status_code,
+                    "message": ge.message,
+                    "details": ge.details
+                }
+            }
+
+    # Task Category 1: Marketing Content / Text Package
+    elif normalized_task in ("marketing_content", "marketing", "content", "caption", "copy") or req_options.get("marketing_package"):
+        target_model = req_model or getattr(settings, "GEMINI_MARKETING_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
         target_endpoint = f"{service.BASE_URL}/models/{target_model}:generateContent"
         try:
             result = await service.generate_marketing_content(
