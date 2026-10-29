@@ -7,6 +7,8 @@ from fastapi import HTTPException, status
 from app.schemas.onboarding import (
     VALID_ONLINE_PRESENCE_OPTIONS,
     BusinessOnlinePresenceType,
+    PRESENCE_CANONICAL_MAP,
+    CANONICAL_TO_FRONTEND_MAP,
     SUPPORTED_BUSINESS_SERVICES,
     VALID_BUSINESS_SERVICE_IDS,
     BUSINESS_SERVICE_MAP,
@@ -20,21 +22,26 @@ class OnboardingService:
     def normalize_online_presence(presence: Optional[str]) -> str:
         """
         Validate and normalize business online presence selection.
-        Allowed values: website, google_maps, marketplace_seller, no_online_presence, wholesale_b2b, other, something_else.
+        Allowed values include: website, google_maps, marketplace_seller, no_online_presence, wholesale_b2b, other, something_else,
+        as well as frontend source IDs: marketplace, b2b, none, social_media, directories, wholesale, etc.
         """
         if not presence or not isinstance(presence, str) or not presence.strip():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Online presence option is required. Please choose a valid option."
             )
-        normalized = presence.strip().lower()
-        if normalized not in VALID_ONLINE_PRESENCE_OPTIONS:
-            allowed_list = ", ".join(sorted(list(VALID_ONLINE_PRESENCE_OPTIONS)))
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid online_presence selection '{presence}'. Must be one of: {allowed_list}."
-            )
-        return normalized
+        clean = presence.strip().lower()
+        if clean not in VALID_ONLINE_PRESENCE_OPTIONS:
+            alt = clean.replace("-", "_").replace(" ", "_")
+            if alt in VALID_ONLINE_PRESENCE_OPTIONS:
+                clean = alt
+            else:
+                allowed_list = ", ".join(sorted(list(VALID_ONLINE_PRESENCE_OPTIONS)))
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid online_presence selection '{presence}'. Must be one of: {allowed_list}."
+                )
+        return clean
 
     @staticmethod
     def determine_state(user_doc: Dict[str, Any], business_doc: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -58,6 +65,11 @@ class OnboardingService:
                 "onboarding_status": "not_started",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "canonical_presence": None,
+                "business_source": None,
+                "presence": None,
+                "selling_model": None,
+                "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": False,
@@ -91,6 +103,11 @@ class OnboardingService:
                 "onboarding_status": "not_started",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "canonical_presence": None,
+                "business_source": None,
+                "presence": None,
+                "selling_model": None,
+                "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": False,
@@ -110,6 +127,11 @@ class OnboardingService:
                 "onboarding_status": "completed",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "canonical_presence": None,
+                "business_source": None,
+                "presence": None,
+                "selling_model": None,
+                "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": True,
@@ -128,6 +150,11 @@ class OnboardingService:
                 "onboarding_status": "completed",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "canonical_presence": None,
+                "business_source": None,
+                "presence": None,
+                "selling_model": None,
+                "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": True,
@@ -154,10 +181,30 @@ class OnboardingService:
             user_doc.get("business_type") or
             (business_doc.get("business_type") if business_doc else None)
         )
+        selling_model = (
+            user_doc.get("selling_model") or
+            (business_doc.get("selling_model") if business_doc else None)
+        )
+        business_source = (
+            user_doc.get("business_source") or
+            (business_doc.get("business_source") if business_doc else None) or
+            online_presence
+        )
+        canonical_presence = (
+            user_doc.get("canonical_presence") or
+            (business_doc.get("canonical_presence") if business_doc else None) or
+            (PRESENCE_CANONICAL_MAP.get(online_presence) if online_presence else None)
+        )
+        selected_platforms = (
+            user_doc.get("selected_platforms") or
+            (business_doc.get("selected_platforms") if business_doc else None) or
+            []
+        )
 
         # Fallback: if online_presence is not set but business_type matches valid options
         if not online_presence and business_type and business_type.lower() in VALID_ONLINE_PRESENCE_OPTIONS:
             online_presence = business_type.lower()
+            canonical_presence = PRESENCE_CANONICAL_MAP.get(online_presence, online_presence)
 
         onboarding_step = user_doc.get("onboarding_step", 1) or 1
 
@@ -167,7 +214,12 @@ class OnboardingService:
                 "onboarding_status": "completed",
                 "onboarding_step": max(onboarding_step, 2),
                 "online_presence": online_presence,
+                "canonical_presence": canonical_presence,
+                "business_source": business_source,
+                "presence": online_presence,
                 "business_type": business_type or online_presence,
+                "selling_model": selling_model,
+                "selected_platforms": selected_platforms,
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": True,
@@ -187,7 +239,12 @@ class OnboardingService:
                 "onboarding_status": "not_started",
                 "onboarding_step": 1,
                 "online_presence": None,
+                "canonical_presence": None,
+                "business_source": None,
+                "presence": None,
                 "business_type": business_type,
+                "selling_model": selling_model,
+                "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
                 "onboarding_completed": False,
@@ -209,7 +266,12 @@ class OnboardingService:
             "onboarding_status": "in_progress",
             "onboarding_step": effective_step,
             "online_presence": online_presence,
+            "canonical_presence": canonical_presence,
+            "business_source": business_source,
+            "presence": online_presence,
             "business_type": business_type or online_presence,
+            "selling_model": selling_model,
+            "selected_platforms": selected_platforms,
             "selected_services": selected_services,
             "selectedServices": selected_services,
             "onboarding_completed": False,
@@ -228,17 +290,29 @@ class OnboardingService:
         Validates, canonicalizes, and persists the business online presence for a user and business document.
         Advances onboarding_step to at least 2 and marks onboarding_status as 'in_progress'.
         """
-        raw_presence = payload_dict.get("online_presence")
+        raw_presence = (
+            payload_dict.get("online_presence") or
+            payload_dict.get("presence") or
+            payload_dict.get("source") or
+            payload_dict.get("business_source") or
+            payload_dict.get("onlinePresence")
+        )
         presence = OnboardingService.normalize_online_presence(raw_presence)
+        canonical_presence = PRESENCE_CANONICAL_MAP.get(presence, presence)
         now = datetime.now(timezone.utc)
 
         # Build update document
         user_updates: Dict[str, Any] = {
             "online_presence": presence,
+            "canonical_presence": canonical_presence,
+            "business_source": presence,
+            "presence": presence,
             "business_type": payload_dict.get("business_type") or presence,
             "onboarding_status": "in_progress",
             "updated_at": now
         }
+        if payload_dict.get("selling_model"):
+            user_updates["selling_model"] = str(payload_dict["selling_model"]).strip()
         if payload_dict.get("google_maps_url"):
             user_updates["google_maps_url"] = str(payload_dict["google_maps_url"]).strip()
         if payload_dict.get("website_url") or payload_dict.get("website"):
@@ -252,6 +326,31 @@ class OnboardingService:
             norm_srv_ids, service_items = OnboardingService.validate_and_normalize_services(srv_input)
             user_updates["selected_services"] = norm_srv_ids
             user_updates["selectedServices"] = norm_srv_ids
+
+        # Support selected platforms for marketplace_seller and wholesale_b2b
+        norm_platforms = None
+        platform_items = None
+        clean_custom = None
+        is_none = False
+        if payload_dict.get("selected_platforms") is not None:
+            from app.services.platform_onboarding_service import PlatformOnboardingService
+            custom_name = payload_dict.get("custom_platform_name") or payload_dict.get("other_platform_name") or payload_dict.get("custom_listing_name")
+            norm_ids, platform_items, clean_custom, is_none = PlatformOnboardingService.validate_and_normalize_platforms(
+                source=canonical_presence,
+                selected_platforms=payload_dict["selected_platforms"],
+                custom_platform_name=custom_name
+            )
+            norm_platforms = norm_ids
+            user_updates["selected_platforms"] = norm_ids
+
+        if payload_dict.get("directory_listings") is not None:
+            user_updates["directory_listings"] = payload_dict["directory_listings"]
+        if payload_dict.get("additional_listings") is not None:
+            user_updates["additional_listings"] = payload_dict["additional_listings"]
+        if payload_dict.get("custom_listing_name"):
+            user_updates["custom_listing_name"] = str(payload_dict["custom_listing_name"]).strip()
+        if payload_dict.get("skip_website") is not None or payload_dict.get("website_skipped") is not None:
+            user_updates["skip_website"] = bool(payload_dict.get("skip_website") if payload_dict.get("skip_website") is not None else payload_dict.get("website_skipped"))
 
         # Check existing step; advance to 2 if currently <= 1
         u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
@@ -282,9 +381,14 @@ class OnboardingService:
             "ownerId": str(user_id),
             "user_id": str(user_id),
             "online_presence": presence,
+            "canonical_presence": canonical_presence,
+            "business_source": presence,
+            "presence": presence,
             "business_type": user_updates["business_type"],
             "updated_at": now
         }
+        if "selling_model" in user_updates:
+            business_updates["selling_model"] = user_updates["selling_model"]
         if norm_srv_ids is not None:
             business_updates["selected_services"] = norm_srv_ids
             business_updates["selectedServices"] = norm_srv_ids
@@ -303,22 +407,23 @@ class OnboardingService:
         if payload_dict.get("description"):
             business_updates["description"] = str(payload_dict["description"]).strip()
 
-        # Support selected platforms for marketplace_seller and wholesale_b2b
-        if payload_dict.get("selected_platforms"):
-            from app.services.platform_onboarding_service import PlatformOnboardingService
-            custom_name = payload_dict.get("custom_platform_name") or payload_dict.get("other_platform_name")
-            norm_ids, platform_items, clean_custom, is_none = PlatformOnboardingService.validate_and_normalize_platforms(
-                source=presence,
-                selected_platforms=payload_dict["selected_platforms"],
-                custom_platform_name=custom_name
-            )
-            user_updates["selected_platforms"] = norm_ids
-            business_updates["selected_platforms"] = norm_ids
+        if norm_platforms is not None:
+            business_updates["selected_platforms"] = norm_platforms
             business_updates["platform_details"] = [p.model_dump() for p in platform_items]
             business_updates["none_of_these_selected"] = is_none
             if clean_custom:
                 business_updates["custom_platform_name"] = clean_custom
                 business_updates["other_platform_name"] = clean_custom
+
+        if "directory_listings" in user_updates:
+            business_updates["directory_listings"] = user_updates["directory_listings"]
+        if "additional_listings" in user_updates:
+            business_updates["additional_listings"] = user_updates["additional_listings"]
+        if "custom_listing_name" in user_updates:
+            business_updates["custom_listing_name"] = user_updates["custom_listing_name"]
+        if "skip_website" in user_updates:
+            business_updates["skip_website"] = user_updates["skip_website"]
+            business_updates["website_skipped"] = user_updates["skip_website"]
 
         if payload_dict.get("marketplace_url"):
             business_updates["marketplace_url"] = str(payload_dict["marketplace_url"]).strip()
@@ -326,8 +431,6 @@ class OnboardingService:
         if payload_dict.get("platform_urls"):
             business_updates["platform_urls"] = payload_dict["platform_urls"]
 
-        if payload_dict.get("website_skipped") is not None:
-            business_updates["website_skipped"] = bool(payload_dict["website_skipped"])
         if payload_dict.get("has_storefront") is not None:
             business_updates["has_storefront"] = bool(payload_dict["has_storefront"])
 
@@ -354,23 +457,57 @@ class OnboardingService:
             upsert=True
         )
 
-        # Sync to brand kit if exists
+        # Sync to brand kit if exists (do not upsert a ghost brand kit)
         try:
             await db["brand_kits"].update_one(
                 {"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]},
                 {
-                    "$set": {"business_type": user_updates["business_type"], "online_presence": presence, "updated_at": now},
-                    "$setOnInsert": {
-                        "owner_id": str(user_id),
-                        "user_id": str(user_id),
-                        "business_id": str(user_id),
-                        "created_at": now
+                    "$set": {
+                        "business_type": user_updates["business_type"],
+                        "online_presence": presence,
+                        "canonical_presence": canonical_presence,
+                        "updated_at": now
                     }
-                },
-                upsert=True
+                }
             )
         except Exception as e:
             logger.debug(f"Could not sync brand_kit online_presence: {e}")
+
+        # Also sync to platform_onboarding_jobs if source is marketplace or b2b
+        if canonical_presence in ("marketplace_seller", "wholesale_b2b"):
+            try:
+                job_set = {
+                    "onboarding_source": canonical_presence,
+                    "raw_source": presence,
+                    "updated_at": now
+                }
+                if norm_platforms is not None:
+                    job_set["selected_platforms"] = norm_platforms
+                if clean_custom:
+                    job_set["custom_platform_name"] = clean_custom
+                if "directory_listings" in user_updates:
+                    job_set["directory_listings"] = user_updates["directory_listings"]
+                if "additional_listings" in user_updates:
+                    job_set["additional_listings"] = user_updates["additional_listings"]
+                if "custom_listing_name" in user_updates:
+                    job_set["custom_listing_name"] = user_updates["custom_listing_name"]
+                if "skip_website" in user_updates:
+                    job_set["skip_website"] = user_updates["skip_website"]
+
+                await db["platform_onboarding_jobs"].update_one(
+                    {"user_id": str(user_id)},
+                    {
+                        "$set": job_set,
+                        "$setOnInsert": {
+                            "job_id": f"pl_{user_id}",
+                            "status": "pending",
+                            "created_at": now
+                        }
+                    },
+                    upsert=True
+                )
+            except Exception as e:
+                logger.debug(f"Could not sync platform_onboarding_job: {e}")
 
         # Fetch refreshed docs to calculate state
         refreshed_user = await db["users"].find_one({"_id": ObjectId(user_id)}) or await db["pending_users"].find_one({"_id": ObjectId(user_id)})
@@ -381,7 +518,14 @@ class OnboardingService:
             "success": True,
             "message": "Business online presence saved successfully.",
             "online_presence": presence,
+            "canonical_presence": canonical_presence,
+            "business_source": presence,
+            "presence": presence,
             "business_type": user_updates["business_type"],
+            "selling_model": user_updates.get("selling_model"),
+            "selected_platforms": user_updates.get("selected_platforms"),
+            "directory_listings": user_updates.get("directory_listings"),
+            "additional_listings": user_updates.get("additional_listings"),
             "onboarding_step": new_step,
             "onboarding_status": "in_progress",
             "next_step": state["next_step"],

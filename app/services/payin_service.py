@@ -14,7 +14,15 @@ logger = logging.getLogger(__name__)
 
 class PayinService:
     @staticmethod
-    async def create_payment(db, user_id: str, user_email: str, plan_id: str, billing_cycle: str = "monthly") -> Dict[str, Any]:
+    async def create_payment(
+        db,
+        user_id: str,
+        user_email: str,
+        plan_id: str,
+        billing_cycle: str = "monthly",
+        user_name: Optional[str] = None,
+        user_mobile: Optional[str] = None
+    ) -> Dict[str, Any]:
         normalized_plan_id = (plan_id or "").upper().strip()
         if normalized_plan_id not in PLANS:
             raise HTTPException(status_code=400, detail="Invalid plan")
@@ -50,6 +58,15 @@ class PayinService:
             gst_amount = 0.0
             total_amount = base_amount
         
+        # Clean & sanitize email (Finunique strictly requires a valid email string)
+        clean_email = (user_email or "").strip()
+        if not clean_email or "@" not in clean_email:
+            phone_clean = (user_mobile or "").replace("+", "").strip() if user_mobile else ""
+            if phone_clean:
+                clean_email = f"user_{phone_clean}@dhandagrow.com"
+            else:
+                clean_email = f"user_{user_id}@dhandagrow.com"
+
         now = datetime.now(timezone.utc)
         transaction = {
             "user_id": user_id,
@@ -74,7 +91,7 @@ class PayinService:
 
         payload = {
             "amount": total_amount,
-            "email": user_email,
+            "email": clean_email,
             "reference": order_id,
             "userId": user_id,
             "callback_url": callback_url,
@@ -82,7 +99,13 @@ class PayinService:
             "redirect_url": redirect_url,
             "redirectURL": redirect_url,
         }
-        
+        if user_name:
+            payload["name"] = user_name
+        if user_mobile:
+            mobile_digits = "".join(c for c in str(user_mobile) if c.isdigit())
+            if len(mobile_digits) >= 10:
+                payload["mobile"] = mobile_digits[-10:]
+
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
@@ -98,12 +121,21 @@ class PayinService:
                 )
                 
                 if response.status_code >= 400:
+                    err_text = response.text
+                    logger.error(f"Payin API error HTTP {response.status_code}: {err_text}")
                     await db["payment_transactions"].update_one(
                         {"order_id": order_id},
-                        {"$set": {"status": "failed", "failure_reason": f"Payin API error: {response.status_code}", "updated_at": datetime.now(timezone.utc)}}
+                        {"$set": {
+                            "status": "failed",
+                            "failure_reason": f"Payin API error {response.status_code}: {err_text[:200]}",
+                            "updated_at": datetime.now(timezone.utc)
+                        }}
                     )
-                    raise HTTPException(status_code=502, detail="Payment Gateway API failed")
-                    
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Payment Gateway API failed (HTTP {response.status_code}). Please retry."
+                    )
+
                 data = response.json()
                 
                 payment_url = None
@@ -241,12 +273,15 @@ class PayinService:
         if is_success:
             payload_amount = float(payload.get("amount") or payload.get("txnAmount") or payload.get("total_amount") or 0)
             transaction_amount = float(transaction["amount"])
+            base_amount = float(transaction.get("base_amount") or transaction_amount)
             
             amount_matches = False
-            if abs(payload_amount - transaction_amount) < 0.05 or \
-               abs(payload_amount - transaction_amount * 100) < 5.0 or \
-               abs(payload_amount / 100 - transaction_amount) < 0.05:
-                amount_matches = True
+            for expected in [transaction_amount, base_amount]:
+                if abs(payload_amount - expected) < 0.05 or \
+                   abs(payload_amount - expected * 100) < 5.0 or \
+                   abs(payload_amount / 100 - expected) < 0.05:
+                    amount_matches = True
+                    break
                 
             if not amount_matches:
                 await db["payment_transactions"].update_one(

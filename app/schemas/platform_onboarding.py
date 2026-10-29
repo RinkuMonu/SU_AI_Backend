@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, AliasChoices
 
 
 # Standard Marketplace platforms catalogue
@@ -31,6 +31,8 @@ SUPPORTED_B2B_PLATFORMS: List[Dict[str, Any]] = [
     {"id": "exportersindia", "name": "ExportersIndia", "icon": "globe", "category": "directory"},
     {"id": "udaan", "name": "Udaan", "category": "directory", "icon": "shopping-cart"},
     {"id": "alibaba", "name": "Alibaba", "icon": "building", "category": "directory"},
+    {"id": "amazon_business", "name": "Amazon Business", "icon": "briefcase", "category": "directory"},
+    {"id": "sulekha", "name": "Sulekha", "icon": "globe", "category": "directory"},
     {"id": "industrybuying", "name": "Industrybuying", "icon": "tool", "category": "directory"},
     {"id": "power2sme", "name": "Power2SME", "icon": "shield", "category": "directory"},
     {"id": "none_of_these", "name": "None of these", "icon": "x-circle", "category": "directory", "is_none_option": True},
@@ -68,12 +70,24 @@ class PlatformCatalogResponse(BaseModel):
 class SavePlatformsRequest(BaseModel):
     onboarding_source: Optional[str] = Field(
         None,
-        description="Onboarding source: 'marketplace_seller' or 'wholesale_b2b'"
+        description="Onboarding source: 'marketplace_seller', 'wholesale_b2b', 'marketplace', 'b2b'"
     )
-    selected_platforms: List[str] = Field(
-        ...,
-        min_length=1,
+    selected_platforms: Optional[List[str]] = Field(
+        default=None,
+        validation_alias=AliasChoices("selected_platforms", "platforms", "selectedPlatforms"),
         description="List of selected platform identifiers or names"
+    )
+    directory_listings: Optional[List[str]] = Field(
+        default=None,
+        description="Optional directory listings for marketplace flow"
+    )
+    additional_listings: Optional[List[str]] = Field(
+        default=None,
+        description="Optional additional listings for wholesale/B2B flow"
+    )
+    custom_listing_name: Optional[str] = Field(
+        default=None,
+        description="Custom name when 'other' is selected in directory listings"
     )
     custom_platform_name: Optional[str] = Field(
         None,
@@ -102,9 +116,11 @@ class SavePlatformsRequest(BaseModel):
 
     @field_validator("selected_platforms")
     @classmethod
-    def validate_selected_platforms(cls, v: List[str]) -> List[str]:
-        if not v or not isinstance(v, list):
-            raise ValueError("selected_platforms must be a non-empty array of platform names or IDs.")
+    def validate_selected_platforms(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+        if v is None:
+            return None
+        if not isinstance(v, list):
+            raise ValueError("selected_platforms must be an array of platform names or IDs.")
         cleaned = [str(p).strip() for p in v if p and str(p).strip()]
         if not cleaned:
             raise ValueError("selected_platforms must contain at least one valid platform.")
@@ -132,11 +148,15 @@ class PlatformOnboardingState(BaseModel):
     success: bool = True
     onboarding_source: str
     selected_platforms: List[str] = Field(default_factory=list)
+    directory_listings: List[str] = Field(default_factory=list)
+    additional_listings: List[str] = Field(default_factory=list)
+    custom_listing_name: Optional[str] = None
     platform_details: List[PlatformItem] = Field(default_factory=list)
     custom_platform_name: Optional[str] = None
     none_of_these_selected: bool = False
     website_url: Optional[str] = None
     website_skipped: bool = False
+    skip_website: bool = False
     has_storefront: bool = False
     platform_urls: Dict[str, str] = Field(default_factory=dict)
     platform_analysis_status: Dict[str, str] = Field(default_factory=dict)

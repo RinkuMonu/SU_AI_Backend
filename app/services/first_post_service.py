@@ -107,7 +107,7 @@ class FirstPostService:
 
         # 1. Images from Business document (photos, scraped_images, google_maps_photos)
         for p in (bus.get("photos", []) or []):
-            src_tag = "google_maps" if presence == "google_maps" else ("marketplace" if presence == "marketplace_seller" else "website")
+            src_tag = "google_maps" if presence == "google_maps" else ("marketplace" if presence in ("marketplace_seller", "marketplace") else ("b2b" if presence in ("wholesale_b2b", "b2b", "wholesale", "directories") else "website"))
             add_image(p, src_tag)
 
         for p in (bus.get("scraped_images", []) or []):

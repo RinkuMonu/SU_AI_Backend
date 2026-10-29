@@ -425,7 +425,7 @@ async def save_brand_kit_submission(
         if biz and biz.get("name") and biz.get("name") not in ["My Business", "Draft Business"]:
             merged["business_name"] = str(biz["name"]).strip()
             merged["brand_name"] = str(biz["name"]).strip()
-        elif is_draft:
+        elif is_draft or not is_complete_action:
             default_name = (biz.get("name") if biz and biz.get("name") else None) or "My Business"
             merged["business_name"] = default_name
             merged["brand_name"] = default_name
@@ -939,31 +939,32 @@ async def get_onboarding_status(db, current_user) -> BrandKitStatusResponse:
         if u_doc:
             online_presence = u_doc.get("online_presence")
 
+    saved_brand = await db["brand_kits"].find_one({"$or": [{"owner_id": str(owner_id)}, {"user_id": str(owner_id)}]})
     brand = await get_brand_kit_by_owner(db, owner_id)
     if not online_presence and brand and brand.get("online_presence"):
         online_presence = brand.get("online_presence")
 
     # A. Sources that do NOT require Brand Kit completion: website, google_maps, marketplace_seller, wholesale_b2b
-    is_brand_kit_applicable = (online_presence == "no_online_presence") or (not online_presence)
+    is_brand_kit_applicable = (online_presence in ("no_online_presence", "none")) or (not online_presence)
 
     if not is_brand_kit_applicable:
         # For website, google_maps, marketplace_seller, and wholesale_b2b:
         # Brand Kit completion is not required to proceed.
         # Do not infer Brand Kit is complete simply because a website or Google Maps profile exists.
-        is_completed = brand.get("brand_kit_completed", False) if brand else False
-        completion_pct = brand.get("completion_percentage", 0) if brand else 0
-        status_str = brand.get("brand_kit_status", "not_applicable") if brand else "not_applicable"
+        is_completed = saved_brand.get("brand_kit_completed", False) if saved_brand else False
+        completion_pct = saved_brand.get("completion_percentage", 0) if saved_brand else 0
+        status_str = saved_brand.get("brand_kit_status", "not_applicable") if saved_brand else "not_applicable"
         return BrandKitStatusResponse(
             role=role,
             should_show_modal=False,  # Not required for these sources!
             brand_kit_status=status_str,
             brand_kit_completed=is_completed,
-            brand_kit_completed_at=brand.get("brand_kit_completed_at") if brand else None,
+            brand_kit_completed_at=saved_brand.get("brand_kit_completed_at") if saved_brand else None,
             business_id=business_id,
             completion_percentage=completion_pct,
-            completed_sections=brand.get("completed_sections", []) if brand else [],
-            pending_sections=brand.get("pending_sections", []) if brand else list(BRAND_KIT_SECTIONS.keys()),
-            brand_kit=brand
+            completed_sections=saved_brand.get("completed_sections", []) if saved_brand else [],
+            pending_sections=saved_brand.get("pending_sections", []) if saved_brand else list(BRAND_KIT_SECTIONS.keys()),
+            brand_kit=serialize_brand(saved_brand) if saved_brand else None
         )
 
     # B. For no_online_presence: Brand Kit completion is applicable

@@ -28,10 +28,17 @@ from app.utils.url_validator import normalize_website_url, validate_url_safety
 logger = logging.getLogger(__name__)
 
 SUPPORTED_ONBOARDING_SOURCES = {
+    "marketplace",
     "marketplace_seller",
+    "b2b",
+    "wholesale",
     "wholesale_b2b",
+    "directories",
     "website",
+    "google_maps",
     "no_online_presence",
+    "none",
+    "social_media",
     "other",
     "something_else"
 }
@@ -47,6 +54,20 @@ class PlatformOnboardingService:
     - Manual entry / skip workflow
     - Full state restoration on refresh or re-login
     """
+
+    @classmethod
+    def canonical_source(cls, source: Optional[str]) -> str:
+        """Normalizes any valid onboarding source or alias into canonical form."""
+        if not source:
+            return "marketplace_seller"
+        clean = source.strip().lower()
+        if clean in ("wholesale_b2b", "b2b", "wholesale", "directories"):
+            return "wholesale_b2b"
+        elif clean in ("marketplace_seller", "marketplace"):
+            return "marketplace_seller"
+        elif clean in ("no_online_presence", "none"):
+            return "no_online_presence"
+        return clean
 
     @staticmethod
     def normalize_platform_id(raw_id: str) -> str:
@@ -71,6 +92,7 @@ class PlatformOnboardingService:
             "just dial": "justdial",
             "exporters india": "exportersindia",
             "power 2 sme": "power2sme",
+            "amazon business": "amazon_business",
             "other": "other"
         }
         if clean in aliases:
@@ -84,9 +106,8 @@ class PlatformOnboardingService:
     @classmethod
     def get_catalog(cls, onboarding_source: Optional[str] = None) -> PlatformCatalogResponse:
         """Returns standard catalogue options for the given onboarding source."""
-        source = (onboarding_source or "marketplace_seller").strip().lower()
-        if source in ("wholesale_b2b", "b2b", "wholesale", "directories"):
-            canonical_source = "wholesale_b2b"
+        canonical_source = cls.canonical_source(onboarding_source)
+        if canonical_source == "wholesale_b2b":
             items = [PlatformCatalogItem(**p) for p in SUPPORTED_B2B_PLATFORMS]
         else:
             canonical_source = "marketplace_seller"
@@ -113,14 +134,12 @@ class PlatformOnboardingService:
         4. Enforces required custom platform name (min 2 chars) when 'Other' is selected.
         5. Formats structured PlatformItem representations.
         """
-        norm_source = source.strip().lower()
-        if norm_source not in SUPPORTED_ONBOARDING_SOURCES:
-            norm_source = "marketplace_seller"
+        norm_source = cls.canonical_source(source)
 
         # 1. Normalize and deduplicate
         seen = set()
         normalized_ids: List[str] = []
-        for raw in selected_platforms:
+        for raw in (selected_platforms or []):
             nid = cls.normalize_platform_id(raw)
             if nid and nid not in seen:
                 seen.add(nid)
@@ -195,20 +214,67 @@ class PlatformOnboardingService:
         uid = str(user_id)
 
         # 1. Determine onboarding source
-        source = payload.onboarding_source
-        if not source:
-            # Check existing presence on user or business
-            u_doc = await db["users"].find_one({"_id": ObjectId(uid)}) or await db["pending_users"].find_one({"_id": ObjectId(uid)}) or {}
-            source = u_doc.get("online_presence") or "marketplace_seller"
+        raw_source = payload.onboarding_source
+        existing_job = await db["platform_onboarding_jobs"].find_one({"user_id": uid}) or {}
+        existing_bus = await db["businesses"].find_one({"$or": [{"owner_id": uid}, {"ownerId": uid}]}) or {}
+        u_doc = await db["users"].find_one({"_id": ObjectId(uid)}) or await db["pending_users"].find_one({"_id": ObjectId(uid)}) or {}
+
+        if not raw_source:
+            raw_source = existing_job.get("onboarding_source") or existing_bus.get("online_presence") or u_doc.get("online_presence") or "marketplace_seller"
+        source = cls.canonical_source(raw_source)
 
         custom_name = payload.custom_platform_name or payload.other_platform_name
+
+        # 1b. Fallback to existing selected platforms if omitted in partial update
+        raw_platforms = payload.selected_platforms
+        if raw_platforms is None or len(raw_platforms) == 0:
+            existing_platforms = (
+                existing_job.get("selected_platforms") or
+                existing_bus.get("selected_platforms") or
+                u_doc.get("selected_platforms") or
+                []
+            )
+            if existing_platforms:
+                raw_platforms = existing_platforms
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="At least one valid platform must be selected."
+                )
 
         # 2. Validate and normalize platforms
         norm_ids, platform_items, clean_custom, is_none = cls.validate_and_normalize_platforms(
             source=source,
-            selected_platforms=payload.selected_platforms,
+            selected_platforms=raw_platforms,
             custom_platform_name=custom_name
         )
+
+        # 2b. Normalize directory / additional listings
+        directory_listings: List[str] = []
+        if payload.directory_listings:
+            seen_dl = set()
+            for raw_dl in payload.directory_listings:
+                nid = cls.normalize_platform_id(raw_dl)
+                if nid and nid not in seen_dl:
+                    seen_dl.add(nid)
+                    directory_listings.append(nid)
+        elif "directory_listings" in existing_bus or "directory_listings" in existing_job:
+            directory_listings = existing_bus.get("directory_listings") or existing_job.get("directory_listings") or []
+
+        additional_listings: List[str] = []
+        if payload.additional_listings:
+            seen_al = set()
+            for raw_al in payload.additional_listings:
+                nid = cls.normalize_platform_id(raw_al)
+                if nid and nid not in seen_al:
+                    seen_al.add(nid)
+                    additional_listings.append(nid)
+        elif "additional_listings" in existing_bus or "additional_listings" in existing_job:
+            additional_listings = existing_bus.get("additional_listings") or existing_job.get("additional_listings") or []
+
+        clean_listing_name = (payload.custom_listing_name or "").strip() or None
+        if not clean_listing_name:
+            clean_listing_name = existing_bus.get("custom_listing_name") or existing_job.get("custom_listing_name")
 
         # 3. Handle optional website URL
         norm_url = None
@@ -231,9 +297,6 @@ class PlatformOnboardingService:
                 )
 
         # 3b. Handle multi-platform URLs (Marketplace Seller & Wholesale/B2B)
-        existing_job = await db["platform_onboarding_jobs"].find_one({"user_id": uid}) or {}
-        existing_bus = await db["businesses"].find_one({"$or": [{"owner_id": uid}, {"ownerId": uid}]}) or {}
-
         # Load existing platform URLs and statuses to guarantee partial updates and retries never wipe successful results
         platform_urls: Dict[str, str] = dict(existing_job.get("platform_urls") or existing_bus.get("platform_urls") or {})
         platform_analysis_status: Dict[str, str] = dict(existing_job.get("platform_analysis_status") or existing_bus.get("platform_analysis_status") or {})
@@ -308,12 +371,16 @@ class PlatformOnboardingService:
             "online_presence": source,
             "business_type": source,
             "selected_platforms": norm_ids,
+            "directory_listings": directory_listings,
+            "additional_listings": additional_listings,
             "platform_details": [p.model_dump() for p in platform_items],
             "platform_urls": platform_urls,
             "platform_analysis_status": platform_analysis_status,
             "none_of_these_selected": is_none,
             "updated_at": now
         }
+        if clean_listing_name:
+            bus_update["custom_listing_name"] = clean_listing_name
         if clean_custom is not None:
             bus_update["custom_platform_name"] = clean_custom
             bus_update["other_platform_name"] = clean_custom
@@ -323,8 +390,10 @@ class PlatformOnboardingService:
             bus_update["website_url"] = norm_url
             bus_update["has_storefront"] = True
             bus_update["website_skipped"] = False
+            bus_update["skip_website"] = False
         elif skipped_website:
             bus_update["website_skipped"] = True
+            bus_update["skip_website"] = True
             bus_update["has_storefront"] = False
 
         await db["businesses"].update_one(
@@ -342,12 +411,11 @@ class PlatformOnboardingService:
             upsert=True
         )
 
-        # 5. Update brand_kits collection
+        # 5. Update brand_kits collection (never put owner_id in both $set and $setOnInsert)
         await db["brand_kits"].update_one(
             {"$or": [{"owner_id": uid}, {"user_id": uid}]},
             {
                 "$set": {
-                    "owner_id": uid,
                     "business_type": source,
                     "online_presence": source,
                     "selected_platforms": norm_ids,
@@ -368,10 +436,18 @@ class PlatformOnboardingService:
             "online_presence": source,
             "business_type": source,
             "selected_platforms": norm_ids,
+            "directory_listings": directory_listings,
+            "additional_listings": additional_listings,
             "onboarding_step": 2,
             "onboarding_status": "in_progress",
             "updated_at": now
         }
+        if clean_listing_name:
+            user_updates_dict["custom_listing_name"] = clean_listing_name
+        if clean_custom:
+            user_updates_dict["custom_platform_name"] = clean_custom
+            user_updates_dict["other_platform_name"] = clean_custom
+
         await db["users"].update_one(
             {"_id": ObjectId(uid)},
             {"$set": user_updates_dict}
@@ -387,14 +463,18 @@ class PlatformOnboardingService:
             "user_id": uid,
             "onboarding_source": source,
             "selected_platforms": norm_ids,
+            "directory_listings": directory_listings,
+            "additional_listings": additional_listings,
             "platform_details": [p.model_dump() for p in platform_items],
             "platform_urls": platform_urls,
             "platform_analysis_status": platform_analysis_status,
             "platform_analysis_errors": platform_analysis_errors,
             "platform_analysis_jobs": platform_analysis_jobs,
             "custom_platform_name": clean_custom,
+            "custom_listing_name": clean_listing_name,
             "none_of_these_selected": is_none,
             "website_skipped": skipped_website,
+            "skip_website": skipped_website,
             "updated_at": now
         }
         if norm_url:
@@ -616,15 +696,24 @@ class PlatformOnboardingService:
                     if p_url and p_url not in source_images:
                         source_images.append(p_url)
 
+        directory_listings = job.get("directory_listings") or bus.get("directory_listings") or user.get("directory_listings") or []
+        additional_listings = job.get("additional_listings") or bus.get("additional_listings") or user.get("additional_listings") or []
+        custom_listing_name = job.get("custom_listing_name") or bus.get("custom_listing_name") or user.get("custom_listing_name")
+        skip_website = bool(job.get("skip_website") or bus.get("skip_website") or website_skipped)
+
         return PlatformOnboardingState(
             success=True,
             onboarding_source=source,
             selected_platforms=selected_ids,
+            directory_listings=directory_listings,
+            additional_listings=additional_listings,
+            custom_listing_name=custom_listing_name,
             platform_details=platform_items,
             custom_platform_name=custom_name,
             none_of_these_selected=none_selected,
             website_url=website_url,
             website_skipped=website_skipped,
+            skip_website=skip_website,
             has_storefront=has_storefront,
             platform_urls=platform_urls,
             platform_analysis_status=platform_analysis_status,

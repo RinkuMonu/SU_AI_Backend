@@ -47,6 +47,7 @@ from app.schemas.onboarding import (
     OnlinePresenceRequest,
     OnlinePresenceResponse,
     VALID_ONLINE_PRESENCE_OPTIONS,
+    PRESENCE_CANONICAL_MAP,
     BusinessServicesSelectionRequest,
     BusinessServicesSelectionResponse,
     BusinessServicesCatalogResponse,
@@ -100,7 +101,7 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
         (business_doc.get("online_presence") if business_doc else None) or
         current_user.get("online_presence")
     )
-    is_brand_kit_applicable = (online_presence == "no_online_presence") or (not online_presence)
+    is_brand_kit_applicable = (online_presence in ("no_online_presence", "none")) or (not online_presence)
 
     # Legacy business profile flag
     if not is_brand_kit_applicable:
@@ -279,7 +280,14 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
         "plan_skipped",
         "plan_selected",
         "online_presence",
+        "canonical_presence",
+        "business_source",
+        "presence",
+        "selling_model",
         "business_type",
+        "selected_platforms",
+        "directory_listings",
+        "additional_listings",
         "selected_services",
         "selectedServices",
         "onboarding_status",
@@ -304,7 +312,11 @@ async def update_onboarding_progress(payload: Dict[str, Any], current_user=Depen
 
     if "online_presence" in update_data:
         presence = OnboardingService.normalize_online_presence(update_data["online_presence"])
+        canonical = PRESENCE_CANONICAL_MAP.get(presence, presence)
         update_data["online_presence"] = presence
+        update_data["canonical_presence"] = canonical
+        update_data["business_source"] = presence
+        update_data["presence"] = presence
         if "business_type" not in update_data or not update_data["business_type"]:
             update_data["business_type"] = presence
         update_data["onboarding_status"] = "in_progress"
@@ -421,7 +433,14 @@ async def get_online_presence(current_user=Depends(get_current_user)):
     return {
         "success": True,
         "online_presence": state.get("online_presence"),
+        "canonical_presence": state.get("canonical_presence"),
+        "business_source": state.get("business_source") or state.get("online_presence"),
+        "presence": state.get("presence") or state.get("online_presence"),
         "business_type": state.get("business_type"),
+        "selling_model": state.get("selling_model"),
+        "selected_platforms": state.get("selected_platforms") or [],
+        "directory_listings": user_doc.get("directory_listings") or (bus_doc.get("directory_listings") if bus_doc else None),
+        "additional_listings": user_doc.get("additional_listings") or (bus_doc.get("additional_listings") if bus_doc else None),
         "selected_services": state.get("selected_services", []),
         "selectedServices": state.get("selectedServices", []),
         "onboarding_step": state.get("onboarding_step", 1),

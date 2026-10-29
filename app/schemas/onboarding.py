@@ -6,30 +6,66 @@ from pydantic import BaseModel, Field, HttpUrl, AliasChoices
 class BusinessOnlinePresenceType(str, Enum):
     WEBSITE = "website"
     GOOGLE_MAPS = "google_maps"
+    MARKETPLACE = "marketplace"
     MARKETPLACE_SELLER = "marketplace_seller"
-    NO_ONLINE_PRESENCE = "no_online_presence"
+    B2B = "b2b"
+    WHOLESALE = "wholesale"
     WHOLESALE_B2B = "wholesale_b2b"
+    DIRECTORIES = "directories"
+    NONE = "none"
+    NO_ONLINE_PRESENCE = "no_online_presence"
+    SOCIAL_MEDIA = "social_media"
     OTHER = "other"
     SOMETHING_ELSE = "something_else"
 
-VALID_ONLINE_PRESENCE_OPTIONS = {
-    "website",
-    "google_maps",
-    "marketplace_seller",
-    "no_online_presence",
-    "wholesale_b2b",
-    "other",
-    "something_else"
+PRESENCE_CANONICAL_MAP: Dict[str, str] = {
+    "website": "website",
+    "google_maps": "google_maps",
+    "marketplace": "marketplace_seller",
+    "marketplace_seller": "marketplace_seller",
+    "b2b": "wholesale_b2b",
+    "wholesale": "wholesale_b2b",
+    "wholesale_b2b": "wholesale_b2b",
+    "directories": "wholesale_b2b",
+    "none": "no_online_presence",
+    "no_online_presence": "no_online_presence",
+    "social_media": "social_media",
+    "other": "other",
+    "something_else": "something_else",
 }
 
+CANONICAL_TO_FRONTEND_MAP: Dict[str, str] = {
+    "marketplace_seller": "marketplace",
+    "wholesale_b2b": "b2b",
+    "no_online_presence": "none",
+    "social_media": "social_media",
+    "website": "website",
+    "google_maps": "google_maps",
+    "other": "other",
+    "something_else": "something_else",
+}
+
+VALID_ONLINE_PRESENCE_OPTIONS = set(PRESENCE_CANONICAL_MAP.keys())
+
 class OnlinePresenceRequest(BaseModel):
-    online_presence: str = Field(..., description="Selected business online presence option")
+    online_presence: str = Field(
+        ...,
+        validation_alias=AliasChoices("online_presence", "presence", "source", "business_source", "onlinePresence"),
+        description="Selected business online presence option"
+    )
     google_maps_url: Optional[str] = None
     website_url: Optional[str] = None
     website: Optional[str] = None
     marketplace_name: Optional[str] = None
     marketplace_url: Optional[str] = None
-    selected_platforms: Optional[List[str]] = Field(default=None, description="Array of selected marketplace or B2B platforms")
+    selected_platforms: Optional[List[str]] = Field(
+        default=None,
+        validation_alias=AliasChoices("selected_platforms", "platforms", "selectedPlatforms"),
+        description="Array of selected marketplace or B2B platforms"
+    )
+    directory_listings: Optional[List[str]] = Field(default=None, description="Optional directory listings for marketplace flow")
+    additional_listings: Optional[List[str]] = Field(default=None, description="Optional additional listings for wholesale/B2B flow")
+    custom_listing_name: Optional[str] = Field(default=None, description="Custom directory listing name if 'other' selected")
     platform_urls: Optional[Dict[str, str]] = Field(default=None, description="Map of platform IDs to URLs")
     urls: Optional[List[Dict[str, str]]] = Field(default=None, description="Optional array of platform URL mappings")
     custom_platform_name: Optional[str] = Field(default=None, description="Custom platform name if 'other' is selected")
@@ -38,7 +74,9 @@ class OnlinePresenceRequest(BaseModel):
     selectedServices: Optional[List[str]] = Field(default=None, description="CamelCase alias for selected_services")
     has_storefront: Optional[bool] = None
     website_skipped: Optional[bool] = None
+    skip_website: Optional[bool] = None
     business_type: Optional[str] = None
+    selling_model: Optional[str] = None
     business_name: Optional[str] = None
     category: Optional[str] = None
     description: Optional[str] = None
@@ -48,7 +86,14 @@ class OnlinePresenceResponse(BaseModel):
     success: bool = True
     message: str = "Business online presence saved successfully."
     online_presence: str
+    canonical_presence: Optional[str] = None
+    business_source: Optional[str] = None
+    presence: Optional[str] = None
     business_type: Optional[str] = None
+    selling_model: Optional[str] = None
+    selected_platforms: Optional[List[str]] = None
+    directory_listings: Optional[List[str]] = None
+    additional_listings: Optional[List[str]] = None
     onboarding_step: int = 2
     onboarding_status: str = "in_progress"
     next_step: str = "brand_kit"

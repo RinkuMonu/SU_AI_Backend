@@ -79,10 +79,10 @@ PLANS = {
             "10 AI reels/month"
         ],
         "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar"],
-        "gst_applicable": True,
-        "gst_rate": 0.18,
-        "gst_amount": 143.82,
-        "total_price": 942.82,
+        "gst_applicable": False,
+        "gst_rate": 0.0,
+        "gst_amount": 0.0,
+        "total_price": 799.0,
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
@@ -90,24 +90,18 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 799,
-                "gst_amount": 143.82,
-                "total_price": 942.82,
                 "formatted_price": "₹799",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 2157,
-                "gst_amount": 388.26,
-                "total_price": 2545.26,
                 "formatted_price": "₹2,157",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 7670,
-                "gst_amount": 1380.60,
-                "total_price": 9050.60,
                 "formatted_price": "₹7,670",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -136,10 +130,10 @@ PLANS = {
             "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
             "ads", "website_builder", "instagram_ai", "analytics"
         ],
-        "gst_applicable": True,
-        "gst_rate": 0.18,
-        "gst_amount": 539.82,
-        "total_price": 3538.82,
+        "gst_applicable": False,
+        "gst_rate": 0.0,
+        "gst_amount": 0.0,
+        "total_price": 2999.0,
         "watermark": False,
         "multiple_businesses": False,
         "api_access": False,
@@ -147,24 +141,18 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 2999,
-                "gst_amount": 539.82,
-                "total_price": 3538.82,
                 "formatted_price": "₹2,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 8097,
-                "gst_amount": 1457.46,
-                "total_price": 9554.46,
                 "formatted_price": "₹8,097",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 28790,
-                "gst_amount": 5182.20,
-                "total_price": 33972.20,
                 "formatted_price": "₹28,790",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -194,10 +182,10 @@ PLANS = {
             "ads", "website_builder", "instagram_ai", "analytics",
             "advanced_analytics", "crm", "competitor_analysis"
         ],
-        "gst_applicable": True,
-        "gst_rate": 0.18,
-        "gst_amount": 899.82,
-        "total_price": 5898.82,
+        "gst_applicable": False,
+        "gst_rate": 0.0,
+        "gst_amount": 0.0,
+        "total_price": 4999.0,
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
@@ -205,24 +193,18 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 4999,
-                "gst_amount": 899.82,
-                "total_price": 5898.82,
                 "formatted_price": "₹4,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 13497,
-                "gst_amount": 2429.46,
-                "total_price": 15926.46,
                 "formatted_price": "₹13,497",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 47990,
-                "gst_amount": 8638.20,
-                "total_price": 56628.20,
                 "formatted_price": "₹47,990",
                 "period_label": "/ year + GST",
                 "duration_days": 365
@@ -253,10 +235,10 @@ PLANS = {
             "ads", "website_builder", "instagram_ai", "analytics",
             "advanced_analytics", "crm", "competitor_analysis"
         ],
-        "gst_applicable": True,
-        "gst_rate": 0.18,
-        "gst_amount": 1799.82,
-        "total_price": 11798.82,
+        "gst_applicable": False,
+        "gst_rate": 0.0,
+        "gst_amount": 0.0,
+        "total_price": 9999.0,
         "watermark": False,
         "multiple_businesses": True,
         "api_access": True,
@@ -264,24 +246,18 @@ PLANS = {
         "billing_cycles": {
             "monthly": {
                 "price": 9999,
-                "gst_amount": 1799.82,
-                "total_price": 11798.82,
                 "formatted_price": "₹9,999",
                 "period_label": "/ month + GST",
                 "duration_days": 30
             },
             "quarterly": {
                 "price": 26997,
-                "gst_amount": 4859.46,
-                "total_price": 31856.46,
                 "formatted_price": "₹26,997",
                 "period_label": "/ quarter + GST",
                 "duration_days": 90
             },
             "yearly": {
                 "price": 95990,
-                "gst_amount": 17278.20,
-                "total_price": 113268.20,
                 "formatted_price": "₹95,990",
                 "period_label": "/ year + GST",
                 "duration_days": 365

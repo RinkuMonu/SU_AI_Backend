@@ -168,7 +168,7 @@ class PlanOnboardingService:
             current_user.get("online_presence")
         )
 
-        if online_presence and online_presence != "no_online_presence":
+        if online_presence and online_presence not in ("no_online_presence", "none"):
             brand_kit_started_or_saved = True
         else:
             brand_kit_started_or_saved = bool(
@@ -203,7 +203,7 @@ class PlanOnboardingService:
 
         # Determine eligibility and popup display
         # A businessman is eligible for plan activation modal when prerequisites (Step 1 Brand Kit and Step 2 Social) are met
-        step1_met = bool(brand_kit_completed or (online_presence and online_presence != "no_online_presence") or (business and business.get("brand_kit_dismissed")))
+        step1_met = bool(brand_kit_completed or (online_presence and online_presence not in ("no_online_presence", "none")) or (business and business.get("brand_kit_dismissed")))
         step2_met = bool(social_connectivity_completed or is_social_skipped)
         is_eligible = bool(role == "businessman" and step1_met and step2_met)
         requires_plan_selection = (not plan_activation_completed) and (not is_plan_skipped)

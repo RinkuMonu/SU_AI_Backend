@@ -20,10 +20,20 @@ async def create_payment(
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(get_database)
 ):
-    user_id = str(current_user["id"])
-    user_email = current_user.get("email", "user@example.com")
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    raw_email = current_user.get("email")
+    user_email = raw_email.strip() if isinstance(raw_email, str) else ""
+    user_name = current_user.get("name") or current_user.get("fullName") or "User"
+    user_mobile = current_user.get("phone_number") or current_user.get("phone")
+
     result = await PayinService.create_payment(
-        db, user_id, user_email, request.plan_id, billing_cycle=request.billing_cycle
+        db,
+        user_id,
+        user_email,
+        request.plan_id,
+        billing_cycle=request.billing_cycle,
+        user_name=user_name,
+        user_mobile=user_mobile
     )
     return result
 

@@ -150,10 +150,15 @@ class WebsiteAnalysisService:
         try:
             u_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) or await db["pending_users"].find_one({"_id": ObjectId(user_id)}) or {}
             existing_presence = u_doc.get("online_presence")
-            target_presence = "website"
-            if payload.onboarding_type and payload.onboarding_type in ("marketplace_seller", "wholesale_b2b", "google_maps", "no_online_presence"):
+            NON_WEBSITE_PRESENCES = (
+                "marketplace_seller", "marketplace",
+                "wholesale_b2b", "wholesale", "b2b", "directories",
+                "google_maps", "no_online_presence", "none",
+                "social_media", "other", "something_else"
+            )
+            if payload.onboarding_type and payload.onboarding_type in NON_WEBSITE_PRESENCES:
                 target_presence = payload.onboarding_type
-            elif existing_presence in ("marketplace_seller", "wholesale_b2b", "google_maps", "no_online_presence"):
+            elif existing_presence in NON_WEBSITE_PRESENCES:
                 target_presence = existing_presence
 
             # Update job doc to reflect target onboarding type
@@ -654,8 +659,13 @@ class WebsiteAnalysisService:
 
         # Advance user onboarding step to 3 (Social Connectivity), preserving specific online_presence
         u_doc = await db["users"].find_one({"_id": ObjectId(user_id)}) or await db["pending_users"].find_one({"_id": ObjectId(user_id)}) or {}
-        user_presence = job.get("onboarding_type") or u_doc.get("online_presence") or "website"
-        if user_presence not in ("marketplace_seller", "wholesale_b2b", "google_maps", "no_online_presence"):
+        NON_WEBSITE_PRESENCES = (
+            "marketplace_seller", "marketplace",
+            "wholesale_b2b", "wholesale", "b2b", "directories",
+            "google_maps", "no_online_presence", "none",
+            "social_media", "other", "something_else"
+        )
+        if user_presence not in NON_WEBSITE_PRESENCES:
             user_presence = u_doc.get("online_presence") or "website"
 
         # Always update canonical users collection

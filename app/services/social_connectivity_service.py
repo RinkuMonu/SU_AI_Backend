@@ -215,7 +215,7 @@ async def get_social_onboarding_status(db, current_user) -> SocialOnboardingStat
     brand_kit_completed = False
     brand_kit_started_or_saved = False
 
-    if online_presence and online_presence != "no_online_presence":
+    if online_presence and online_presence not in ("no_online_presence", "none"):
         # website, google_maps, marketplace_seller, wholesale_b2b do NOT require Brand Kit
         brand_kit_completed = brand_kit.get("brand_kit_completed", False) if brand_kit else False
         brand_kit_started_or_saved = True
