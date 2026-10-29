@@ -156,3 +156,4 @@ async def test_get_leads_and_pagination():
         del_res = await ac.delete(f"/api/v1/leads/{lead_id}")
         assert del_res.status_code == 200
         assert del_res.json()["success"] is True
+

@@ -49,3 +49,4 @@ class LeadListResponse(BaseModel):
     limit: int
     total_pages: int
     data: List[LeadResponse]
+
