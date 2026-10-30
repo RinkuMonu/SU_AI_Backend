@@ -470,3 +470,4 @@ async def test_download_transaction_receipt_pdf():
         res_denied = await ac.get(f"/api/v1/transactions/{tid}/receipt", headers=headers_hacker)
         assert res_denied.status_code == 403
         assert "Forbidden" in res_denied.json()["detail"]
+
