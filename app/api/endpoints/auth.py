@@ -472,22 +472,61 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 
-@router.get("/me", response_model=UserResponse)
+@router.get("/me")
 async def get_me(current_user: CurrentUser = Depends(get_current_user)):
-    user_phone = current_user.get("phone_number")
-    phone_verified = current_user.get("phone_verified", True if not user_phone else False)
-    if not user_phone or current_user.get("role") in ["businessman", "influencer", "admin"]:
-        phone_verified = True
+    """
+    Canonical endpoint to fetch current authenticated user profile.
+    Compatible with direct user dictionary format, UserResponse schema, and ApiResponse envelope.
+    """
+    db = get_database()
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    doc = None
+    if ObjectId.is_valid(user_id):
+        doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+        if not doc:
+            doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
+    if not doc:
+        doc = current_user
 
-    return UserResponse(
-        id=current_user["id"],
-        name=current_user["name"],
-        phone_number=user_phone,
-        phone_verified=phone_verified,
-        email=current_user.get("email") or None,
-        role=current_user.get("role"),
-        email_verified=current_user.get("email_verified", True)
-    )
+    uid = str(doc.get("_id") or doc.get("id") or user_id)
+    full_name = doc.get("fullName") or doc.get("name") or "User"
+    user_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
+    phone_verified = doc.get("phone_verified", True if not user_phone else False)
+    if not user_phone or doc.get("role") in ["businessman", "influencer", "admin"]:
+        phone_verified = True
+    email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
+
+    user_dict = {
+        "id": uid,
+        "_id": uid,
+        "fullName": full_name,
+        "name": full_name,
+        "firstName": doc.get("firstName") or full_name.split()[0],
+        "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
+        "email": doc.get("email") or None,
+        "phone_number": user_phone,
+        "phone": user_phone,
+        "contactNumber": user_phone,
+        "phone_verified": phone_verified,
+        "accountType": doc.get("accountType", "business"),
+        "role": doc.get("role", "businessman") or "businessman",
+        "emailVerified": email_ver,
+        "email_verified": email_ver,
+        "isVerified": email_ver,
+        "profileImageUrl": doc.get("profileImageUrl") or doc.get("image") or doc.get("avatar"),
+        "image": doc.get("image") or doc.get("profileImageUrl") or doc.get("avatar"),
+        "avatar": doc.get("avatar") or doc.get("profileImageUrl") or doc.get("image"),
+        "preferredLanguage": doc.get("preferredLanguage"),
+        "businessName": doc.get("businessName") or doc.get("business_name"),
+        "onboardingCompleted": doc.get("onboardingCompleted", False),
+        "onboarding_step": doc.get("onboarding_step", 1),
+    }
+
+    return {
+        **user_dict,
+        "success": True,
+        "data": user_dict,
+    }
 
 
 @router.post("/select-role", response_model=RoleSelectResponse)
@@ -675,52 +714,6 @@ async def refresh(request: Request, response: Response):
         "message": "Token refreshed",
         "data": {"accessToken": access_token}
     }
-
-@router.get("/me")
-async def get_current_user_profile(current_user: CurrentUser = Depends(get_current_user)):
-    """
-    Fetch current authenticated user profile.
-    Compatible with both User direct format and standard APIResponse envelope.
-    """
-    db = get_database()
-    doc = await db["users"].find_one({"_id": ObjectId(current_user["id"])})
-    if not doc:
-        doc = await db["pending_users"].find_one({"_id": ObjectId(current_user["id"])})
-    if not doc:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user_id = str(doc["_id"])
-    full_name = doc.get("fullName") or doc.get("name") or "User"
-    email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
-
-    user_dict = {
-        "id": user_id,
-        "_id": user_id,
-        "fullName": full_name,
-        "name": full_name,
-        "firstName": doc.get("firstName") or full_name.split()[0],
-        "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
-        "email": doc.get("email"),
-        "phone": doc.get("phone") or doc.get("contactNumber"),
-        "contactNumber": doc.get("contactNumber") or doc.get("phone"),
-        "accountType": doc.get("accountType", "business"),
-        "role": doc.get("role", "user") or "user",
-        "emailVerified": email_ver,
-        "email_verified": email_ver,
-        "isVerified": email_ver,
-        "profileImageUrl": doc.get("profileImageUrl"),
-        "preferredLanguage": doc.get("preferredLanguage"),
-        "onboardingCompleted": doc.get("onboardingCompleted", False),
-        "onboarding_step": doc.get("onboarding_step", 1),
-    }
-
-    # Return top-level fields AND data envelope for dual compatibility
-    response_payload = {
-        **user_dict,
-        "success": True,
-        "data": user_dict,
-    }
-    return response_payload
 
 @router.get("/verify-email", response_class=HTMLResponse)
 async def verify_email_get(request: Request, token: str = Query(None), link: str = Query(None)):

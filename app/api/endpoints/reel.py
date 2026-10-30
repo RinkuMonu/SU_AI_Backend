@@ -164,7 +164,6 @@ async def get_products_by_category_endpoint(
 # 2. FILE UPLOAD ENDPOINTS (IMAGE & AUDIO)
 # ============================================================================
 
-@router.post("/upload-image")
 @router.post("/reels/upload-image")
 @reels_router.post("/upload-image")
 async def upload_product_image_endpoint(

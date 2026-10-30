@@ -350,6 +350,8 @@ async def get_gallery(
     page: int = Query(1, ge=1),
     limit: int = Query(12, ge=1, le=50),
     category: Optional[str] = Query(None),
+    use_model: Optional[bool] = Query(None, description="Filter by AI model mode"),
+    sort_by: Optional[str] = Query("desc", description="Sort order: 'desc' (newest first) or 'asc' (oldest first)"),
     current_user: dict = Depends(get_current_user),
     db=Depends(get_database),
 ):
@@ -360,6 +362,8 @@ async def get_gallery(
         page=page,
         limit=limit,
         category=category,
+        use_model=use_model,
+        sort_by=sort_by,
     )
     return GalleryResponse(**result)
 
@@ -375,6 +379,11 @@ async def get_session(
     if not session_doc:
         raise HTTPException(status_code=404, detail="Photoshoot session not found.")
     session_clean = _serialize_mongo(session_doc)
+    # Ensure both uploaded_images and original_images are populated for client convenience
+    if "original_images" in session_clean and "uploaded_images" not in session_clean:
+        session_clean["uploaded_images"] = session_clean["original_images"]
+    elif "uploaded_images" in session_clean and "original_images" not in session_clean:
+        session_clean["original_images"] = session_clean["uploaded_images"]
     return {"success": True, "session": session_clean}
 
 

@@ -252,8 +252,15 @@ async def generate_caption(request: CaptionRequest, current_user: User = Depends
 @router.post("/image", response_model=dict, dependencies=[Depends(require_feature("ai_image")), Depends(require_credits("ai_image")), Depends(require_usage_limit("image"))])
 async def generate_image(request: ImageGenerationRequest, current_user: User = Depends(get_current_user)):
     """
-    Generates an image based on the provided prompt and optional reference images.
+    Canonical endpoint to generate realistic social media images based on prompt and optional reference images.
+    Includes feature authorization, credit deduction, usage limits, and Gemini-assisted visual prompt refinement.
     """
+    import os, io, re, json, random
+    import httpx
+    from PIL import Image
+    from app.core.config import settings
+    from app.ai.image.generator import ImageGenerator
+
     start_time = time.time()
     
     business = await BusinessService.get_business_by_owner(str(current_user.id))
@@ -265,8 +272,8 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
         user_id=str(current_user.id),
         business_id=business_id,
         generation_type="image",
-        provider="mock",
-        model_name="mock-model-v1",
+        provider="gemini",
+        model_name="image-generator-v1",
         input_params=request.model_dump(),
         status="processing"
     )
@@ -276,20 +283,79 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
     history_id = result.inserted_id
     
     try:
-        from app.ai.image.generator import ImageGenerator
-        from app.core.config import settings
-        
-        image_gen = ImageGenerator(
-            api_url=getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations"),
-            api_key=getattr(settings, "IMAGE_API_KEY", "your_api_key_here")
-        )
-        
-        # Determine the primary reference image if multiple were uploaded
-        primary_ref = None
-        if request.reference_images and len(request.reference_images) > 0:
-            primary_ref = request.reference_images[0]
-            
-        img_res = await image_gen.generate(prompt=request.prompt, product_image=primary_ref)
+        extracted_subject = None
+        extracted_traits = None
+        pil_refs = []
+
+        # 1. If reference images provided, extract subject using Gemini Vision
+        if request.reference_images and settings.GEMINI_API_KEY:
+            try:
+                import google.genai as genai
+                client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                for img_ref in request.reference_images[:3]:
+                    if not img_ref or not isinstance(img_ref, str):
+                        continue
+                    clean_ref = img_ref.strip()
+                    if "uploads/" in clean_ref:
+                        rel_part = clean_ref.split("uploads/")[-1].split("?")[0]
+                        local_path = os.path.join(os.getcwd(), "uploads", rel_part)
+                        if os.path.exists(local_path):
+                            img = Image.open(local_path).convert("RGB")
+                            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                            pil_refs.append(img)
+                            continue
+                    if clean_ref.startswith("http://") or clean_ref.startswith("https://"):
+                        headers = {"User-Agent": "Mozilla/5.0"}
+                        async with httpx.AsyncClient(timeout=10.0, headers=headers) as c:
+                            res = await c.get(clean_ref, follow_redirects=True)
+                            if res.status_code == 200 and len(res.content) > 1000:
+                                img = Image.open(io.BytesIO(res.content)).convert("RGB")
+                                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+                                pil_refs.append(img)
+
+                if pil_refs:
+                    vision_prompt = (
+                        "Examine this reference image with extreme visual precision.\n"
+                        "Identify:\n"
+                        "1. Exact Primary Subject (exact name if historical figure, deity, celebrity, or exact product type/garment/item):\n"
+                        "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
+                        "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
+                    )
+                    v_res = client.models.generate_content(
+                        model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
+                        contents=[*pil_refs, vision_prompt]
+                    )
+                    if v_res and v_res.text:
+                        v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
+                        v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
+                        if v_match:
+                            v_json = json.loads(v_match.group(0))
+                            extracted_subject = v_json.get("subject_name")
+                            extracted_traits = v_json.get("key_traits")
+            except Exception:
+                pass
+
+        # 2. Formulate realistic photorealistic prompt anchored on subject & authentic Indian features
+        base_prompt = request.prompt or request.additional_instruction or "high quality social media photography"
+        human_terms = ["woman", "women", "girl", "girls", "man", "men", "boy", "person", "people", "portrait", "face", "model", "holi", "diwali", "festiv", "saree", "lehenga", "ethnic"]
+        is_human = any(k in base_prompt.lower() for k in human_terms)
+        indian_clause = "authentic Indian person, natural South Asian facial features, warm wheatish Indian skin tone, dark brown eyes, strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, " if is_human else ""
+
+        if extracted_subject:
+            if extracted_subject.lower() not in base_prompt.lower():
+                final_prompt = (
+                    f"Raw authentic photograph of {extracted_subject}, {extracted_traits or ''}, "
+                    f"{indian_clause}{base_prompt}, cinematic natural lighting, photorealistic skin and fabric textures, 8k resolution, authentic likeness, documentary photography"
+                )
+            else:
+                final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
+        else:
+            final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
+
+        # 3. Generate image
+        image_gen = ImageGenerator()
+        seed = random.randint(1000, 999999)
+        img_res = await image_gen.generate(prompt=final_prompt, aspect_ratio="1:1", seed=seed, pil_refs=pil_refs)
         image_url = img_res.get("image_url", "")
         
         if not image_url:
@@ -368,99 +434,6 @@ async def get_generation_by_id(generation_id: str, current_user: User = Depends(
         doc["updated_at"] = doc["updated_at"].isoformat()
         
     return doc
-
-
-@router.post("/image", response_model=dict)
-async def generate_image_endpoint(request: ImageGenerationRequest, current_user: User = Depends(get_current_user)):
-    """
-    Generates a realistic social media image matching prompt and any uploaded reference images.
-    """
-    import os, io, re, json, random
-    import httpx
-    from PIL import Image
-    from app.core.config import settings
-    from app.ai.image.generator import ImageGenerator
-
-    extracted_subject = None
-    extracted_traits = None
-    pil_refs = []
-
-    # 1. If reference images provided, extract subject using Gemini Vision
-    if request.reference_images and settings.GEMINI_API_KEY:
-        try:
-            import google.genai as genai
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            for img_ref in request.reference_images[:3]:
-                if not img_ref or not isinstance(img_ref, str):
-                    continue
-                clean_ref = img_ref.strip()
-                if "uploads/" in clean_ref:
-                    rel_part = clean_ref.split("uploads/")[-1].split("?")[0]
-                    local_path = os.path.join(os.getcwd(), "uploads", rel_part)
-                    if os.path.exists(local_path):
-                        img = Image.open(local_path).convert("RGB")
-                        img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                        pil_refs.append(img)
-                        continue
-                if clean_ref.startswith("http://") or clean_ref.startswith("https://"):
-                    headers = {"User-Agent": "Mozilla/5.0"}
-                    async with httpx.AsyncClient(timeout=10.0, headers=headers) as c:
-                        res = await c.get(clean_ref, follow_redirects=True)
-                        if res.status_code == 200 and len(res.content) > 1000:
-                            img = Image.open(io.BytesIO(res.content)).convert("RGB")
-                            img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-                            pil_refs.append(img)
-
-            if pil_refs:
-                vision_prompt = (
-                    "Examine this reference image with extreme visual precision.\n"
-                    "Identify:\n"
-                    "1. Exact Primary Subject (exact name if historical figure, deity, celebrity, or exact product type/garment/item):\n"
-                    "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
-                    "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
-                )
-                v_res = client.models.generate_content(
-                    model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-                    contents=[*pil_refs, vision_prompt]
-                )
-                if v_res and v_res.text:
-                    v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
-                    v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
-                    if v_match:
-                        v_json = json.loads(v_match.group(0))
-                        extracted_subject = v_json.get("subject_name")
-                        extracted_traits = v_json.get("key_traits")
-        except Exception:
-            pass
-
-    # 2. Formulate realistic photorealistic prompt anchored on subject & authentic Indian features
-    base_prompt = request.prompt or request.additional_instruction or "high quality social media photography"
-    human_terms = ["woman", "women", "girl", "girls", "man", "men", "boy", "person", "people", "portrait", "face", "model", "holi", "diwali", "festiv", "saree", "lehenga", "ethnic"]
-    is_human = any(k in base_prompt.lower() for k in human_terms)
-    indian_clause = "authentic Indian person, natural South Asian facial features, warm wheatish Indian skin tone, dark brown eyes, strictly no Chinese face, no East Asian face, no porcelain doll face, no anime, " if is_human else ""
-
-    if extracted_subject:
-        if extracted_subject.lower() not in base_prompt.lower():
-            final_prompt = (
-                f"Raw authentic photograph of {extracted_subject}, {extracted_traits or ''}, "
-                f"{indian_clause}{base_prompt}, cinematic natural lighting, photorealistic skin and fabric textures, 8k resolution, authentic likeness, documentary photography"
-            )
-        else:
-            final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
-    else:
-        final_prompt = f"Raw authentic photograph of {indian_clause}{base_prompt}, 8k resolution, natural lighting, documentary photography"
-
-    # 3. Generate image
-    image_gen = ImageGenerator()
-    seed = random.randint(1000, 999999)
-    res = await image_gen.generate(prompt=final_prompt, aspect_ratio="1:1", seed=seed, pil_refs=pil_refs)
-
-    return {
-        "success": True,
-        "data": {
-            "image_url": res.get("image_url", "")
-        }
-    }
 
 
 # ============================================================================

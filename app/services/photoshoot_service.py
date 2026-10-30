@@ -628,10 +628,40 @@ class PhotoshootService:
                 f"Product identity, logos, packaging, colors and texture strictly preserved. 8k resolution, crisp photorealistic details."
             )
 
-            # Generate via Flux / Pollinations or synthesize clean PIL asset
-            download_ok = await cls._generate_and_save_visual(prompt=prompt, target_path=target_path)
-            if not download_ok or not target_path.exists():
-                cls._synthesize_fallback_image(target_path, title=f"{p_name}\n({style})", bg_color=(245, 245, 245))
+            # Preserve authentic product geometry, logo and textures by applying photographic enhancement directly to source
+            rel_src = (source_image.get("url") or "").lstrip("/").replace("\\", "/")
+            src_file = Path(rel_src)
+            enhanced_from_src = False
+
+            if src_file.exists() and src_file.is_file():
+                try:
+                    with Image.open(src_file) as im:
+                        im_rgb = im.convert("RGB")
+                        im_norm = ImageOps.autocontrast(im_rgb, cutoff=0.5)
+
+                        if style == "Studio Premium":
+                            im_proc = ImageEnhance.Color(im_norm).enhance(1.08)
+                            im_proc = ImageEnhance.Contrast(im_proc).enhance(1.12)
+                            im_proc = ImageEnhance.Sharpness(im_proc).enhance(1.18)
+                        elif style == "Luxury Cinematic":
+                            im_proc = ImageEnhance.Color(im_norm).enhance(1.10)
+                            im_proc = ImageEnhance.Contrast(im_proc).enhance(1.22)
+                            im_proc = ImageEnhance.Brightness(im_proc).enhance(0.96)
+                            im_proc = ImageEnhance.Sharpness(im_proc).enhance(1.20)
+                        else:  # Marketplace White
+                            im_proc = ImageEnhance.Brightness(im_norm).enhance(1.05)
+                            im_proc = ImageEnhance.Contrast(im_proc).enhance(1.15)
+                            im_proc = ImageEnhance.Sharpness(im_proc).enhance(1.22)
+
+                        im_proc.save(target_path, format="JPEG", quality=95, subsampling=0)
+                        enhanced_from_src = True
+                except Exception as enh_err:
+                    logger.warning(f"Local photographic enhancement note: {enh_err}")
+
+            if not enhanced_from_src or not target_path.exists():
+                download_ok = await cls._generate_and_save_visual(prompt=prompt, target_path=target_path)
+                if not download_ok or not target_path.exists():
+                    cls._synthesize_fallback_image(target_path, title=f"{p_name}\n({style})", bg_color=(245, 245, 245))
 
             rel_url = f"/uploads/photoshoot/enhanced/{filename}"
             item = {
@@ -1023,16 +1053,18 @@ class PhotoshootService:
                 # Vary angle, pose, and composition per iteration while keeping strict model & product identity
                 if use_model:
                     comp_prompt = (
-                        f"Professional commercial fashion catalog photo. {p_name} in {colors}, {texture}{logo_clause} "
-                        f"modeled by {model_name} ({model_identity}). Variation {i+1}: {applied_style}. "
-                        f"{custom_prompt or ''}. High fashion studio lighting, full body or medium shot, "
-                        f"8k resolution, razor-sharp garment texture, photorealistic."
+                        f"Professional commercial fashion catalog photo of authentic {p_name} in exact original {colors}, {texture}{logo_clause}. "
+                        f"Strictly preserve authentic product colors, logo labels, packaging and silhouette without artificial alteration. "
+                        f"Modeled naturally by {model_name} ({model_identity}). Variation {i+1}: {applied_style}. "
+                        f"{custom_prompt or ''}. High fashion commercial studio lighting, natural key and fill light, soft contact shadow, "
+                        f"realistic skin texture, 8k resolution, razor-sharp garment micro-weave, photorealistic commercial catalog."
                     )
                 else:
                     comp_prompt = (
-                        f"Professional luxury commercial product photoshoot of {p_name} in {colors}, {texture}{logo_clause}. "
-                        f"Variation {i+1}: {applied_style}. {custom_prompt or ''}. "
-                        f"Advertising studio lighting, 8k resolution, clean reflections, photorealistic commercial catalog."
+                        f"Professional luxury commercial product photoshoot of authentic {p_name} in exact original {colors}, {texture}{logo_clause}. "
+                        f"Strictly preserve original product brand logos, packaging, colors, geometry and materials without distortion. "
+                        f"Clean isolated composition on minimalist studio plinth. Variation {i+1}: {applied_style}. {custom_prompt or ''}. "
+                        f"Commercial advertising studio lighting, soft natural contact shadow, subtle reflections, razor-sharp focus, 8k resolution, photorealistic."
                     )
 
                 try:
@@ -1489,18 +1521,24 @@ class PhotoshootService:
         user_id: str,
         page: int = 1,
         limit: int = 12,
-        category: Optional[str] = None
+        category: Optional[str] = None,
+        use_model: Optional[bool] = None,
+        sort_by: Optional[str] = "desc",
     ) -> Dict[str, Any]:
         query: Dict[str, Any] = {"user_id": str(user_id)}
         if category and category.lower() != "all":
             query["product_category"] = {"$regex": f"^{re.escape(category)}$", "$options": "i"}
+        if use_model is not None:
+            query["use_model"] = use_model
+
+        sort_dir = 1 if sort_by == "asc" else -1
 
         total = await db["photoshoot_sessions"].count_documents(query)
         safe_page = max(1, page)
         safe_limit = min(max(1, limit), 50)
         skip = (safe_page - 1) * safe_limit
 
-        cursor = db["photoshoot_sessions"].find(query).sort("created_at", -1).skip(skip).limit(safe_limit)
+        cursor = db["photoshoot_sessions"].find(query).sort("created_at", sort_dir).skip(skip).limit(safe_limit)
         items = []
         async for doc in cursor:
             # Pick first generated image or first original as thumbnail

@@ -649,7 +649,6 @@ async def facebook_verify_token(
 # ──────────────────────────────────────────────
 
 @router.get("/webhook")
-@router.get("/callback")
 async def facebook_webhook_verify(
     request: Request,
     db=Depends(get_database),
@@ -681,7 +680,6 @@ async def facebook_webhook_verify(
 
 
 @router.post("/webhook")
-@router.post("/callback")
 async def facebook_webhook_receive(
     request: Request,
     db=Depends(get_database),

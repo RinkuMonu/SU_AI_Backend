@@ -824,12 +824,68 @@ async def test_data_persistence_across_login_logout():
         assert sess_doc["session_id"] == session_id
         assert sess_doc["user_id"] == user_id
         assert len(sess_doc["original_images"]) == 2
+        assert "uploaded_images" in sess_doc
+        assert len(sess_doc["uploaded_images"]) == 2
         assert saved_img_id in sess_doc["saved_image_ids"]
 
         # Image results retrieval
         res_login_2 = await ac.get(f"/api/v1/product-photoshoot/{session_id}/results", headers=headers_2)
         assert res_login_2.status_code == 200
         assert len(res_login_2.json()["results"]) >= 2
+
+
+# ---------------------------------------------------------------------------
+# TEST E: Audio Prompt Preparation & Advanced Gallery Filtering
+# ---------------------------------------------------------------------------
+async def test_audio_prompt_preparation_and_gallery_filtering():
+    """Verify prepare-prompt-audio endpoint and advanced gallery filtering by category, model mode, and date."""
+    db = get_database()
+    user_id, token = await create_auth_user(db, name="Audio & Filter Tester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    img_bytes = create_dummy_image_bytes(400, 400, "purple")
+    files = [("files", ("handbag.jpg", img_bytes, "image/jpeg"))]
+    data = {"product_category": "Bags & Luggage"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Upload
+        up = await ac.post("/api/v1/product-photoshoot/upload", headers=headers, files=files, data=data)
+        assert up.status_code == 200
+        session_id = up.json()["session_id"]
+
+        # 2. Test prepare-prompt-audio with form fields
+        form_data = {
+            "session_id": session_id,
+            "custom_prompt": "Luxury golden hour lighting on velvet handbag",
+            "language": "en",
+            "use_model": "false",
+            "selected_styles": "Clean Hero Product Shot, Luxury Studio Podia",
+        }
+        audio_bytes = b"RIFF....WAVEfmt ...."  # mock audio payload
+        audio_file = ("voice.wav", audio_bytes, "audio/wav")
+
+        prep_audio_res = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt-audio",
+            headers=headers,
+            data=form_data,
+            files={"audio_file": audio_file},
+        )
+        assert prep_audio_res.status_code == 200, prep_audio_res.text
+        prep_body = prep_audio_res.json()
+        assert prep_body["success"] is True
+        assert "prepared_prompt" in prep_body
+        assert len(prep_body["prepared_prompt"]) > 10
+
+        # 3. Test gallery with category and sort_by filters
+        gal_filtered = await ac.get(
+            "/api/v1/product-photoshoot/gallery?category=Bags%20%26%20Luggage&use_model=false&sort_by=desc",
+            headers=headers,
+        )
+        assert gal_filtered.status_code == 200
+        gal_data = gal_filtered.json()
+        assert gal_data["success"] is True
+        assert gal_data["total"] >= 1
+
 
 
 

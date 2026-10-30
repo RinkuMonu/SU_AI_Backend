@@ -33,8 +33,6 @@ api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboar
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
 api_router.include_router(brand.router, prefix="/brands", tags=["Brand Kit"])
-api_router.include_router(brand.router, prefix="/brand", tags=["Brand Kit"])
-api_router.include_router(brand.router, prefix="/brand-kit", tags=["Brand Kit"])
 api_router.include_router(linkedin.router, prefix="/linkedin", tags=["LinkedIn"])
 api_router.include_router(leads.router, prefix="/leads", tags=["Leads"])
 api_router.include_router(leads.router, prefix="/contact", tags=["Contact"], include_in_schema=False)
