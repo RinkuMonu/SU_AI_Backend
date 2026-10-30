@@ -169,3 +169,23 @@ class GeminiGenerateResponse(BaseModel):
     message: Optional[str] = None
     error: Optional[Dict[str, Any]] = None
 
+
+
+# ============================================================================
+# Speech-to-Text (STT) Schemas
+# ============================================================================
+
+class SpeechToTextSettings(BaseModel):
+    temperature: Optional[float] = 0.0
+    prompt: Optional[str] = None
+    language: Optional[str] = None
+
+
+class SpeechToTextResponse(BaseModel):
+    success: bool = True
+    text: str
+    detected_language: Optional[str] = None
+    processing_status: str = "completed"
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    duration_seconds: Optional[float] = None

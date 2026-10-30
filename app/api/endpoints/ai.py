@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form
 import time
 import logging
 from typing import List, Optional
 
 from app.schemas.ai import (
+    SpeechToTextResponse,
     CaptionRequest,
     CaptionResponse,
     AIGenerationHistoryResponse,
@@ -595,3 +596,36 @@ async def generate_brand_strategy_endpoint(
 
 
 
+
+
+@router.post("/speech-to-text", response_model=SpeechToTextResponse)
+@router.post("/stt", response_model=SpeechToTextResponse, include_in_schema=False)
+async def speech_to_text_endpoint(
+    file: UploadFile = File(..., description="Audio recording file (webm, wav, mp3, m4a, ogg, flac, etc.)"),
+    language: Optional[str] = Form(None, description="Optional language code (e.g. 'en', 'hi', 'hi-en', 'auto')"),
+    prompt: Optional[str] = Form(None, description="Optional transcription hint or vocabulary"),
+    settings: Optional[str] = Form(None, description="Optional transcription settings JSON string"),
+    current_user=Depends(get_current_user),
+):
+    """
+    Optional Speech-to-Text transcription fallback endpoint for DhandaGrow.
+    Provides backend transcription when browser-native speech recognition is unsupported.
+    Transcribes spoken words verbatim without generating captions, summaries, or AI content.
+    Supports English, Hindi, and Hinglish.
+    """
+    import json
+    from app.services.stt_service import STTService
+
+    settings_dict = None
+    if settings:
+        try:
+            settings_dict = json.loads(settings)
+        except Exception:
+            pass
+
+    return await STTService.transcribe_audio(
+        file=file,
+        language=language,
+        prompt=prompt,
+        settings_dict=settings_dict
+    )

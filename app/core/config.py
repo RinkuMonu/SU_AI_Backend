@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     IMAGE_API_URL: Optional[str] = None
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
+    OPENAI_API_KEY: Optional[str] = None
+
+    # Speech-to-Text (STT) configuration
+    STT_PROVIDER: str = "auto"
+    STT_GEMINI_MODEL: str = "gemini-3-flash-preview"
+    STT_GROQ_MODEL: str = "whisper-large-v3"
+    STT_OPENAI_MODEL: str = "whisper-1"
+    STT_MAX_AUDIO_SIZE_MB: int = 25
     JWT_SECRET: Optional[str] = None
     MONGODB_URI: Optional[str] = None
 
