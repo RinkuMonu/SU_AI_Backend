@@ -341,3 +341,4 @@ def get_stt_provider(provider_name: Optional[str] = None) -> BaseSTTProvider:
             return GeminiSTTProvider() if getattr(settings, "GEMINI_API_KEY", None) else MockSTTProvider()
 
     raise ValueError(f"Unknown STT provider '{provider_name}'. Supported: 'auto', 'gemini', 'groq', 'openai', 'mock'.")
+

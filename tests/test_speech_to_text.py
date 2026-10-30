@@ -237,3 +237,4 @@ async def test_transcribe_provider_quota_returns_502_with_clear_message():
             res = await ac.post("/api/v1/ai/speech-to-text", headers=headers, files=files)
             assert res.status_code == 502
             assert "quota" in res.json()["detail"].lower()
+
