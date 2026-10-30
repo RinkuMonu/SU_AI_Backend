@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     BACKEND_URL: str = "http://localhost:8000"
     NEXT_PUBLIC_API_URL: str | None = None
 
+    CASHFREE_APP_ID: str = ""
+    CASHFREE_SECRET_KEY: str = ""
+    CASHFREE_ENV: str = "TEST"
+    CASHFREE_API_VERSION: str = "2023-08-01"
+
     PAYIN_URL: str = ""
     PAYIN_TOKEN: str = ""
     
