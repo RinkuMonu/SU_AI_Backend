@@ -14,7 +14,7 @@ class CashfreeSubscriptionResponse(BaseModel):
     subscription_session_id: Optional[str] = None
     payment_url: Optional[str] = None
     status: str
-    auth_amount: float = 1.0
+    auth_amount: float
     recurring_amount: float
     plan_id: str
     billing_cycle: str
@@ -24,7 +24,7 @@ class CashfreeSubscriptionStatusResponse(BaseModel):
     subscription_id: str
     cf_subscription_id: Optional[str] = None
     status: str
-    auth_amount: float = 1.0
+    auth_amount: float
     recurring_amount: float
     plan_id: str
     billing_cycle: str

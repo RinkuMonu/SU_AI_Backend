@@ -163,6 +163,9 @@ class CashfreeService:
                 "plan_id": cf_plan_id
             },
             "customer_details": customer_details,
+            "authorization_details": {
+                "authorization_amount": recurring_total
+            },
             "subscription_meta": {
                 "return_url": default_return_url,
                 "notification_channel": ["EMAIL", "SMS"]
@@ -218,7 +221,7 @@ class CashfreeService:
             "plan_id": normalized_plan,
             "plan_name": plan.get("name"),
             "billing_cycle": cycle,
-            "auth_amount": 1.0,  # ₹1 Initial Auth
+            "auth_amount": recurring_total,
             "recurring_amount": recurring_total,
             "base_amount": base_amount,
             "gst_amount": gst_amount,
@@ -239,7 +242,7 @@ class CashfreeService:
             "subscription_session_id": session_id,
             "payment_url": payment_url,
             "status": "INITIALIZED",
-            "auth_amount": 1.0,
+            "auth_amount": recurring_total,
             "recurring_amount": recurring_total,
             "plan_id": normalized_plan,
             "billing_cycle": cycle,
@@ -386,7 +389,7 @@ class CashfreeService:
             "subscription_id": subscription_id,
             "cf_subscription_id": record.get("cf_subscription_id"),
             "status": record.get("status", "INITIALIZED"),
-            "auth_amount": record.get("auth_amount", 1.0),
+            "auth_amount": record.get("auth_amount", record.get("recurring_amount", 0.0)),
             "recurring_amount": record.get("recurring_amount", 0.0),
             "plan_id": record.get("plan_id"),
             "billing_cycle": record.get("billing_cycle"),
