@@ -30,3 +30,4 @@ def get_primary_gemini_client() -> Optional[Any]:
     """Returns the primary client if available, else first working backup client."""
     clients = get_gemini_clients()
     return clients[0] if clients else None
+

@@ -1,3 +1,4 @@
+import re
 import json
 import uuid
 import httpx
@@ -14,6 +15,69 @@ from app.services.subscription_service import SubscriptionService
 logger = logging.getLogger(__name__)
 
 class PayinService:
+    @staticmethod
+    async def generate_transaction_id(db) -> str:
+        """
+        Dynamically generates a sequential, unique transaction ID in the format GROWG001, GROWG002, etc.
+        Uses an atomic MongoDB find_one_and_update operation on the 'counters' collection.
+        Ensures thread-safe and cluster-safe sequential generation.
+        """
+        counter = await db["counters"].find_one_and_update(
+            {"_id": "subscription_transaction_id"},
+            {"$inc": {"seq": 1}},
+            upsert=True,
+            return_document=ReturnDocument.AFTER
+        )
+        seq_num = counter.get("seq", 1)
+        return f"GROWG{seq_num:03d}"
+
+    @staticmethod
+    def extract_payment_mode(payload: Dict[str, Any]) -> str:
+        """
+        Extracts and normalizes the payment mode from gateway response/callback payload.
+        Returns 'Unknown' if the gateway does not report it or cannot be determined.
+        """
+        if not payload or not isinstance(payload, dict):
+            return "Unknown"
+
+        raw_mode = (
+            payload.get("paymentMode")
+            or payload.get("payMode")
+            or payload.get("mode")
+            or payload.get("channel")
+            or payload.get("payment_mode")
+            or payload.get("method")
+            or payload.get("instrument")
+            or payload.get("txn_mode")
+            or ""
+        )
+        mode_str = str(raw_mode).strip().upper()
+        if not mode_str:
+            # Check vpa / upi hints
+            if payload.get("vpa") or payload.get("upi_id") or payload.get("upi"):
+                return "UPI"
+            if payload.get("card_number") or payload.get("card_type"):
+                c_type = str(payload.get("card_type", "")).upper()
+                return "Credit Card" if "CREDIT" in c_type else "Debit Card"
+            return "Unknown"
+
+        if "UPI" in mode_str:
+            if "QR" in mode_str:
+                return "QR Code"
+            return "UPI"
+        if "QR" in mode_str:
+            return "QR Code"
+        if any(nb in mode_str for nb in ["NB", "NETBANKING", "NET_BANKING", "NET BANKING"]):
+            return "Net Banking"
+        if any(cc in mode_str for cc in ["CC", "CREDIT_CARD", "CREDIT CARD", "CREDIT"]):
+            return "Credit Card"
+        if any(dc in mode_str for dc in ["DC", "DEBIT_CARD", "DEBIT CARD", "DEBIT"]):
+            return "Debit Card"
+        if "WALLET" in mode_str:
+            return "Wallet"
+        if "EMI" in mode_str:
+            return "EMI"
+        return raw_mode.title() if raw_mode else "Unknown"
     @staticmethod
     async def create_payment(
         db,
@@ -73,19 +137,45 @@ class PayinService:
         cycle_multiplier = 3 if cycle == "quarterly" else (12 if cycle == "yearly" else 1)
         credits_to_grant = plan.get("credits", 0) * cycle_multiplier
 
+        # Lookup user info if not fully provided
+        if not user_name or not user_mobile:
+            try:
+                if ObjectId.is_valid(user_id):
+                    u_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+                    if u_doc:
+                        user_name = user_name or u_doc.get("name") or u_doc.get("full_name") or u_doc.get("business_name")
+                        user_mobile = user_mobile or u_doc.get("phone_number") or u_doc.get("mobile")
+            except Exception:
+                pass
+
+        # Dynamically generate sequential, unique transaction ID (GROWG001, GROWG002, ...)
+        transaction_id = await PayinService.generate_transaction_id(db)
+
         transaction = {
+            "transaction_id": transaction_id,
+            "order_id": order_id,
             "user_id": user_id,
+            "user_name": user_name,
+            "user_email": clean_email,
+            "user_phone": user_mobile,
             "plan_id": normalized_plan_id,
             "plan_name": plan["name"],
+            "plan_duration": cycle,
+            "billing_cycle": cycle,
+            "amount": total_amount,
             "base_amount": base_amount,
             "gst_rate": gst_rate,
             "gst_amount": gst_amount,
-            "billing_cycle": cycle,
-            "amount": total_amount,
             "currency": plan.get("currency", "INR"),
-            "order_id": order_id,
+            "payment_mode": "Unknown",
+            "payment_gateway": "Finunique Payin",
+            "payment_provider": "Finunique",
+            "gateway_transaction_id": None,
             "status": "pending",
             "purchased_credits": credits_to_grant,
+            "credits_included": credits_to_grant,
+            "failure_reason": None,
+            "refund_details": None,
             "created_at": now,
             "updated_at": now
         }
@@ -165,6 +255,7 @@ class PayinService:
                     )
                     raise HTTPException(status_code=502, detail="Invalid Payment Gateway response")
                 
+                initial_mode = "QR Code" if (upi_url or qr_code) else "Unknown"
                 await db["payment_transactions"].update_one(
                     {"order_id": order_id},
                     {"$set": {
@@ -173,12 +264,14 @@ class PayinService:
                         "upi_url": upi_url,
                         "provider_reference": provider_ref,
                         "qr_code": qr_code,
+                        "payment_mode": initial_mode,
                         "updated_at": datetime.now(timezone.utc)
                     }}
                 )
                 
                 return {
                     "success": True,
+                    "transaction_id": transaction_id,
                     "order_id": order_id,
                     "payment_url": payment_url,
                     "upi_url": upi_url,
@@ -188,7 +281,8 @@ class PayinService:
                     "currency": plan.get("currency", "INR"),
                     "plan_name": plan["name"],
                     "status": "pending",
-                    "billing_cycle": cycle
+                    "billing_cycle": cycle,
+                    "payment_mode": initial_mode
                 }
         except httpx.RequestError:
             await db["payment_transactions"].update_one(
@@ -453,18 +547,22 @@ class PayinService:
                 or payload.get("reference")
                 or order_id
             )
+            verified_payment_mode = PayinService.extract_payment_mode(payload)
+            success_update = {
+                "status": "success", 
+                "external_transaction_id": external_tx_id,
+                "gateway_transaction_id": external_tx_id,
+                "verified_at": now,
+                "completed_at": now,
+                "updated_at": now,
+                "raw_callback": {k: str(v) for k, v in payload.items() if k not in ["secret", "token", "password"]}
+            }
+            if verified_payment_mode != "Unknown":
+                success_update["payment_mode"] = verified_payment_mode
+
             updated_tx = await db["payment_transactions"].find_one_and_update(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {
-                    "status": "success", 
-                    "external_transaction_id": external_tx_id,
-                    "verified_at": now,
-                    "completed_at": now,
-                    "updated_at": now,
-                    "raw_callback": {k: str(v) for k, v in payload.items() if k not in ["secret", "token", "password"]}
-                },
-                "$unset": {"failure_reason": ""}
-                },
+                {"$set": success_update, "$unset": {"failure_reason": ""}},
                 return_document=ReturnDocument.AFTER
             )
             
@@ -473,13 +571,14 @@ class PayinService:
             
             if transaction["plan_id"] != "HIRE_INFLUENCER":
                 cycle = transaction.get("billing_cycle", "monthly")
+                pub_tx_id = transaction.get("transaction_id") or order_id
                 await SubscriptionService.upgrade_plan(
                     db, 
                     transaction["user_id"], 
                     transaction["plan_id"],
                     billing_cycle=cycle,
                     reference_id=order_id,
-                    transaction_id=order_id,
+                    transaction_id=pub_tx_id,
                     payment_provider="finunique_payin",
                     amount=float(transaction.get("amount", 0))
                 )
@@ -495,49 +594,65 @@ class PayinService:
             return {"success": True, "status": "success", "message": "Payment verified and plan activated"}
             
         elif response_code in ["101", "PENDING", "INITIATED"] or payload_status in ["PENDING", "INITIATED"]:
+            p_update = {
+                "status": "pending",
+                "failure_reason": remark_text or "Payment pending",
+                "updated_at": now
+            }
+            cb_mode = PayinService.extract_payment_mode(payload)
+            if cb_mode != "Unknown":
+                p_update["payment_mode"] = cb_mode
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {
-                    "status": "pending",
-                    "failure_reason": remark_text or "Payment pending",
-                    "updated_at": now
-                }}
+                {"$set": p_update}
             )
             return {"success": False, "status": "pending", "message": "Payment pending"}
             
         elif response_code in ["103", "CANCELLED", "CANCELED"] or payload_status in ["CANCELLED", "CANCELED"]:
+            c_update = {
+                "status": "cancelled",
+                "cancelled_at": now,
+                "completed_at": now,
+                "failure_reason": remark_text or "Payment cancelled by user",
+                "updated_at": now
+            }
+            cb_mode = PayinService.extract_payment_mode(payload)
+            if cb_mode != "Unknown":
+                c_update["payment_mode"] = cb_mode
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {
-                    "status": "cancelled",
-                    "cancelled_at": now,
-                    "completed_at": now,
-                    "failure_reason": remark_text or "Payment cancelled by user",
-                    "updated_at": now
-                }}
+                {"$set": c_update}
             )
             return {"success": False, "status": "cancelled", "message": "Payment cancelled"}
             
         elif response_code in ["104", "EXPIRED"] or payload_status in ["EXPIRED"]:
+            e_update = {
+                "status": "expired",
+                "completed_at": now,
+                "failure_reason": remark_text or "Payment expired",
+                "updated_at": now
+            }
+            cb_mode = PayinService.extract_payment_mode(payload)
+            if cb_mode != "Unknown":
+                e_update["payment_mode"] = cb_mode
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {
-                    "status": "expired",
-                    "completed_at": now,
-                    "failure_reason": remark_text or "Payment expired",
-                    "updated_at": now
-                }}
+                {"$set": e_update}
             )
             return {"success": False, "status": "expired", "message": "Payment expired"}
         elif response_code in ["102", "FAILED", "FAILURE", "ERROR"] or payload_status in ["FAILED", "FAILURE", "ERROR"]:
+            f_update = {
+                "status": "failed",
+                "completed_at": now,
+                "failure_reason": remark_text or "Payment failed",
+                "updated_at": now
+            }
+            cb_mode = PayinService.extract_payment_mode(payload)
+            if cb_mode != "Unknown":
+                f_update["payment_mode"] = cb_mode
             await db["payment_transactions"].update_one(
                 {"order_id": order_id, "status": {"$ne": "success"}},
-                {"$set": {
-                    "status": "failed",
-                    "completed_at": now,
-                    "failure_reason": remark_text or "Payment failed",
-                    "updated_at": now
-                }}
+                {"$set": f_update}
             )
             return {"success": False, "status": "failed", "message": "Payment failed"}
         else:
@@ -649,20 +764,77 @@ class PayinService:
         user_id: str,
         page: int = 1,
         limit: int = 10,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        payment_mode: Optional[str] = None,
+        search: Optional[str] = None,
+        date_from: Optional[Any] = None,
+        date_to: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Retrieves paginated, user-scoped transaction history sorted by creation date descending.
-        Preserves all historical attempts (success, initiated, pending, failed, cancelled).
+        Supports status, payment_mode, search, and date range filters.
+        Preserves all historical attempts (success, initiated, pending, failed, cancelled, refunded).
         """
         query: Dict[str, Any] = {"user_id": str(user_id)}
+
+        # Status filter
         if status:
             clean_status = status.strip().lower()
-            query["status"] = clean_status
+            if clean_status != "all":
+                if clean_status in ["pending", "initiated"]:
+                    query["status"] = {"$in": ["pending", "initiated"]}
+                else:
+                    query["status"] = clean_status
+
+        # Payment mode filter
+        if payment_mode:
+            clean_mode = payment_mode.strip()
+            if clean_mode.upper() != "ALL":
+                query["payment_mode"] = {"$regex": f"^{re.escape(clean_mode)}$", "$options": "i"}
+
+        # Search filter across transaction ID, order ID, plan name, and gateway references
+        if search:
+            search_str = search.strip()
+            if search_str:
+                regex_q = {"$regex": re.escape(search_str), "$options": "i"}
+                query["$or"] = [
+                    {"transaction_id": regex_q},
+                    {"order_id": regex_q},
+                    {"plan_name": regex_q},
+                    {"plan_id": regex_q},
+                    {"gateway_transaction_id": regex_q},
+                    {"external_transaction_id": regex_q},
+                    {"provider_reference": regex_q}
+                ]
+
+        # Date range filters
+        date_filter: Dict[str, Any] = {}
+        if date_from:
+            if isinstance(date_from, str):
+                try:
+                    df = datetime.fromisoformat(date_from.replace("Z", "+00:00"))
+                    date_filter["$gte"] = df
+                except Exception:
+                    pass
+            elif isinstance(date_from, datetime):
+                date_filter["$gte"] = date_from
+
+        if date_to:
+            if isinstance(date_to, str):
+                try:
+                    dt = datetime.fromisoformat(date_to.replace("Z", "+00:00"))
+                    date_filter["$lte"] = dt
+                except Exception:
+                    pass
+            elif isinstance(date_to, datetime):
+                date_filter["$lte"] = date_to
+
+        if date_filter:
+            query["created_at"] = date_filter
 
         total = await db["payment_transactions"].count_documents(query)
         safe_page = max(1, page)
-        safe_limit = min(max(1, limit), 100)
+        safe_limit = min(max(1, limit), 1000)
         skip = (safe_page - 1) * safe_limit
 
         cursor = db["payment_transactions"].find(query).sort("created_at", -1).skip(skip).limit(safe_limit)
@@ -671,7 +843,7 @@ class PayinService:
         async for doc in cursor:
             p_id = doc.get("plan_id", "UNKNOWN")
             p_config = PLANS.get(p_id, {})
-            p_credits = doc.get("purchased_credits")
+            p_credits = doc.get("credits_included") or doc.get("purchased_credits")
             if p_credits is None:
                 cycle = doc.get("billing_cycle", "monthly")
                 mult = 3 if cycle == "quarterly" else (12 if cycle == "yearly" else 1)
@@ -680,31 +852,46 @@ class PayinService:
             created = doc.get("created_at")
             verified = doc.get("verified_at")
             cancelled = doc.get("cancelled_at")
-            completed = verified or cancelled or (doc.get("updated_at") if doc.get("status") in ["success", "failed", "cancelled", "expired"] else None)
+            completed = doc.get("completed_at") or verified or cancelled or (doc.get("updated_at") if doc.get("status") in ["success", "failed", "cancelled", "expired", "refunded"] else None)
 
-            provider_ref = doc.get("provider_reference") or doc.get("external_transaction_id") or doc.get("order_id")
+            provider_ref = doc.get("gateway_transaction_id") or doc.get("external_transaction_id") or doc.get("provider_reference") or doc.get("order_id")
+            pub_tx_id = doc.get("transaction_id") or f"GROWG_{str(doc['_id'])[-6:]}"
 
             items.append({
                 "id": str(doc["_id"]),
-                "transaction_id": str(doc["_id"]),
+                "transaction_id": pub_tx_id,
+                "public_transaction_id": pub_tx_id,
                 "order_id": doc.get("order_id", ""),
                 "provider_reference": provider_ref,
+                "gateway_transaction_id": provider_ref,
                 "external_transaction_id": doc.get("external_transaction_id"),
                 "user_id": str(doc.get("user_id")),
+                "user_name": doc.get("user_name"),
+                "user_email": doc.get("user_email"),
+                "user_phone": doc.get("user_phone"),
                 "plan_id": p_id,
                 "plan_name": doc.get("plan_name") or p_config.get("name", p_id),
+                "plan_duration": doc.get("plan_duration") or doc.get("billing_cycle", "monthly"),
                 "amount": float(doc.get("amount", 0.0)),
                 "base_amount": doc.get("base_amount"),
                 "gst_amount": doc.get("gst_amount"),
+                "gst_rate": doc.get("gst_rate"),
                 "currency": doc.get("currency", "INR"),
+                "payment_mode": doc.get("payment_mode") or "Unknown",
+                "payment_gateway": doc.get("payment_gateway") or "Finunique Payin",
+                "payment_provider": doc.get("payment_provider") or "Finunique",
                 "billing_cycle": doc.get("billing_cycle", "monthly"),
                 "status": doc.get("status", "pending"),
                 "failure_reason": doc.get("failure_reason"),
+                "refund_details": doc.get("refund_details"),
                 "payment_url": doc.get("payment_url"),
+                "upi_url": doc.get("upi_url"),
+                "qr_code": doc.get("qr_code"),
                 "purchased_credits": p_credits,
+                "credits_included": p_credits,
                 "credits_granted": p_credits if doc.get("status") == "success" else 0,
                 "created_at": created,
-                "completed_at": doc.get("completed_at") or completed,
+                "completed_at": completed,
                 "verified_at": verified,
                 "cancelled_at": cancelled,
                 "updated_at": doc.get("updated_at")
@@ -718,6 +905,92 @@ class PayinService:
             "limit": safe_limit,
             "total_pages": total_pages,
             "data": items
+        }
+
+    @staticmethod
+    async def get_transaction_by_id(
+        db,
+        user_id: str,
+        transaction_id_or_order_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Retrieves a single transaction by GROWG transaction_id, order_id, or internal _id,
+        strictly scoped to the authenticated user. Returns None if not found or unauthorized.
+        """
+        lookup_val = (transaction_id_or_order_id or "").strip()
+        if not lookup_val:
+            return None
+
+        or_conditions = [
+            {"transaction_id": lookup_val},
+            {"transaction_id": lookup_val.upper()},
+            {"order_id": lookup_val},
+            {"order_id": lookup_val.upper()}
+        ]
+        if ObjectId.is_valid(lookup_val):
+            or_conditions.append({"_id": ObjectId(lookup_val)})
+
+        doc = await db["payment_transactions"].find_one({
+            "user_id": str(user_id),
+            "$or": or_conditions
+        })
+        if not doc:
+            return None
+
+        p_id = doc.get("plan_id", "UNKNOWN")
+        p_config = PLANS.get(p_id, {})
+        p_credits = doc.get("credits_included") or doc.get("purchased_credits")
+        if p_credits is None:
+            cycle = doc.get("billing_cycle", "monthly")
+            mult = 3 if cycle == "quarterly" else (12 if cycle == "yearly" else 1)
+            p_credits = p_config.get("credits", 0) * mult
+
+        created = doc.get("created_at")
+        verified = doc.get("verified_at")
+        cancelled = doc.get("cancelled_at")
+        completed = doc.get("completed_at") or verified or cancelled or (doc.get("updated_at") if doc.get("status") in ["success", "failed", "cancelled", "expired", "refunded"] else None)
+
+        provider_ref = doc.get("gateway_transaction_id") or doc.get("external_transaction_id") or doc.get("provider_reference") or doc.get("order_id")
+        pub_tx_id = doc.get("transaction_id") or f"GROWG_{str(doc['_id'])[-6:]}"
+
+        return {
+            "id": str(doc["_id"]),
+            "transaction_id": pub_tx_id,
+            "public_transaction_id": pub_tx_id,
+            "order_id": doc.get("order_id", ""),
+            "provider_reference": provider_ref,
+            "gateway_transaction_id": provider_ref,
+            "external_transaction_id": doc.get("external_transaction_id"),
+            "user_id": str(doc.get("user_id")),
+            "user_name": doc.get("user_name"),
+            "user_email": doc.get("user_email"),
+            "user_phone": doc.get("user_phone"),
+            "plan_id": p_id,
+            "plan_name": doc.get("plan_name") or p_config.get("name", p_id),
+            "plan_duration": doc.get("plan_duration") or doc.get("billing_cycle", "monthly"),
+            "amount": float(doc.get("amount", 0.0)),
+            "base_amount": doc.get("base_amount"),
+            "gst_amount": doc.get("gst_amount"),
+            "gst_rate": doc.get("gst_rate"),
+            "currency": doc.get("currency", "INR"),
+            "payment_mode": doc.get("payment_mode") or "Unknown",
+            "payment_gateway": doc.get("payment_gateway") or "Finunique Payin",
+            "payment_provider": doc.get("payment_provider") or "Finunique",
+            "billing_cycle": doc.get("billing_cycle", "monthly"),
+            "status": doc.get("status", "pending"),
+            "failure_reason": doc.get("failure_reason"),
+            "refund_details": doc.get("refund_details"),
+            "payment_url": doc.get("payment_url"),
+            "upi_url": doc.get("upi_url"),
+            "qr_code": doc.get("qr_code"),
+            "purchased_credits": p_credits,
+            "credits_included": p_credits,
+            "credits_granted": p_credits if doc.get("status") == "success" else 0,
+            "created_at": created,
+            "completed_at": completed,
+            "verified_at": verified,
+            "cancelled_at": cancelled,
+            "updated_at": doc.get("updated_at")
         }
 
     @staticmethod

@@ -21,3 +21,4 @@ holidays
 json-repair>=0.30.0
 beautifulsoup4>=4.12.0
 firecrawl-py>=4.0.0
+reportlab>=4.0.0

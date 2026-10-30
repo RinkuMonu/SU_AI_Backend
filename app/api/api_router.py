@@ -14,6 +14,7 @@ from app.api.endpoints import (
     linkedin,
     brand,
     leads,
+    transactions,
 )
 
 api_router = APIRouter()
@@ -25,6 +26,7 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytic
 api_router.include_router(website_builder.router, prefix="/website-builder", tags=["website-builder"])
 api_router.include_router(subscription.router)
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
+api_router.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])

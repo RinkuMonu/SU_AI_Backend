@@ -210,6 +210,10 @@ async def get_user_transactions(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
     status: Optional[str] = Query(None, description="Filter by status (success, pending, cancelled, failed)"),
+    payment_mode: Optional[str] = Query(None, description="Filter by payment mode"),
+    search: Optional[str] = Query(None, description="Search query"),
+    date_from: Optional[str] = Query(None, description="Date from"),
+    date_to: Optional[str] = Query(None, description="Date to"),
     current_user: dict = Depends(get_current_user),
     db: Database = Depends(get_database)
 ):
@@ -218,7 +222,17 @@ async def get_user_transactions(
     Preserves all historical attempts including cancelled and failed transactions.
     """
     user_id = str(current_user.get("id") or current_user.get("_id"))
-    return await PayinService.get_user_transactions(db, user_id, page=page, limit=limit, status=status)
+    return await PayinService.get_user_transactions(
+        db,
+        user_id,
+        page=page,
+        limit=limit,
+        status=status,
+        payment_mode=payment_mode,
+        search=search,
+        date_from=date_from,
+        date_to=date_to,
+    )
 
 @router.post("/test-plan/reset", response_model=TestPlanResetResponse)
 async def reset_test_plan_endpoint(

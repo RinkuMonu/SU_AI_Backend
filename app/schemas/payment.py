@@ -9,6 +9,7 @@ class PaymentCreateRequest(BaseModel):
 class PaymentCreateResponse(BaseModel):
     success: bool
     order_id: str
+    transaction_id: Optional[str] = None
     payment_url: str
     upi_url: Optional[str] = None
     qr_code: Optional[str] = None
@@ -27,6 +28,7 @@ class PaymentCancelResponse(BaseModel):
     success: bool
     status: str
     order_id: str
+    transaction_id: Optional[str] = None
     can_cancel: bool = True
     message: str
     current_status: Optional[str] = None
@@ -36,20 +38,25 @@ class PaymentCallbackResponse(BaseModel):
     status: str
     message: str
     order_id: Optional[str] = None
+    transaction_id: Optional[str] = None
 
 class PaymentStatusResponse(BaseModel):
     order_id: str
+    transaction_id: Optional[str] = None
     status: str
     can_cancel: bool = True
     amount: float
     base_amount: Optional[float] = None
     gst_amount: Optional[float] = None
     currency: Optional[str] = "INR"
+    payment_mode: Optional[str] = "Unknown"
+    payment_gateway: Optional[str] = "Finunique Payin"
     plan_id: Optional[str] = None
     plan_name: Optional[str] = None
     provider_reference: Optional[str] = None
     created_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
     message: Optional[str] = None
 
 class PaymentVerifyRequest(BaseModel):
@@ -59,29 +66,44 @@ class PaymentVerifyResponse(BaseModel):
     success: bool
     status: str
     order_id: str
+    transaction_id: Optional[str] = None
     verified: bool
     message: str
     plan_id: Optional[str] = None
     amount: Optional[float] = None
+    payment_mode: Optional[str] = "Unknown"
     provider_reference: Optional[str] = None
 
 class PaymentTransactionItem(BaseModel):
     id: str
-    transaction_id: Optional[str] = None
+    transaction_id: Optional[str] = None  # GROWG001 format
     order_id: str
     provider_reference: Optional[str] = None
+    gateway_transaction_id: Optional[str] = None
     external_transaction_id: Optional[str] = None
     user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    user_phone: Optional[str] = None
     plan_id: str
     plan_name: str
+    plan_duration: Optional[str] = None
+    billing_cycle: Optional[str] = "monthly"
     amount: float
     base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
     gst_amount: Optional[float] = None
     currency: str = "INR"
-    billing_cycle: Optional[str] = "monthly"
+    payment_mode: Optional[str] = "Unknown"
+    payment_gateway: Optional[str] = "Finunique Payin"
+    payment_provider: Optional[str] = "finunique_payin"
     status: str
     failure_reason: Optional[str] = None
+    refund_details: Optional[Dict[str, Any]] = None
     payment_url: Optional[str] = None
+    upi_url: Optional[str] = None
+    qr_code: Optional[str] = None
+    credits_included: Optional[int] = 0
     purchased_credits: Optional[int] = 0
     credits_granted: Optional[int] = 0
     created_at: Optional[datetime] = None
@@ -97,6 +119,10 @@ class PaymentTransactionListResponse(BaseModel):
     limit: int
     total_pages: int
     data: List[PaymentTransactionItem]
+
+class PaymentTransactionDetailResponse(BaseModel):
+    success: bool = True
+    data: PaymentTransactionItem
 
 class TestPlanResetRequest(BaseModel):
     target_user_id: Optional[str] = None

@@ -24,6 +24,7 @@ from app.api.endpoints.business_collaborations import router as business_collabo
 from app.api.endpoints.influencer_content import router as influencer_content_router
 from app.api.endpoints.influencer_earnings import router as influencer_earnings_router
 from app.api.endpoints.payments import router as payments_router
+from app.api.endpoints.transactions import router as transactions_router
 from app.api.endpoints.influencer_marketplace import router as influencer_marketplace_router
 from app.api.endpoints.leads import router as leads_router
 @asynccontextmanager
@@ -118,6 +119,9 @@ app.include_router(brand_router, prefix="/brand-kit", tags=["Brand Kit"], includ
 app.include_router(brand_router, prefix="/brand", tags=["Brand Kit"], include_in_schema=False)
 app.include_router(payments_router, prefix="/api/payments", tags=["payments"], include_in_schema=False)
 app.include_router(payments_router, prefix="/payments", tags=["payments"], include_in_schema=False)
+app.include_router(transactions_router, prefix="/api/v1/transactions", tags=["Transactions"])
+app.include_router(transactions_router, prefix="/api/transactions", include_in_schema=False)
+app.include_router(transactions_router, prefix="/transactions", include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
 app.include_router(business_collaborations_router, prefix="/api/v1")
@@ -154,7 +158,3 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "Internal Server Error", "error": str(exc), "traceback": traceback.format_exc()}
     )
-
-# reload trigger 7
-
-# reload trigger 8
