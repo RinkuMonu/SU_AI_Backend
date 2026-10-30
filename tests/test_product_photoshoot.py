@@ -647,3 +647,189 @@ async def test_user_ownership_isolation():
         assert r_b_gen.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# TEST C: Failure Recovery & Partial Retry
+# ---------------------------------------------------------------------------
+async def test_failure_recovery_and_partial_retry():
+    """TEST C: Simulate partial generation failure, verify partial results, retry, and verify no duplicate credit deduction."""
+    db = get_database()
+    user_id, token = await create_auth_user(db, name="Test C Tester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    img_bytes = create_dummy_image_bytes(400, 400, "grey")
+    files = [("files", ("test_c.jpg", img_bytes, "image/jpeg"))]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        up = await ac.post("/api/v1/product-photoshoot/upload", headers=headers, files=files)
+        session_id = up.json()["session_id"]
+
+        # Call generate for 2 images
+        gen_res = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers,
+            json={"session_id": session_id, "use_model": False, "image_count": 2},
+        )
+        assert gen_res.status_code == 200
+        job_id = gen_res.json()["job_id"]
+
+        # Wait for initial job
+        for _ in range(40):
+            j = await ac.get(f"/api/v1/product-photoshoot/jobs/{job_id}", headers=headers)
+            if j.json()["status"] in ("completed", "partial"):
+                break
+            await asyncio.sleep(1.0)
+
+        # Record credits after initial generation (100 - 5 = 95)
+        sub_before = await db["subscriptions"].find_one({"user_id": user_id})
+        credits_before_retry = sub_before["credits_remaining"]
+
+        # Now simulate a partial failure on a new job to test retry
+        partial_job_id = f"job_partial_{user_id[:6]}"
+        failed_item = {
+            "index": 2,
+            "style": "Luxury Studio Composition",
+            "prompt": "Commercial product photography of grey item, Luxury Studio",
+            "error": "Temporary network timeout simulated"
+        }
+        await db["photoshoot_jobs"].insert_one({
+            "job_id": partial_job_id,
+            "session_id": session_id,
+            "user_id": str(user_id),
+            "status": "partial",
+            "progress_percent": 50,
+            "total_images": 2,
+            "completed_images": 1,
+            "failed_images": 1,
+            "failed_items": [failed_item],
+            "can_retry": True,
+            "result_images": [{
+                "image_id": "img_prev_01",
+                "session_id": session_id,
+                "style_applied": "Clean Hero Product Shot",
+                "url": "/uploads/photoshoot/final/prev.jpg",
+                "is_saved": False,
+                "created_at": datetime.now(timezone.utc)
+            }],
+            "error": None,
+            "credits_deducted": 5,
+            "created_at": datetime.now(timezone.utc)
+        })
+
+        # Check job status reports partial & can_retry
+        status_res = await ac.get(f"/api/v1/product-photoshoot/jobs/{partial_job_id}", headers=headers)
+        assert status_res.status_code == 200
+        status_data = status_res.json()
+        assert status_data["status"] == "partial"
+        assert status_data["can_retry"] is True
+        assert status_data["failed_images"] == 1
+
+        # Execute retry endpoint
+        retry_res = await ac.post(f"/api/v1/product-photoshoot/jobs/{partial_job_id}/retry", headers=headers)
+        assert retry_res.status_code == 200
+        assert retry_res.json()["success"] is True
+        assert retry_res.json()["retrying_count"] == 1
+
+        # Poll until retry completes
+        retry_completed = False
+        for _ in range(40):
+            st = await ac.get(f"/api/v1/product-photoshoot/jobs/{partial_job_id}", headers=headers)
+            if st.json()["status"] == "completed":
+                retry_completed = True
+                assert st.json()["completed_images"] == 2
+                assert len(st.json()["result_images"]) == 2
+                break
+            await asyncio.sleep(1.0)
+
+        assert retry_completed, "Retry job did not complete"
+
+        # Verify NO duplicate credit deduction occurred during retry
+        sub_after = await db["subscriptions"].find_one({"user_id": user_id})
+        assert sub_after["credits_remaining"] == credits_before_retry
+
+
+# ---------------------------------------------------------------------------
+# TEST D: Data Persistence Across Login / Logout
+# ---------------------------------------------------------------------------
+async def test_data_persistence_across_login_logout():
+    """TEST D: Complete photoshoot, log out, log back in, retrieve previous session and saved images."""
+    db = get_database()
+    user_id, token_login_1 = await create_auth_user(db, name="Persistence Merchant")
+    headers_1 = {"Authorization": f"Bearer {token_login_1}"}
+
+    # Step 1: Upload multiple images
+    img1 = create_dummy_image_bytes(500, 500, "teal")
+    img2 = create_dummy_image_bytes(500, 500, "darkblue")
+    files = [
+        ("files", ("front.jpg", img1, "image/jpeg")),
+        ("files", ("back.jpg", img2, "image/jpeg")),
+    ]
+    data = {"product_category": "Clothing", "angles": "Front, Back"}
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        up_res = await ac.post("/api/v1/product-photoshoot/upload", headers=headers_1, files=files, data=data)
+        assert up_res.status_code == 200
+        session_id = up_res.json()["session_id"]
+
+        # Step 2: Generate photoshoot
+        gen_res = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers_1,
+            json={"session_id": session_id, "use_model": False, "image_count": 2},
+        )
+        assert gen_res.status_code == 200
+        job_id = gen_res.json()["job_id"]
+
+        # Wait for completion
+        for _ in range(40):
+            j = await ac.get(f"/api/v1/product-photoshoot/jobs/{job_id}", headers=headers_1)
+            if j.json()["status"] == "completed":
+                break
+            await asyncio.sleep(1.0)
+
+        # Step 3: Save results
+        res_resp = await ac.get(f"/api/v1/product-photoshoot/{session_id}/results", headers=headers_1)
+        results = res_resp.json()["results"]
+        assert len(results) >= 2
+        saved_img_id = results[0]["image_id"]
+
+        save_res = await ac.post(
+            f"/api/v1/product-photoshoot/{session_id}/save",
+            headers=headers_1,
+            json={"image_ids": [saved_img_id]},
+        )
+        assert save_res.status_code == 200
+
+    # Step 4: Simulate Logout (token discarded)
+    del headers_1
+
+    # Step 5: Simulate Login (authenticate user anew, receive new token)
+    token_login_2 = create_access_token(subject=str(user_id))
+    headers_2 = {"Authorization": f"Bearer {token_login_2}"}
+
+    # Step 6: Verify full data retrieval with new login session
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Gallery retrieval
+        gal_resp = await ac.get("/api/v1/product-photoshoot/gallery", headers=headers_2)
+        assert gal_resp.status_code == 200
+        gal_data = gal_resp.json()
+        assert gal_data["total"] >= 1
+        matching_sess = [s for s in gal_data["sessions"] if s["session_id"] == session_id]
+        assert len(matching_sess) == 1
+        assert matching_sess[0]["saved_count"] == 1
+
+        # Session metadata retrieval
+        sess_resp = await ac.get(f"/api/v1/product-photoshoot/{session_id}", headers=headers_2)
+        assert sess_resp.status_code == 200
+        sess_doc = sess_resp.json()["session"]
+        assert sess_doc["session_id"] == session_id
+        assert sess_doc["user_id"] == user_id
+        assert len(sess_doc["original_images"]) == 2
+        assert saved_img_id in sess_doc["saved_image_ids"]
+
+        # Image results retrieval
+        res_login_2 = await ac.get(f"/api/v1/product-photoshoot/{session_id}/results", headers=headers_2)
+        assert res_login_2.status_code == 200
+        assert len(res_login_2.json()["results"]) >= 2
+
+
+

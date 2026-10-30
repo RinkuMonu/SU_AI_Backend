@@ -102,6 +102,7 @@ class AIModelItem(BaseModel):
     preview_url: str
     supported_categories: List[str]
     description: str = ""
+    identity_prompt: Optional[str] = None
 
 
 class AIModelListResponse(BaseModel):
@@ -191,12 +192,24 @@ class PhotoshootJobStatusResponse(BaseModel):
     success: bool = True
     job_id: str
     session_id: str
-    status: str  # pending, processing, completed, failed
+    status: str  # pending, processing, completed, partial, failed
     progress_percent: int
     completed_images: int
     total_images: int
+    failed_images: int = 0
+    failed_items: List[Dict[str, Any]] = Field(default_factory=list)
+    can_retry: bool = False
     result_images: List[GeneratedImageItem] = Field(default_factory=list)
     error: Optional[str] = None
+
+
+class RetryJobResponse(BaseModel):
+    success: bool = True
+    job_id: str
+    session_id: str
+    status: str
+    retrying_count: int
+    message: str
 
 
 class PhotoshootResultsResponse(BaseModel):

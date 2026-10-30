@@ -43,6 +43,7 @@ from app.schemas.photoshoot import (
     SaveImagesResponse,
     RegenerateImageRequest,
     GalleryResponse,
+    RetryJobResponse,
 )
 
 router = APIRouter()
@@ -51,6 +52,17 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+def _serialize_mongo(obj):
+    from bson import ObjectId
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    if isinstance(obj, list):
+        return [_serialize_mongo(item) for item in obj]
+    if isinstance(obj, dict):
+        return {k: _serialize_mongo(v) for k, v in obj.items()}
+    return obj
+
+
 def _get_user_id(current_user: dict) -> str:
     user_id = str(current_user.get("_id") or current_user.get("id") or "")
     if not user_id:
@@ -308,6 +320,17 @@ async def get_job_status(
     return PhotoshootJobStatusResponse(**result)
 
 
+@router.post("/jobs/{job_id}/retry", response_model=RetryJobResponse, summary="Retry only failed images from a partial or failed job")
+async def retry_failed_job(
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+    db=Depends(get_database),
+):
+    user_id = _get_user_id(current_user)
+    result = await PhotoshootService.retry_failed_job_images(db=db, user_id=user_id, job_id=job_id)
+    return RetryJobResponse(**result)
+
+
 @router.get("/{session_id}/results", response_model=PhotoshootResultsResponse, summary="Get all generated photoshoot results for a session")
 async def get_session_results(
     session_id: str,
@@ -351,8 +374,8 @@ async def get_session(
     session_doc = await db["photoshoot_sessions"].find_one({"session_id": session_id, "user_id": user_id})
     if not session_doc:
         raise HTTPException(status_code=404, detail="Photoshoot session not found.")
-    session_doc["_id"] = str(session_doc["_id"])
-    return {"success": True, "session": session_doc}
+    session_clean = _serialize_mongo(session_doc)
+    return {"success": True, "session": session_clean}
 
 
 @router.post("/{session_id}/save", response_model=SaveImagesResponse, summary="Save selected photoshoot images to permanent user library")

@@ -49,7 +49,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Clothing", "Men's Apparel", "T-shirts", "Shirts", "Footwear", "Eyewear", "Watches"],
-        description="Athletic build, sharp jawline, versatile for casual wear, formal suits, and sportswear."
+        description="Athletic build, sharp jawline, versatile for casual wear, formal suits, and sportswear.",
+        identity_prompt="28-year-old Indian male model Arjun, short textured black hair, warm brown eyes, clean-shaven, athletic build, sharp jawline"
     ),
     AIModelItem(
         model_id="model_male_02",
@@ -59,7 +60,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Clothing", "Streetwear", "Jackets", "Hoodies", "Caps", "Sneakers"],
-        description="Urban contemporary look, charismatic aesthetic for modern streetwear and denim."
+        description="Urban contemporary look, charismatic aesthetic for modern streetwear and denim.",
+        identity_prompt="26-year-old South Asian male model Kabir, modern fade haircut, energetic gaze, charismatic posture, athletic frame"
     ),
     AIModelItem(
         model_id="model_female_01",
@@ -69,7 +71,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Clothing", "Dresses", "Ethnic Wear", "Sarees", "Jewellery", "Cosmetics"],
-        description="Classic elegant features, radiant skin tone, ideal for ethnic wear, sarees, and jewellery."
+        description="Classic elegant features, radiant skin tone, ideal for ethnic wear, sarees, and jewellery.",
+        identity_prompt="24-year-old Indian female model Ananya, expressive almond brown eyes, glowing warm skin tone, elegant long dark hair, poised posture"
     ),
     AIModelItem(
         model_id="model_female_02",
@@ -79,7 +82,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Jewellery", "Necklaces", "Earrings", "Luxury Fashion", "Bridal Wear"],
-        description="High-fashion editorial aesthetic, graceful neck and posture, perfected for fine jewellery and luxury."
+        description="High-fashion editorial aesthetic, graceful neck and posture, perfected for fine jewellery and luxury.",
+        identity_prompt="27-year-old South Asian luxury editorial female model Meera, graceful long neck, sculpted cheekbones, sleek center-part dark hair, radiant complexion"
     ),
     AIModelItem(
         model_id="model_female_03",
@@ -89,7 +93,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Clothing", "Tops", "Jeans", "Handbags", "Footwear", "Accessories"],
-        description="Friendly, approachable commercial vibe, ideal for everyday lifestyle and D2C brands."
+        description="Friendly, approachable commercial vibe, ideal for everyday lifestyle and D2C brands.",
+        identity_prompt="25-year-old friendly approachable Indian female model Priya, warm smile, shoulder-length wavy dark hair, natural beauty"
     ),
     AIModelItem(
         model_id="model_male_03",
@@ -99,7 +104,8 @@ CURATED_AI_MODELS: List[AIModelItem] = [
         thumbnail_url="https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=400&auto=format&fit=crop&q=80",
         preview_url="https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=1024&auto=format&fit=crop&q=80",
         supported_categories=["Clothing", "Suits", "Blazers", "Watches", "Leather Goods", "Eyewear"],
-        description="Sophisticated gentleman look, ideal for luxury global fashion, suits, and premium accessories."
+        description="Sophisticated gentleman look, ideal for luxury global fashion, suits, and premium accessories.",
+        identity_prompt="29-year-old Caucasian European male model David, groomed short brown hair, blue-gray eyes, sophisticated jawline, tall tailored frame"
     )
 ]
 
@@ -376,8 +382,8 @@ class PhotoshootService:
                 "image_type": "original",
                 "created_at": now
             }
-            uploaded_assets.append(asset)
-            await db["photoshoot_images"].insert_one(asset)
+            uploaded_assets.append(dict(asset))
+            await db["photoshoot_images"].insert_one(dict(asset))
 
         # Upsert session document
         if session_doc:
@@ -992,25 +998,33 @@ class PhotoshootService:
             logo_info = analysis.get("brand_logo_and_text")
             logo_clause = f", accurately rendering visible logo/label '{logo_info}'" if logo_info and logo_info.lower() != "none detected" else ""
 
-            model_name = "model"
-            if use_model and model_id:
+            model_info = None
+            if use_model:
                 for m in CURATED_AI_MODELS:
                     if m.model_id == model_id:
-                        model_name = m.name
+                        model_info = m
                         break
+                # Safe fallback if specified model_id not found
+                if not model_info:
+                    model_info = CURATED_AI_MODELS[0]
+
+            model_name = model_info.name if model_info else "model"
+            model_identity = model_info.identity_prompt if model_info and model_info.identity_prompt else model_name
 
             generated_items = []
+            failed_items = []
+
             for i in range(count):
                 applied_style = styles[i % len(styles)] if styles else "Commercial Studio"
                 img_id = f"final_{uuid.uuid4().hex[:12]}"
                 filename = f"photoshoot_{img_id}.jpg"
                 target_path = cls.FINAL_DIR / filename
 
-                # Vary angle, pose, and composition per iteration
+                # Vary angle, pose, and composition per iteration while keeping strict model & product identity
                 if use_model:
                     comp_prompt = (
                         f"Professional commercial fashion catalog photo. {p_name} in {colors}, {texture}{logo_clause} "
-                        f"modeled by {model_name}. Variation {i+1}: {applied_style}. "
+                        f"modeled by {model_name} ({model_identity}). Variation {i+1}: {applied_style}. "
                         f"{custom_prompt or ''}. High fashion studio lighting, full body or medium shot, "
                         f"8k resolution, razor-sharp garment texture, photorealistic."
                     )
@@ -1021,42 +1035,54 @@ class PhotoshootService:
                         f"Advertising studio lighting, 8k resolution, clean reflections, photorealistic commercial catalog."
                     )
 
-                download_ok = await cls._generate_and_save_visual(comp_prompt, target_path)
-                if not download_ok or not target_path.exists():
-                    cls._synthesize_fallback_image(
-                        target_path,
-                        title=f"{p_name}\n({applied_style} #{i+1})",
-                        bg_color=(240, 242, 245) if not use_model else (235, 238, 245)
-                    )
+                try:
+                    download_ok = await cls._generate_and_save_visual(comp_prompt, target_path)
+                    if not download_ok or not target_path.exists():
+                        cls._synthesize_fallback_image(
+                            target_path,
+                            title=f"{p_name}\n({applied_style} #{i+1})",
+                            bg_color=(240, 242, 245) if not use_model else (235, 238, 245)
+                        )
 
-                rel_url = f"/uploads/photoshoot/final/{filename}"
-                now_item = datetime.now(timezone.utc)
-                item = {
-                    "image_id": img_id,
-                    "session_id": session_id,
-                    "style_applied": applied_style,
-                    "url": rel_url,
-                    "is_saved": False,
-                    "created_at": now_item
-                }
-                generated_items.append(item)
+                    if not target_path.exists() or target_path.stat().st_size == 0:
+                        raise RuntimeError(f"Visual asset generation failed for variation #{i+1}")
 
-                # Store image asset
-                await db["photoshoot_images"].insert_one({
-                    "image_id": img_id,
-                    "session_id": session_id,
-                    "user_id": str(user_id),
-                    "url": rel_url,
-                    "filename": filename,
-                    "angle": applied_style,
-                    "file_size": target_path.stat().st_size if target_path.exists() else 2048,
-                    "dimensions": {"width": 1024, "height": 1024},
-                    "content_type": "image/jpeg",
-                    "image_type": "generated",
-                    "enhancement_style": applied_style,
-                    "is_saved": False,
-                    "created_at": now_item
-                })
+                    rel_url = f"/uploads/photoshoot/final/{filename}"
+                    now_item = datetime.now(timezone.utc)
+                    item = {
+                        "image_id": img_id,
+                        "session_id": session_id,
+                        "style_applied": applied_style,
+                        "url": rel_url,
+                        "is_saved": False,
+                        "created_at": now_item
+                    }
+                    generated_items.append(item)
+
+                    # Store image asset
+                    await db["photoshoot_images"].insert_one({
+                        "image_id": img_id,
+                        "session_id": session_id,
+                        "user_id": str(user_id),
+                        "url": rel_url,
+                        "filename": filename,
+                        "angle": applied_style,
+                        "file_size": target_path.stat().st_size,
+                        "dimensions": {"width": 1024, "height": 1024},
+                        "content_type": "image/jpeg",
+                        "image_type": "generated",
+                        "enhancement_style": applied_style,
+                        "is_saved": False,
+                        "created_at": now_item
+                    })
+                except Exception as img_err:
+                    logger.warning(f"Variation {i+1} failed during photoshoot job: {img_err}")
+                    failed_items.append({
+                        "index": i + 1,
+                        "style": applied_style,
+                        "prompt": comp_prompt,
+                        "error": str(img_err)
+                    })
 
                 progress = int(((i + 1) / count) * 90)
                 await db["photoshoot_jobs"].update_one(
@@ -1064,34 +1090,54 @@ class PhotoshootService:
                     {
                         "$set": {
                             "progress_percent": progress,
-                            "completed_images": i + 1,
+                            "completed_images": len(generated_items),
+                            "failed_images": len(failed_items),
+                            "failed_items": failed_items,
                             "result_images": generated_items
                         }
                     }
                 )
 
-            # Complete job
+            # Determine final status (partial success handling)
             now = datetime.now(timezone.utc)
+            if len(generated_items) == count:
+                final_status = "completed"
+            elif len(generated_items) > 0:
+                final_status = "partial"
+            else:
+                final_status = "failed"
+
             await db["photoshoot_jobs"].update_one(
                 {"job_id": job_id},
                 {
                     "$set": {
-                        "status": "completed",
-                        "progress_percent": 100,
-                        "completed_images": count,
+                        "status": final_status,
+                        "progress_percent": 100 if final_status == "completed" else int((len(generated_items) / count) * 100),
+                        "completed_images": len(generated_items),
+                        "failed_images": len(failed_items),
+                        "failed_items": failed_items,
+                        "can_retry": len(failed_items) > 0,
                         "result_images": generated_items,
                         "completed_at": now
                     }
                 }
             )
 
-            await db["photoshoot_sessions"].update_one(
-                {"session_id": session_id},
-                {
-                    "$push": {"generated_images": {"$each": generated_items}},
-                    "$set": {"status": "completed", "updated_at": now}
-                }
-            )
+            if generated_items:
+                await db["photoshoot_sessions"].update_one(
+                    {"session_id": session_id},
+                    {
+                        "$push": {"generated_images": {"$each": generated_items}},
+                        "$set": {"status": final_status, "updated_at": now}
+                    }
+                )
+
+            # If all failed, refund credits
+            if final_status == "failed":
+                try:
+                    await CreditService.refund_credits(db, user_id=str(user_id), action="ai_photoshoot", job_id=job_id)
+                except Exception as ref_err:
+                    logger.warning(f"Failed to refund credits for failed job {job_id}: {ref_err}")
 
         except Exception as e:
             logger.error(f"Error in photoshoot job {job_id}: {e}")
@@ -1101,6 +1147,7 @@ class PhotoshootService:
                     "$set": {
                         "status": "failed",
                         "error": str(e),
+                        "can_retry": True,
                         "completed_at": datetime.now(timezone.utc)
                     }
                 }
@@ -1110,6 +1157,140 @@ class PhotoshootService:
                 await CreditService.refund_credits(db, user_id=str(user_id), action="ai_photoshoot", job_id=job_id)
             except Exception as ref_err:
                 logger.warning(f"Failed to refund credits for job {job_id}: {ref_err}")
+
+    @classmethod
+    async def retry_failed_job_images(cls, db, user_id: str, job_id: str) -> Dict[str, Any]:
+        """Retries only the failed images for a partial or failed job without restarting or charging duplicate credits."""
+        job = await db["photoshoot_jobs"].find_one({"job_id": job_id, "user_id": str(user_id)})
+        if not job:
+            raise HTTPException(status_code=404, detail="Photoshoot job not found.")
+
+        failed_items = job.get("failed_items", [])
+        if not failed_items:
+            return {
+                "success": True,
+                "job_id": job_id,
+                "session_id": job["session_id"],
+                "status": job["status"],
+                "retrying_count": 0,
+                "message": "No failed images to retry for this job."
+            }
+
+        session_id = job["session_id"]
+        # Execute retry asynchronously
+        asyncio.create_task(
+            cls._execute_retry_job(
+                db=db,
+                job_id=job_id,
+                session_id=session_id,
+                user_id=user_id,
+                failed_items=failed_items
+            )
+        )
+
+        return {
+            "success": True,
+            "job_id": job_id,
+            "session_id": session_id,
+            "status": "processing",
+            "retrying_count": len(failed_items),
+            "message": f"Retrying {len(failed_items)} failed image(s) in background without additional credit charges."
+        }
+
+    @classmethod
+    async def _execute_retry_job(cls, db, job_id: str, session_id: str, user_id: str, failed_items: List[Dict[str, Any]]):
+        """Processes retry for the failed variations in background."""
+        try:
+            await db["photoshoot_jobs"].update_one(
+                {"job_id": job_id},
+                {"$set": {"status": "processing"}}
+            )
+
+            job = await db["photoshoot_jobs"].find_one({"job_id": job_id})
+            current_results = job.get("result_images", [])
+            total_images = job.get("total_images", len(current_results) + len(failed_items))
+
+            newly_succeeded = []
+            remaining_failures = []
+
+            for item_meta in failed_items:
+                idx = item_meta.get("index", 1)
+                applied_style = item_meta.get("style", "Commercial Studio")
+                comp_prompt = item_meta.get("prompt", "Professional commercial product photoshoot")
+
+                img_id = f"final_{uuid.uuid4().hex[:12]}"
+                filename = f"photoshoot_{img_id}.jpg"
+                target_path = cls.FINAL_DIR / filename
+
+                download_ok = await cls._generate_and_save_visual(comp_prompt, target_path)
+                if not download_ok or not target_path.exists():
+                    cls._synthesize_fallback_image(
+                        target_path,
+                        title=f"Photoshoot Variation #{idx}",
+                        bg_color=(240, 242, 245)
+                    )
+
+                if target_path.exists() and target_path.stat().st_size > 0:
+                    rel_url = f"/uploads/photoshoot/final/{filename}"
+                    now_item = datetime.now(timezone.utc)
+                    res_item = {
+                        "image_id": img_id,
+                        "session_id": session_id,
+                        "style_applied": applied_style,
+                        "url": rel_url,
+                        "is_saved": False,
+                        "created_at": now_item
+                    }
+                    newly_succeeded.append(res_item)
+                    current_results.append(res_item)
+
+                    await db["photoshoot_images"].insert_one({
+                        "image_id": img_id,
+                        "session_id": session_id,
+                        "user_id": str(user_id),
+                        "url": rel_url,
+                        "filename": filename,
+                        "angle": applied_style,
+                        "file_size": target_path.stat().st_size,
+                        "dimensions": {"width": 1024, "height": 1024},
+                        "content_type": "image/jpeg",
+                        "image_type": "generated",
+                        "enhancement_style": applied_style,
+                        "is_saved": False,
+                        "created_at": now_item
+                    })
+                else:
+                    remaining_failures.append(item_meta)
+
+            now = datetime.now(timezone.utc)
+            final_status = "completed" if len(current_results) >= total_images else ("partial" if current_results else "failed")
+
+            await db["photoshoot_jobs"].update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": final_status,
+                        "progress_percent": 100 if final_status == "completed" else int((len(current_results) / total_images) * 100),
+                        "completed_images": len(current_results),
+                        "failed_images": len(remaining_failures),
+                        "failed_items": remaining_failures,
+                        "can_retry": len(remaining_failures) > 0,
+                        "result_images": current_results,
+                        "completed_at": now
+                    }
+                }
+            )
+
+            if newly_succeeded:
+                await db["photoshoot_sessions"].update_one(
+                    {"session_id": session_id},
+                    {
+                        "$push": {"generated_images": {"$each": newly_succeeded}},
+                        "$set": {"status": final_status, "updated_at": now}
+                    }
+                )
+        except Exception as e:
+            logger.error(f"Error during retry of job {job_id}: {e}")
 
     @classmethod
     async def get_job_status(cls, db, user_id: str, job_id: str) -> Dict[str, Any]:
@@ -1125,6 +1306,9 @@ class PhotoshootService:
             "progress_percent": job.get("progress_percent", 0),
             "completed_images": job.get("completed_images", 0),
             "total_images": job.get("total_images", 5),
+            "failed_images": job.get("failed_images", 0),
+            "failed_items": job.get("failed_items", []),
+            "can_retry": bool(job.get("can_retry") or job.get("failed_items")),
             "result_images": job.get("result_images", []),
             "error": job.get("error")
         }
@@ -1208,20 +1392,23 @@ class PhotoshootService:
             except Exception as e:
                 logger.warning(f"Failed to unlink {local_p}: {e}")
 
-        # Remove from collection and from session lists
+        # Remove from collection and from appropriate session lists without deleting unrelated source images
         await db["photoshoot_images"].delete_one({"_id": image_doc["_id"]})
         session_id = image_doc.get("session_id")
+        img_type = image_doc.get("image_type", "generated")
+
         if session_id:
+            pull_criteria = {"saved_image_ids": image_id}
+            if img_type == "generated":
+                pull_criteria["generated_images"] = {"image_id": image_id}
+            elif img_type == "enhanced":
+                pull_criteria["enhanced_images"] = {"image_id": image_id}
+            elif img_type == "original":
+                pull_criteria["original_images"] = {"image_id": image_id}
+
             await db["photoshoot_sessions"].update_one(
                 {"session_id": session_id},
-                {
-                    "$pull": {
-                        "generated_images": {"image_id": image_id},
-                        "enhanced_images": {"image_id": image_id},
-                        "original_images": {"image_id": image_id},
-                        "saved_image_ids": image_id
-                    }
-                }
+                {"$pull": pull_criteria}
             )
 
         return {"success": True, "image_id": image_id, "message": "Image deleted successfully."}
