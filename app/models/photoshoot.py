@@ -1,12 +1,13 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from app.models.base import MongoBaseModel, PyObjectId
 
 
 class ProductImageAsset(BaseModel):
     """Metadata for uploaded, enhanced, or generated product images."""
+    model_config = ConfigDict(protected_namespaces=())
     image_id: str = Field(default_factory=lambda: f"img_{uuid.uuid4().hex[:12]}")
     session_id: str
     user_id: str
@@ -25,6 +26,7 @@ class ProductImageAsset(BaseModel):
 
 class AIModelProfile(BaseModel):
     """Curated AI human model profile for model-based fashion and product photoshoot."""
+    model_config = ConfigDict(protected_namespaces=())
     model_id: str
     name: str
     gender: str  # male, female, unisex
@@ -41,6 +43,7 @@ class ProductPhotoshootSession(MongoBaseModel):
     Unified AI Product Photoshoot Studio Session.
     Supports both model-based and product-only workflows through a single session entity.
     """
+    model_config = ConfigDict(protected_namespaces=())
     session_id: str = Field(default_factory=lambda: f"sess_{uuid.uuid4().hex[:12]}")
     user_id: str
     title: Optional[str] = "Untitled Photoshoot"
@@ -64,6 +67,7 @@ class ProductPhotoshootSession(MongoBaseModel):
 
 class PhotoshootGenerationJob(MongoBaseModel):
     """Asynchronous background generation job for photoshoot batches."""
+    model_config = ConfigDict(protected_namespaces=())
     job_id: str = Field(default_factory=lambda: f"job_{uuid.uuid4().hex[:12]}")
     session_id: str
     user_id: str

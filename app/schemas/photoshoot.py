@@ -94,6 +94,7 @@ class SelectEnhancedRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 class AIModelItem(BaseModel):
+    model_config = {"protected_namespaces": ()}
     model_id: str
     name: str
     gender: str
@@ -138,6 +139,7 @@ class PhotographyStylesResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PreparePromptRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     session_id: str
     custom_prompt: Optional[str] = None
     language: Optional[str] = "en"
@@ -160,6 +162,7 @@ class PreparePromptResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PhotoshootGenerateRequest(BaseModel):
+    model_config = {"protected_namespaces": ()}
     session_id: str
     selected_enhanced_image_ids: Optional[List[str]] = None
     product_category: Optional[str] = None

@@ -1,19 +1,34 @@
 import io
+import logging
 from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4, letter
-from reportlab.lib.units import inch
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    HRFlowable,
-    KeepTogether
-)
+from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
+
+try:
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, letter
+    from reportlab.lib.units import inch
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer,
+        Table,
+        TableStyle,
+        HRFlowable,
+        KeepTogether
+    )
+    HAS_REPORTLAB = True
+except ImportError:
+    HAS_REPORTLAB = False
+    colors = None
+    A4 = letter = None
+    inch = 72
+    getSampleStyleSheet = ParagraphStyle = None
+    SimpleDocTemplate = Paragraph = Spacer = Table = TableStyle = HRFlowable = KeepTogether = None
+    logger.warning("reportlab is not installed. PDF generation endpoints will be disabled.")
 
 COMPANY_NAME = "SevenUnique Tech Solutions Pvt. Ltd."
 BRAND_NAME = "DhandaGrow"
@@ -44,6 +59,8 @@ class PDFService:
         """
         Generates a formal branded PDF receipt / tax invoice for a transaction.
         """
+        if not HAS_REPORTLAB:
+            raise HTTPException(status_code=500, detail="PDF generation service unavailable (reportlab missing).")
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
@@ -305,6 +322,8 @@ class PDFService:
         """
         Generates a user-scoped statement / list PDF of transaction history.
         """
+        if not HAS_REPORTLAB:
+            raise HTTPException(status_code=500, detail="PDF generation service unavailable (reportlab missing).")
         buffer = io.BytesIO()
         doc = SimpleDocTemplate(
             buffer,
