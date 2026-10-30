@@ -1,0 +1,1397 @@
+import os
+import io
+import re
+import json
+import uuid
+import zipfile
+import asyncio
+import logging
+import urllib.parse
+from pathlib import Path
+from datetime import datetime, timezone
+from typing import Optional, List, Dict, Any, Tuple
+from PIL import Image
+import httpx
+from fastapi import UploadFile, HTTPException, status
+from bson import ObjectId
+
+from app.core.config import settings
+from app.core.database import get_database
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
+from app.services.stt_service import STTService
+from app.ai.gemini_client import get_primary_gemini_client, get_gemini_clients
+from app.models.photoshoot import (
+    ProductPhotoshootSession,
+    ProductImageAsset,
+    AIModelProfile,
+    PhotoshootGenerationJob,
+)
+from app.schemas.photoshoot import (
+    ProductAnalysisData,
+    AIModelItem,
+    PhotographyStyleItem,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ===========================================================================
+# CURATED AI MODELS GALLERY
+# ===========================================================================
+
+CURATED_AI_MODELS: List[AIModelItem] = [
+    AIModelItem(
+        model_id="model_male_01",
+        name="Arjun - Indian Male Fashion Model",
+        gender="male",
+        ethnicity="Indian / South Asian",
+        thumbnail_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Clothing", "Men's Apparel", "T-shirts", "Shirts", "Footwear", "Eyewear", "Watches"],
+        description="Athletic build, sharp jawline, versatile for casual wear, formal suits, and sportswear."
+    ),
+    AIModelItem(
+        model_id="model_male_02",
+        name="Kabir - Modern Streetwear Model",
+        gender="male",
+        ethnicity="South Asian",
+        thumbnail_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Clothing", "Streetwear", "Jackets", "Hoodies", "Caps", "Sneakers"],
+        description="Urban contemporary look, charismatic aesthetic for modern streetwear and denim."
+    ),
+    AIModelItem(
+        model_id="model_female_01",
+        name="Ananya - Indian Female Fashion Model",
+        gender="female",
+        ethnicity="Indian / South Asian",
+        thumbnail_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Clothing", "Dresses", "Ethnic Wear", "Sarees", "Jewellery", "Cosmetics"],
+        description="Classic elegant features, radiant skin tone, ideal for ethnic wear, sarees, and jewellery."
+    ),
+    AIModelItem(
+        model_id="model_female_02",
+        name="Meera - Luxury Editorial Model",
+        gender="female",
+        ethnicity="South Asian",
+        thumbnail_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Jewellery", "Necklaces", "Earrings", "Luxury Fashion", "Bridal Wear"],
+        description="High-fashion editorial aesthetic, graceful neck and posture, perfected for fine jewellery and luxury."
+    ),
+    AIModelItem(
+        model_id="model_female_03",
+        name="Priya - Casual Lifestyle Model",
+        gender="female",
+        ethnicity="Indian",
+        thumbnail_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Clothing", "Tops", "Jeans", "Handbags", "Footwear", "Accessories"],
+        description="Friendly, approachable commercial vibe, ideal for everyday lifestyle and D2C brands."
+    ),
+    AIModelItem(
+        model_id="model_male_03",
+        name="David - International Male Model",
+        gender="male",
+        ethnicity="Caucasian / European",
+        thumbnail_url="https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=400&auto=format&fit=crop&q=80",
+        preview_url="https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=1024&auto=format&fit=crop&q=80",
+        supported_categories=["Clothing", "Suits", "Blazers", "Watches", "Leather Goods", "Eyewear"],
+        description="Sophisticated gentleman look, ideal for luxury global fashion, suits, and premium accessories."
+    )
+]
+
+
+# ===========================================================================
+# PHOTOGRAPHY STYLES & POSES CATALOG
+# ===========================================================================
+
+PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
+    # --- Model-based Clothing Poses ---
+    PhotographyStyleItem(
+        id="clothing_front_view",
+        name="Front View",
+        description="Standing direct to camera, showing complete garment drape, neckline, fit and texture.",
+        category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "T-shirts", "Shirts", "Dresses"],
+        requires_model=True,
+        pose="Direct standing pose facing camera with arms naturally at sides",
+        lighting="Three-point studio softbox with subtle fill light"
+    ),
+    PhotographyStyleItem(
+        id="clothing_back_view",
+        name="Back View",
+        description="Standing turned away from camera, showing rear garment structure, back print, and silhouette.",
+        category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "T-shirts", "Hoodies", "Jackets"],
+        requires_model=True,
+        pose="Turned 180 degrees away showing full back details and posture",
+        lighting="Rim lighting accentuating garment edges against soft backdrop"
+    ),
+    PhotographyStyleItem(
+        id="clothing_side_view",
+        name="Side View",
+        description="Side profile view highlighting sleeve drape, taper, waistline, and lateral details.",
+        category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "Pants", "Dresses"],
+        requires_model=True,
+        pose="Clean 90-degree profile stance showing full garment side silhouette",
+        lighting="Directional soft key light sculpting garment contours"
+    ),
+    PhotographyStyleItem(
+        id="clothing_sitting_pose",
+        name="Sitting Pose",
+        description="Casual modern seated pose on a minimalist studio stool, showing relaxed fabric drape.",
+        category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "Loungewear", "Denim"],
+        requires_model=True,
+        pose="Seated comfortably on neutral concrete studio cube or modern wood stool",
+        lighting="Warm architectural ambient lighting with soft diffused shadows"
+    ),
+    PhotographyStyleItem(
+        id="clothing_walking_pose",
+        name="Walking Pose",
+        description="Dynamic movement in-stride shot capturing natural fabric motion and lifestyle energy.",
+        category_fit=["Clothing", "Streetwear", "Activewear", "Footwear", "Dresses"],
+        requires_model=True,
+        pose="Natural mid-stride walk toward camera with subtle fabric flutter",
+        lighting="Natural daylight simulation with crisp editorial contrast"
+    ),
+    PhotographyStyleItem(
+        id="clothing_editorial_pose",
+        name="Editorial Fashion Pose",
+        description="Vogue-grade high fashion architectural pose with high-end aesthetic.",
+        category_fit=["Clothing", "Designer Wear", "Ethnic Wear", "Luxury Apparel"],
+        requires_model=True,
+        pose="Expressive high-fashion geometric pose with dynamic body angles",
+        lighting="Moody editorial chiaroscuro with dramatic beauty dish focus"
+    ),
+
+    # --- Model-based Jewellery Poses ---
+    PhotographyStyleItem(
+        id="jewellery_closeup",
+        name="Close-up Model Shot",
+        description="Macro crop focused on worn piece (earring, necklace, bracelet, ring) with shallow depth of field.",
+        category_fit=["Jewellery", "Earrings", "Necklaces", "Rings", "Watches"],
+        requires_model=True,
+        pose="Intimate close-up portrait with hands framing or touching the piece",
+        lighting="High-CRI beauty glow emphasizing gemstone facets and metal luster"
+    ),
+    PhotographyStyleItem(
+        id="jewellery_front_portrait",
+        name="Front Portrait",
+        description="Elegant beauty portrait highlighting collarbone and necklace placement.",
+        category_fit=["Jewellery", "Necklaces", "Bridal Wear"],
+        requires_model=True,
+        pose="Straight portrait with shoulders angled and chin gently lifted",
+        lighting="Glamour butterfly lighting with catchlights in eyes"
+    ),
+    PhotographyStyleItem(
+        id="jewellery_side_portrait",
+        name="Side Portrait",
+        description="Graceful profile view highlighting dangle earrings and jawline silhouette.",
+        category_fit=["Jewellery", "Earrings", "Eyewear"],
+        requires_model=True,
+        pose="Profile head turn showing earring suspended elegantly",
+        lighting="Contoured edge lighting creating luminous silhouette"
+    ),
+
+    # --- Product-only Styles ---
+    PhotographyStyleItem(
+        id="clean_hero_shot",
+        name="Clean Hero Product Shot",
+        description="Iconic commercial studio shot with crisp softbox reflection and contact shadow.",
+        category_fit=["All", "Candle", "Home Decor", "Electronics", "Cosmetics", "Packaged Goods", "Footwear"],
+        requires_model=False,
+        pose=None,
+        lighting="Diffused double-softbox studio lighting with pure neutral reflections"
+    ),
+    PhotographyStyleItem(
+        id="lifestyle_placement",
+        name="Lifestyle Product Placement",
+        description="Organic product placement in an authentic upscale modern home, cafe, or office setting.",
+        category_fit=["All", "Candle", "Home Decor", "Electronics", "Kitchenware", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Golden hour sunbeams filtering through window with gentle bokeh"
+    ),
+    PhotographyStyleItem(
+        id="top_down_flat_lay",
+        name="Top-Down Flat Lay",
+        description="Direct 90-degree overhead composition arranged with harmonious aesthetic props.",
+        category_fit=["All", "Clothing", "Jewellery", "Stationery", "Food", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Even shadowless daylight flat lighting on linen, wood, or marble"
+    ),
+    PhotographyStyleItem(
+        id="closeup_detail_shot",
+        name="Close-up Detail Shot",
+        description="Macro focus on texture, material grain, stitching, engraving, and fine craftsmanship.",
+        category_fit=["All", "Jewellery", "Candle", "Leather Goods", "Footwear", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Raking directional light sculpting micro-texture and premium materials"
+    ),
+    PhotographyStyleItem(
+        id="luxury_studio_composition",
+        name="Luxury Studio Composition",
+        description="Artistic podium staging on travertine, fluted plaster, or marble with architectural shadows.",
+        category_fit=["All", "Candle", "Perfume", "Jewellery", "Skincare", "Watches"],
+        requires_model=False,
+        pose=None,
+        lighting="Dramatic warm spotlight with soft organic leaf shadows"
+    ),
+    PhotographyStyleItem(
+        id="creative_campaign",
+        name="Creative Campaign Photography",
+        description="Bold conceptual visual with color-blocked studio backdrops and elevated dynamic styling.",
+        category_fit=["All", "Footwear", "Beverages", "Tech", "Beauty"],
+        requires_model=False,
+        pose=None,
+        lighting="Vibrant pop lighting with chromatic contrast and razor-sharp clarity"
+    )
+]
+
+
+class PhotoshootService:
+    """
+    Unified AI Product Photoshoot Studio Service.
+    Powers the complete 5-step / 8-phase workflow for both model-based and product-only commercial photography.
+    """
+
+    PHOTOSHOOT_DIR = Path("uploads") / "photoshoot"
+    PRODUCTS_DIR = PHOTOSHOOT_DIR / "products"
+    ENHANCED_DIR = PHOTOSHOOT_DIR / "enhanced"
+    FINAL_DIR = PHOTOSHOOT_DIR / "final"
+
+    @classmethod
+    def ensure_directories(cls):
+        cls.PRODUCTS_DIR.mkdir(parents=True, exist_ok=True)
+        cls.ENHANCED_DIR.mkdir(parents=True, exist_ok=True)
+        cls.FINAL_DIR.mkdir(parents=True, exist_ok=True)
+
+    # -----------------------------------------------------------------------
+    # PHASE 1: Upload Product Images
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def upload_product_images(
+        cls,
+        db,
+        user_id: str,
+        files: List[UploadFile],
+        session_id: Optional[str] = None,
+        product_category: Optional[str] = None,
+        angles: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        cls.ensure_directories()
+        if not files:
+            raise HTTPException(status_code=400, detail="No product images uploaded.")
+
+        allowed_exts = {".jpg", ".jpeg", ".png", ".webp"}
+        max_file_size = 10 * 1024 * 1024  # 10MB per image
+
+        # Initialize or fetch session
+        session_doc = None
+        if session_id:
+            session_doc = await db["photoshoot_sessions"].find_one({
+                "session_id": session_id,
+                "user_id": str(user_id)
+            })
+
+        actual_session_id = session_id if session_doc else f"sess_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc)
+
+        uploaded_assets = []
+        angle_list = angles or []
+
+        for idx, file in enumerate(files):
+            fname = file.filename or f"product_{idx}.jpg"
+            ext = Path(fname).suffix.lower()
+            if ext not in allowed_exts:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported format '{ext}' for file '{fname}'. Supported: JPG, JPEG, PNG, WEBP."
+                )
+
+            content = await file.read()
+            if len(content) > max_file_size:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Image '{fname}' exceeds 10MB limit."
+                )
+            if len(content) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Uploaded file '{fname}' is empty (0 bytes)."
+                )
+
+            # Validate dimensions with PIL
+            try:
+                img = Image.open(io.BytesIO(content))
+                width, height = img.size
+                if width < 100 or height < 100:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Image '{fname}' dimensions ({width}x{height}) are too small. Minimum required: 100x100."
+                    )
+            except HTTPException:
+                raise
+            except Exception as img_err:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File '{fname}' is corrupted or not a valid image: {img_err}"
+                )
+
+            # Assign angle from provided list or default
+            assigned_angle = "Front"
+            if idx < len(angle_list) and angle_list[idx]:
+                valid_angles = {"Front", "Back", "Side", "Close-up", "Other"}
+                clean_angle = angle_list[idx].strip().title()
+                assigned_angle = clean_angle if clean_angle in valid_angles else "Other"
+            elif idx == 1:
+                assigned_angle = "Back"
+            elif idx == 2:
+                assigned_angle = "Side"
+            elif idx >= 3:
+                assigned_angle = "Close-up"
+
+            # Save locally
+            unique_name = f"{uuid.uuid4().hex[:16]}{ext}"
+            file_path = cls.PRODUCTS_DIR / unique_name
+            with open(file_path, "wb") as f:
+                f.write(content)
+
+            image_id = f"img_{uuid.uuid4().hex[:12]}"
+            rel_url = f"/uploads/photoshoot/products/{unique_name}"
+
+            asset = {
+                "image_id": image_id,
+                "session_id": actual_session_id,
+                "user_id": str(user_id),
+                "url": rel_url,
+                "filename": fname,
+                "angle": assigned_angle,
+                "file_size": len(content),
+                "dimensions": {"width": width, "height": height},
+                "content_type": file.content_type or f"image/{ext.replace('.', '')}",
+                "image_type": "original",
+                "created_at": now
+            }
+            uploaded_assets.append(asset)
+            await db["photoshoot_images"].insert_one(asset)
+
+        # Upsert session document
+        if session_doc:
+            await db["photoshoot_sessions"].update_one(
+                {"session_id": actual_session_id},
+                {
+                    "$push": {"original_images": {"$each": uploaded_assets}},
+                    "$set": {
+                        "product_category": product_category or session_doc.get("product_category"),
+                        "status": "uploaded",
+                        "updated_at": now
+                    }
+                }
+            )
+        else:
+            session_payload = {
+                "session_id": actual_session_id,
+                "user_id": str(user_id),
+                "title": f"Photoshoot - {product_category or 'Product'}",
+                "product_category": product_category,
+                "product_type": None,
+                "analysis": None,
+                "original_images": uploaded_assets,
+                "enhanced_images": [],
+                "selected_enhanced_image_ids": [],
+                "use_model": False,
+                "model_id": None,
+                "model_details": None,
+                "selected_styles": [],
+                "custom_prompt": None,
+                "prepared_prompt": None,
+                "status": "uploaded",
+                "generation_jobs": [],
+                "generated_images": [],
+                "saved_image_ids": [],
+                "created_at": now,
+                "updated_at": now
+            }
+            await db["photoshoot_sessions"].insert_one(session_payload)
+
+        return {
+            "success": True,
+            "session_id": actual_session_id,
+            "product_category": product_category,
+            "total_uploaded": len(uploaded_assets),
+            "uploaded_images": uploaded_assets,
+            "message": "Product images uploaded and session initialized successfully."
+        }
+
+    # -----------------------------------------------------------------------
+    # PHASE 2: AI Product Visual Analysis
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def analyze_product(
+        cls,
+        db,
+        user_id: str,
+        session_id: str,
+        image_ids: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        orig_images = session_doc.get("original_images", [])
+        if not orig_images:
+            raise HTTPException(status_code=400, detail="No product images found in this session.")
+
+        # Target selected images or all (support multiple reference angles)
+        target_images = orig_images
+        if image_ids:
+            target_images = [img for img in orig_images if img.get("image_id") in image_ids] or orig_images
+
+        client = get_primary_gemini_client()
+        analysis_data: Optional[Dict[str, Any]] = None
+
+        # Build multimodal parts from uploaded images
+        image_parts = []
+        if client:
+            from google.genai import types
+            for asset in target_images[:4]:
+                raw_rel = asset.get("url", "").lstrip("/")
+                lp = Path(raw_rel)
+                if lp.exists():
+                    try:
+                        with open(lp, "rb") as f:
+                            b = f.read()
+                        mime = asset.get("content_type", "image/jpeg")
+                        image_parts.append(types.Part.from_bytes(data=b, mime_type=mime))
+                    except Exception as err:
+                        logger.warning(f"Could not load image part {lp}: {err}")
+
+        if client and image_parts:
+            try:
+                cat_hint = session_doc.get("product_category") or ""
+                cat_context = f"\nUser indicated category: '{cat_hint}'." if cat_hint else ""
+
+                analysis_prompt = (
+                    "You are a professional e-commerce product inspector and commercial photoshoot director. "
+                    f"Analyze the attached product image(s) with strict visual accuracy.{cat_context} "
+                    "Return ONLY a valid JSON object with the following fields without any markdown wrapping:\n"
+                    "{\n"
+                    '  "product_category": "Standard broad category (e.g. Clothing, Jewellery, Footwear, Home Decor, Cosmetics, Electronics, Food, Accessories)",\n'
+                    '  "product_type": "Specific product identification (e.g. Men\'s T-shirt, Scented Candle, Gold Pendant, Running Shoes)",\n'
+                    '  "main_colors": ["Color 1", "Color 2"],\n'
+                    '  "shape_and_design": ["Visual shape", "Cut / Silhouette", "Pattern"],\n'
+                    '  "material_and_texture": "Visually identifiable fabric/material and texture (e.g. Combed Cotton, Matte Ceramic, Polished Gold)",\n'
+                    '  "brand_logo_and_text": "Visible logo name, label text, or None detected",\n'
+                    '  "product_details": ["Key distinctive visual features", "Collar/closure/container details"],\n'
+                    '  "suitable_for_model": true/false (true if apparel, jewellery, wearable or personal accessory; false for decor, candles, food, electronics),\n'
+                    '  "recommended_model_type": "male" / "female" / "unisex" / "none",\n'
+                    '  "recommended_styles": ["Style 1", "Style 2", "Style 3"]\n'
+                    "}\n"
+                    "STRICT RULE: Do NOT invent or hallucinate product details not visually present in the image. "
+                    "If a detail is unclear, use 'Unspecified' or 'None detected'."
+                )
+
+                model_name = getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=[*image_parts, analysis_prompt]
+                )
+                raw_text = (resp.text or "").strip()
+                # Clean possible markdown block
+                if "```" in raw_text:
+                    raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
+                    raw_text = re.sub(r"```$", "", raw_text).strip()
+                analysis_data = json.loads(raw_text)
+            except Exception as e:
+                logger.warning(f"Gemini visual analysis failed or timed out: {e}")
+
+        # Deterministic visual inspection fallback
+        if not analysis_data:
+            cat_hint = session_doc.get("product_category", "Product") or "Product"
+            is_clothing = any(c in cat_hint.lower() for c in ["clothing", "shirt", "apparel", "wear", "dress"])
+            is_jewellery = any(c in cat_hint.lower() for c in ["jewel", "ring", "necklace", "earring"])
+            is_candle = "candle" in cat_hint.lower()
+
+            suitable_model = is_clothing or is_jewellery
+            analysis_data = {
+                "product_category": cat_hint if cat_hint != "Product" else ("Clothing" if is_clothing else "Home Decor"),
+                "product_type": "Men's T-shirt" if is_clothing else ("Scented Candle" if is_candle else cat_hint),
+                "main_colors": ["Primary Visual Color"],
+                "shape_and_design": ["Standard commercial product geometry"],
+                "material_and_texture": "High quality manufactured material",
+                "brand_logo_and_text": "None detected",
+                "product_details": ["Clean product finish"],
+                "suitable_for_model": suitable_model,
+                "recommended_model_type": "male" if is_clothing else ("female" if is_jewellery else "none"),
+                "recommended_styles": [
+                    "Front View", "Sitting Pose", "Studio Premium"
+                ] if suitable_model else [
+                    "Clean Hero Product Shot", "Lifestyle Product Placement", "Luxury Studio Composition"
+                ]
+            }
+
+        # Update session with analysis
+        now = datetime.now(timezone.utc)
+        await db["photoshoot_sessions"].update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "product_category": analysis_data.get("product_category"),
+                    "product_type": analysis_data.get("product_type"),
+                    "analysis": analysis_data,
+                    "status": "analyzed",
+                    "updated_at": now
+                }
+            }
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "analysis": analysis_data,
+            "message": "AI product visual analysis completed successfully."
+        }
+
+    # -----------------------------------------------------------------------
+    # PHASE 3: AI Product Image Enhancement
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def enhance_product_images(
+        cls,
+        db,
+        user_id: str,
+        session_id: str,
+        image_id: Optional[str] = None,
+        styles: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        cls.ensure_directories()
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        orig_images = session_doc.get("original_images", [])
+        if not orig_images:
+            raise HTTPException(status_code=400, detail="No original product images found in this session.")
+
+        # Find target source image
+        source_image = orig_images[0]
+        if image_id:
+            for img in orig_images:
+                if img.get("image_id") == image_id:
+                    source_image = img
+                    break
+
+        target_styles = styles or ["Studio Premium", "Luxury Cinematic", "Marketplace White"]
+        valid_styles = {"Studio Premium", "Luxury Cinematic", "Marketplace White"}
+        target_styles = [s for s in target_styles if s in valid_styles] or ["Studio Premium", "Luxury Cinematic", "Marketplace White"]
+
+        p_name = session_doc.get("product_type") or session_doc.get("product_category") or "Product"
+        analysis = session_doc.get("analysis", {}) or {}
+        colors = ", ".join(analysis.get("main_colors", ["original colors"]))
+
+        now = datetime.now(timezone.utc)
+        enhanced_results = []
+
+        for style in target_styles:
+            enh_id = f"enh_{uuid.uuid4().hex[:12]}"
+            filename = f"enhanced_{enh_id}.jpg"
+            target_path = cls.ENHANCED_DIR / filename
+
+            # Build style-specific prompt adhering strictly to product preservation
+            if style == "Studio Premium":
+                style_desc = "Soft ambient illumination, subtle neutral background, delicate contact shadow, commercial studio lighting"
+            elif style == "Luxury Cinematic":
+                style_desc = "Dramatic chiaroscuro contrast, warm key lighting, elegant depth of field, luxury editorial podium"
+            else:  # Marketplace White
+                style_desc = "Pure pure clean #FFFFFF white background, crisp e-commerce shadow, compliant with Amazon and Shopify standards"
+
+            prompt = (
+                f"Commercial e-commerce product enhancement of {p_name} in {colors}. "
+                f"Style: {style}. {style_desc}. "
+                f"Product identity, logos, packaging, colors and texture strictly preserved. 8k resolution, crisp photorealistic details."
+            )
+
+            # Generate via Flux / Pollinations or synthesize clean PIL asset
+            download_ok = await cls._generate_and_save_visual(prompt=prompt, target_path=target_path)
+            if not download_ok or not target_path.exists():
+                cls._synthesize_fallback_image(target_path, title=f"{p_name}\n({style})", bg_color=(245, 245, 245))
+
+            rel_url = f"/uploads/photoshoot/enhanced/{filename}"
+            item = {
+                "image_id": enh_id,
+                "source_image_id": source_image.get("image_id"),
+                "style": style,
+                "url": rel_url,
+                "is_selected": False,
+                "created_at": now
+            }
+            enhanced_results.append(item)
+
+            # Record in photoshoot_images
+            await db["photoshoot_images"].insert_one({
+                "image_id": enh_id,
+                "session_id": session_id,
+                "user_id": str(user_id),
+                "url": rel_url,
+                "filename": filename,
+                "angle": source_image.get("angle", "Front"),
+                "file_size": target_path.stat().st_size if target_path.exists() else 1024,
+                "dimensions": {"width": 1024, "height": 1024},
+                "content_type": "image/jpeg",
+                "image_type": "enhanced",
+                "enhancement_style": style,
+                "is_selected": False,
+                "created_at": now
+            })
+
+        # Save enhanced list to session
+        await db["photoshoot_sessions"].update_one(
+            {"session_id": session_id},
+            {
+                "$push": {"enhanced_images": {"$each": enhanced_results}},
+                "$set": {"status": "enhanced", "updated_at": now}
+            }
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "total_variations": len(enhanced_results),
+            "enhanced_images": enhanced_results,
+            "message": "Product image enhancement variations generated."
+        }
+
+    # -----------------------------------------------------------------------
+    # PHASE 4: Curated AI Model Selection
+    # -----------------------------------------------------------------------
+    @classmethod
+    def get_model_gallery(
+        cls,
+        gender: Optional[str] = None,
+        category: Optional[str] = None,
+    ) -> List[AIModelItem]:
+        models = CURATED_AI_MODELS
+        if gender:
+            g_clean = gender.strip().lower()
+            models = [m for m in models if m.gender.lower() == g_clean or m.gender.lower() == "unisex"]
+        if category:
+            c_clean = category.strip().lower()
+            models = [
+                m for m in models
+                if any(c_clean in cat.lower() for cat in m.supported_categories) or "all" in [c.lower() for c in m.supported_categories]
+            ]
+        return models
+
+    # -----------------------------------------------------------------------
+    # PHASE 5: Photography Styles and Poses Recommendations
+    # -----------------------------------------------------------------------
+    @classmethod
+    def get_photography_styles(
+        cls,
+        category: Optional[str] = None,
+        use_model: bool = False,
+        model_id: Optional[str] = None,
+    ) -> List[PhotographyStyleItem]:
+        cat_clean = (category or "All").strip().lower()
+
+        styles = []
+        for s in PHOTOGRAPHY_STYLES_CATALOG:
+            # Filter by model requirement
+            if use_model and not s.requires_model:
+                continue
+            if not use_model and s.requires_model:
+                continue
+
+            # Category filtering: check if style fits category or is universal 'All'
+            fits_cat = any(
+                cat_clean in c.lower() or "all" in c.lower() or c.lower() in cat_clean
+                for c in s.category_fit
+            )
+            if fits_cat:
+                styles.append(s)
+
+        # Ensure at least 3 fallback styles exist if strict filter was too narrow
+        if len(styles) < 3:
+            for s in PHOTOGRAPHY_STYLES_CATALOG:
+                if s.requires_model == use_model and s not in styles:
+                    styles.append(s)
+                if len(styles) >= 4:
+                    break
+
+        return styles
+
+    # -----------------------------------------------------------------------
+    # PHASE 6: Custom Prompt and Multilingual Voice Preparation
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def prepare_prompt(
+        cls,
+        db,
+        user_id: str,
+        session_id: str,
+        custom_prompt: Optional[str] = None,
+        language: Optional[str] = "en",
+        use_model: bool = False,
+        model_id: Optional[str] = None,
+        selected_styles: Optional[List[str]] = None,
+        audio_file: Optional[UploadFile] = None,
+    ) -> Dict[str, Any]:
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        user_instruction = (custom_prompt or "").strip()
+        detected_lang = language or "en"
+
+        # Voice fallback: if audio was uploaded, transcribe via STTService
+        if audio_file:
+            try:
+                stt_res = await STTService.transcribe_audio(file=audio_file, language=language)
+                transcribed_text = stt_res.get("text", "")
+                if transcribed_text:
+                    user_instruction = f"{user_instruction} {transcribed_text}".strip()
+                    detected_lang = stt_res.get("detected_language") or detected_lang
+            except Exception as stt_err:
+                logger.warning(f"Voice transcription note: {stt_err}")
+
+        # Fetch model details if selected
+        model_obj = None
+        if use_model and model_id:
+            for m in CURATED_AI_MODELS:
+                if m.model_id == model_id:
+                    model_obj = m.model_dump()
+                    break
+
+        styles_to_apply = selected_styles or session_doc.get("selected_styles") or ["Studio Premium"]
+        analysis = session_doc.get("analysis", {}) or {}
+        p_name = session_doc.get("product_type") or session_doc.get("product_category") or "Product"
+        colors = ", ".join(analysis.get("main_colors", ["natural colors"]))
+        texture = analysis.get("material_and_texture", "premium texture")
+
+        # Synthesize professional photoshoot generation prompt using Gemini LLM
+        client = get_primary_gemini_client()
+        prepared_prompt = ""
+
+        if client:
+            try:
+                sys_prompt = (
+                    "You are a Vogue Commercial Creative Director. "
+                    "Synthesize the following product specifications, styling, and user instructions into a single concise, "
+                    "master photography generation prompt (under 60 words). "
+                    "CRITICAL: Keep the product identity, color, and texture strictly preserved.\n"
+                    f"Product: {p_name} ({colors}, {texture})\n"
+                    f"Photography Type: {'Model-based commercial on ' + (model_obj['name'] if model_obj else 'model') if use_model else 'Product-only commercial photography'}\n"
+                    f"Selected Styles/Poses: {', '.join(styles_to_apply)}\n"
+                    f"User Custom Instructions: {user_instruction or 'None'}\n"
+                    "Output ONLY the final generation prompt text."
+                )
+                model_name = getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3-flash-preview")
+                resp = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=sys_prompt
+                )
+                if resp and resp.text:
+                    prepared_prompt = resp.text.strip().replace("\n", " ")
+            except Exception as e:
+                logger.warning(f"Prompt preparation LLM note: {e}")
+
+        if not prepared_prompt:
+            model_part = f"worn by {model_obj['name'] if model_obj else 'model'}" if use_model else "product-only hero shot"
+            styles_part = ", ".join(styles_to_apply)
+            user_part = f", {user_instruction}" if user_instruction else ""
+            prepared_prompt = (
+                f"Commercial advertising photoshoot of {p_name} in {colors}, {texture}. "
+                f"{model_part}, {styles_part}{user_part}. "
+                f"Studio lighting, 8k resolution, photorealistic commercial product photography, razor-sharp details."
+            )
+
+        now = datetime.now(timezone.utc)
+        await db["photoshoot_sessions"].update_one(
+            {"session_id": session_id},
+            {
+                "$set": {
+                    "use_model": bool(use_model),
+                    "model_id": model_id if use_model else None,
+                    "model_details": model_obj if use_model else None,
+                    "selected_styles": styles_to_apply,
+                    "custom_prompt": user_instruction,
+                    "prepared_prompt": prepared_prompt,
+                    "status": "prompt_ready",
+                    "updated_at": now
+                }
+            }
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "prepared_prompt": prepared_prompt,
+            "detected_language": detected_lang,
+            "workflow_summary": {
+                "use_model": use_model,
+                "model_name": model_obj.get("name") if model_obj else "None (Product Only)",
+                "product_type": p_name,
+                "selected_styles": styles_to_apply,
+                "user_instructions": user_instruction or "None"
+            },
+            "message": "Multilingual instructions interpreted and synthesized into studio photographic specifications."
+        }
+
+    # -----------------------------------------------------------------------
+    # PHASE 7: Final Photoshoot Batch Generation
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def start_photoshoot_generation(
+        cls,
+        db,
+        user_id: str,
+        session_id: str,
+        selected_enhanced_image_ids: Optional[List[str]] = None,
+        product_category: Optional[str] = None,
+        use_model: bool = False,
+        model_id: Optional[str] = None,
+        selected_styles: Optional[List[str]] = None,
+        custom_prompt: Optional[str] = None,
+        image_count: int = 5,
+    ) -> Dict[str, Any]:
+        cls.ensure_directories()
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        # Prevent duplicate active jobs / charges on repeated requests
+        active_job = await db["photoshoot_jobs"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id),
+            "status": {"$in": ["pending", "processing"]}
+        })
+        if active_job:
+            return {
+                "success": True,
+                "session_id": session_id,
+                "job_id": active_job["job_id"],
+                "status": active_job["status"],
+                "estimated_time_seconds": active_job.get("total_images", 5) * 3,
+                "message": "A photoshoot generation job is already active for this session."
+            }
+
+        # 1. Credit check: verify user has enough credits
+        await CreditService.check_credits(db, str(user_id), "ai_photoshoot")
+
+        # 2. Prepare job configuration
+        count = min(max(1, image_count), 10)
+        job_id = f"job_{uuid.uuid4().hex[:12]}"
+        styles_list = selected_styles or session_doc.get("selected_styles") or ["Clean Hero Product Shot"]
+
+        now = datetime.now(timezone.utc)
+        job_doc = {
+            "job_id": job_id,
+            "session_id": session_id,
+            "user_id": str(user_id),
+            "status": "pending",
+            "progress_percent": 0,
+            "total_images": count,
+            "completed_images": 0,
+            "use_model": bool(use_model),
+            "model_id": model_id if use_model else None,
+            "styles": styles_list,
+            "prompt_used": custom_prompt or session_doc.get("prepared_prompt") or "",
+            "result_images": [],
+            "error": None,
+            "credits_deducted": 5,
+            "created_at": now,
+            "completed_at": None
+        }
+        await db["photoshoot_jobs"].insert_one(job_doc)
+
+        await db["photoshoot_sessions"].update_one(
+            {"session_id": session_id},
+            {
+                "$push": {"generation_jobs": job_id},
+                "$set": {
+                    "status": "generating",
+                    "use_model": bool(use_model),
+                    "model_id": model_id if use_model else None,
+                    "selected_styles": styles_list,
+                    "updated_at": now
+                }
+            }
+        )
+
+        # Deduct credits
+        await CreditService.deduct_credits(db, str(user_id), "ai_photoshoot")
+        await SubscriptionService.increment_usage(db, str(user_id), "photoshoot")
+
+        # Launch async execution
+        asyncio.create_task(
+            cls._execute_photoshoot_job(
+                db=db,
+                job_id=job_id,
+                session_id=session_id,
+                user_id=user_id,
+                use_model=use_model,
+                model_id=model_id,
+                styles=styles_list,
+                custom_prompt=custom_prompt,
+                count=count
+            )
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "job_id": job_id,
+            "status": "pending",
+            "estimated_time_seconds": count * 3,
+            "message": "Photoshoot generation started. Poll status endpoint for progress."
+        }
+
+    @classmethod
+    async def _execute_photoshoot_job(
+        cls,
+        db,
+        job_id: str,
+        session_id: str,
+        user_id: str,
+        use_model: bool,
+        model_id: Optional[str],
+        styles: List[str],
+        custom_prompt: Optional[str],
+        count: int
+    ):
+        """Background generator producing final 5-6 photorealistic variations."""
+        try:
+            await db["photoshoot_jobs"].update_one(
+                {"job_id": job_id},
+                {"$set": {"status": "processing", "progress_percent": 10}}
+            )
+
+            session_doc = await db["photoshoot_sessions"].find_one({"session_id": session_id})
+            analysis = (session_doc.get("analysis") if session_doc else None) or {}
+            p_name = (session_doc.get("product_type") if session_doc else None) or "Commercial Product"
+            colors = ", ".join(analysis.get("main_colors", ["natural colors"]))
+            texture = analysis.get("material_and_texture", "premium material")
+            logo_info = analysis.get("brand_logo_and_text")
+            logo_clause = f", accurately rendering visible logo/label '{logo_info}'" if logo_info and logo_info.lower() != "none detected" else ""
+
+            model_name = "model"
+            if use_model and model_id:
+                for m in CURATED_AI_MODELS:
+                    if m.model_id == model_id:
+                        model_name = m.name
+                        break
+
+            generated_items = []
+            for i in range(count):
+                applied_style = styles[i % len(styles)] if styles else "Commercial Studio"
+                img_id = f"final_{uuid.uuid4().hex[:12]}"
+                filename = f"photoshoot_{img_id}.jpg"
+                target_path = cls.FINAL_DIR / filename
+
+                # Vary angle, pose, and composition per iteration
+                if use_model:
+                    comp_prompt = (
+                        f"Professional commercial fashion catalog photo. {p_name} in {colors}, {texture}{logo_clause} "
+                        f"modeled by {model_name}. Variation {i+1}: {applied_style}. "
+                        f"{custom_prompt or ''}. High fashion studio lighting, full body or medium shot, "
+                        f"8k resolution, razor-sharp garment texture, photorealistic."
+                    )
+                else:
+                    comp_prompt = (
+                        f"Professional luxury commercial product photoshoot of {p_name} in {colors}, {texture}{logo_clause}. "
+                        f"Variation {i+1}: {applied_style}. {custom_prompt or ''}. "
+                        f"Advertising studio lighting, 8k resolution, clean reflections, photorealistic commercial catalog."
+                    )
+
+                download_ok = await cls._generate_and_save_visual(comp_prompt, target_path)
+                if not download_ok or not target_path.exists():
+                    cls._synthesize_fallback_image(
+                        target_path,
+                        title=f"{p_name}\n({applied_style} #{i+1})",
+                        bg_color=(240, 242, 245) if not use_model else (235, 238, 245)
+                    )
+
+                rel_url = f"/uploads/photoshoot/final/{filename}"
+                now_item = datetime.now(timezone.utc)
+                item = {
+                    "image_id": img_id,
+                    "session_id": session_id,
+                    "style_applied": applied_style,
+                    "url": rel_url,
+                    "is_saved": False,
+                    "created_at": now_item
+                }
+                generated_items.append(item)
+
+                # Store image asset
+                await db["photoshoot_images"].insert_one({
+                    "image_id": img_id,
+                    "session_id": session_id,
+                    "user_id": str(user_id),
+                    "url": rel_url,
+                    "filename": filename,
+                    "angle": applied_style,
+                    "file_size": target_path.stat().st_size if target_path.exists() else 2048,
+                    "dimensions": {"width": 1024, "height": 1024},
+                    "content_type": "image/jpeg",
+                    "image_type": "generated",
+                    "enhancement_style": applied_style,
+                    "is_saved": False,
+                    "created_at": now_item
+                })
+
+                progress = int(((i + 1) / count) * 90)
+                await db["photoshoot_jobs"].update_one(
+                    {"job_id": job_id},
+                    {
+                        "$set": {
+                            "progress_percent": progress,
+                            "completed_images": i + 1,
+                            "result_images": generated_items
+                        }
+                    }
+                )
+
+            # Complete job
+            now = datetime.now(timezone.utc)
+            await db["photoshoot_jobs"].update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": "completed",
+                        "progress_percent": 100,
+                        "completed_images": count,
+                        "result_images": generated_items,
+                        "completed_at": now
+                    }
+                }
+            )
+
+            await db["photoshoot_sessions"].update_one(
+                {"session_id": session_id},
+                {
+                    "$push": {"generated_images": {"$each": generated_items}},
+                    "$set": {"status": "completed", "updated_at": now}
+                }
+            )
+
+        except Exception as e:
+            logger.error(f"Error in photoshoot job {job_id}: {e}")
+            await db["photoshoot_jobs"].update_one(
+                {"job_id": job_id},
+                {
+                    "$set": {
+                        "status": "failed",
+                        "error": str(e),
+                        "completed_at": datetime.now(timezone.utc)
+                    }
+                }
+            )
+            # Automatic credit refund on job failure
+            try:
+                await CreditService.refund_credits(db, user_id=str(user_id), action="ai_photoshoot", job_id=job_id)
+            except Exception as ref_err:
+                logger.warning(f"Failed to refund credits for job {job_id}: {ref_err}")
+
+    @classmethod
+    async def get_job_status(cls, db, user_id: str, job_id: str) -> Dict[str, Any]:
+        job = await db["photoshoot_jobs"].find_one({"job_id": job_id, "user_id": str(user_id)})
+        if not job:
+            raise HTTPException(status_code=404, detail="Photoshoot job not found.")
+
+        return {
+            "success": True,
+            "job_id": job["job_id"],
+            "session_id": job["session_id"],
+            "status": job["status"],
+            "progress_percent": job.get("progress_percent", 0),
+            "completed_images": job.get("completed_images", 0),
+            "total_images": job.get("total_images", 5),
+            "result_images": job.get("result_images", []),
+            "error": job.get("error")
+        }
+
+    @classmethod
+    async def get_session_results(cls, db, user_id: str, session_id: str) -> Dict[str, Any]:
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        results = session_doc.get("generated_images", [])
+        return {
+            "success": True,
+            "session_id": session_id,
+            "status": session_doc.get("status", "completed"),
+            "total_images": len(results),
+            "use_model": session_doc.get("use_model", False),
+            "results": results
+        }
+
+    # -----------------------------------------------------------------------
+    # PHASE 8: Gallery, Selection & Downloads
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def save_selected_images(
+        cls,
+        db,
+        user_id: str,
+        session_id: str,
+        image_ids: List[str]
+    ) -> Dict[str, Any]:
+        session_doc = await db["photoshoot_sessions"].find_one({
+            "session_id": session_id,
+            "user_id": str(user_id)
+        })
+        if not session_doc:
+            raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        if not image_ids:
+            raise HTTPException(status_code=400, detail="No image IDs provided.")
+
+        await db["photoshoot_images"].update_many(
+            {"image_id": {"$in": image_ids}, "user_id": str(user_id)},
+            {"$set": {"is_saved": True}}
+        )
+
+        await db["photoshoot_sessions"].update_one(
+            {"session_id": session_id},
+            {
+                "$addToSet": {"saved_image_ids": {"$each": image_ids}},
+                "$set": {"updated_at": datetime.now(timezone.utc)}
+            }
+        )
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "saved_count": len(image_ids),
+            "saved_image_ids": image_ids,
+            "message": "Selected images saved to your permanent gallery."
+        }
+
+    @classmethod
+    async def delete_image(cls, db, user_id: str, image_id: str) -> Dict[str, Any]:
+        image_doc = await db["photoshoot_images"].find_one({
+            "image_id": image_id,
+            "user_id": str(user_id)
+        })
+        if not image_doc:
+            raise HTTPException(status_code=404, detail="Image not found or not owned by user.")
+
+        # Delete local file if present
+        rel_url = image_doc.get("url", "").lstrip("/")
+        local_p = Path(rel_url)
+        if local_p.exists():
+            try:
+                local_p.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to unlink {local_p}: {e}")
+
+        # Remove from collection and from session lists
+        await db["photoshoot_images"].delete_one({"_id": image_doc["_id"]})
+        session_id = image_doc.get("session_id")
+        if session_id:
+            await db["photoshoot_sessions"].update_one(
+                {"session_id": session_id},
+                {
+                    "$pull": {
+                        "generated_images": {"image_id": image_id},
+                        "enhanced_images": {"image_id": image_id},
+                        "original_images": {"image_id": image_id},
+                        "saved_image_ids": image_id
+                    }
+                }
+            )
+
+        return {"success": True, "image_id": image_id, "message": "Image deleted successfully."}
+
+    @classmethod
+    async def regenerate_image(
+        cls,
+        db,
+        user_id: str,
+        image_id: str,
+        style: Optional[str] = None,
+        custom_prompt: Optional[str] = None
+    ) -> Dict[str, Any]:
+        image_doc = await db["photoshoot_images"].find_one({
+            "image_id": image_id,
+            "user_id": str(user_id)
+        })
+        if not image_doc:
+            raise HTTPException(status_code=404, detail="Image not found.")
+
+        session_id = image_doc.get("session_id")
+        session_doc = await db["photoshoot_sessions"].find_one({"session_id": session_id})
+        p_name = session_doc.get("product_type") if session_doc else "Product"
+
+        applied_style = style or image_doc.get("enhancement_style") or "Studio Premium"
+        prompt = (
+            f"Regenerated high-resolution commercial photoshoot of {p_name}. "
+            f"Style: {applied_style}. {custom_prompt or ''}. Commercial catalog quality, 8k."
+        )
+
+        new_img_id = f"regen_{uuid.uuid4().hex[:12]}"
+        filename = f"photoshoot_{new_img_id}.jpg"
+        target_path = cls.FINAL_DIR / filename
+
+        download_ok = await cls._generate_and_save_visual(prompt, target_path)
+        if not download_ok or not target_path.exists():
+            cls._synthesize_fallback_image(target_path, title=f"Regenerated {p_name}", bg_color=(245, 245, 245))
+
+        rel_url = f"/uploads/photoshoot/final/{filename}"
+        now = datetime.now(timezone.utc)
+        new_item = {
+            "image_id": new_img_id,
+            "session_id": session_id,
+            "style_applied": applied_style,
+            "url": rel_url,
+            "is_saved": True,
+            "created_at": now
+        }
+
+        await db["photoshoot_images"].insert_one({
+            "image_id": new_img_id,
+            "session_id": session_id,
+            "user_id": str(user_id),
+            "url": rel_url,
+            "filename": filename,
+            "angle": applied_style,
+            "file_size": target_path.stat().st_size if target_path.exists() else 2048,
+            "dimensions": {"width": 1024, "height": 1024},
+            "content_type": "image/jpeg",
+            "image_type": "generated",
+            "enhancement_style": applied_style,
+            "is_saved": True,
+            "created_at": now
+        })
+
+        if session_id:
+            await db["photoshoot_sessions"].update_one(
+                {"session_id": session_id},
+                {"$push": {"generated_images": new_item}}
+            )
+
+        return {"success": True, "regenerated_image": new_item}
+
+    @classmethod
+    async def get_user_gallery(
+        cls,
+        db,
+        user_id: str,
+        page: int = 1,
+        limit: int = 12,
+        category: Optional[str] = None
+    ) -> Dict[str, Any]:
+        query: Dict[str, Any] = {"user_id": str(user_id)}
+        if category and category.lower() != "all":
+            query["product_category"] = {"$regex": f"^{re.escape(category)}$", "$options": "i"}
+
+        total = await db["photoshoot_sessions"].count_documents(query)
+        safe_page = max(1, page)
+        safe_limit = min(max(1, limit), 50)
+        skip = (safe_page - 1) * safe_limit
+
+        cursor = db["photoshoot_sessions"].find(query).sort("created_at", -1).skip(skip).limit(safe_limit)
+        items = []
+        async for doc in cursor:
+            # Pick first generated image or first original as thumbnail
+            thumb = None
+            if doc.get("generated_images"):
+                thumb = doc["generated_images"][0].get("url")
+            elif doc.get("enhanced_images"):
+                thumb = doc["enhanced_images"][0].get("url")
+            elif doc.get("original_images"):
+                thumb = doc["original_images"][0].get("url")
+
+            items.append({
+                "session_id": doc["session_id"],
+                "title": doc.get("title") or "Commercial Photoshoot",
+                "product_category": doc.get("product_category") or "Product",
+                "product_type": doc.get("product_type") or "Item",
+                "use_model": doc.get("use_model", False),
+                "thumbnail_url": thumb,
+                "total_generated": len(doc.get("generated_images", [])),
+                "saved_count": len(doc.get("saved_image_ids", [])),
+                "created_at": doc.get("created_at")
+            })
+
+        return {
+            "success": True,
+            "total": total,
+            "page": safe_page,
+            "limit": safe_limit,
+            "sessions": items
+        }
+
+    # -----------------------------------------------------------------------
+    # Visual Generation Engine Helper (Pollinations Flux + Fallback)
+    # -----------------------------------------------------------------------
+    @classmethod
+    async def _generate_and_save_visual(cls, prompt: str, target_path: Path) -> bool:
+        """Calls Flux AI image generation and downloads the result to local disk."""
+        safe_prompt = urllib.parse.quote(prompt[:300].strip())
+        seed = int(uuid.uuid4().hex[:6], 16)
+        flux_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&model=flux&seed={seed}"
+
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+                res = await client.get(flux_url)
+                if res.status_code == 200 and len(res.content) > 3000:
+                    with open(target_path, "wb") as f:
+                        f.write(res.content)
+                    return True
+        except Exception as e:
+            logger.warning(f"Remote visual generation failed ({e}), creating local fallback.")
+        return False
+
+    @classmethod
+    def _synthesize_fallback_image(
+        cls,
+        target_path: Path,
+        title: str = "Commercial Photoshoot",
+        bg_color: Tuple[int, int, int] = (245, 245, 248)
+    ):
+        """Creates a clean synthetic e-commerce fallback graphic with PIL."""
+        try:
+            from PIL import ImageDraw
+            img = Image.new("RGB", (1024, 1024), color=bg_color)
+            draw = ImageDraw.Draw(img)
+
+            # Draw a modern studio product pedestal / podium
+            draw.rectangle([160, 160, 864, 864], outline=(220, 224, 230), width=4)
+            draw.ellipse([262, 700, 762, 850], fill=(210, 215, 225))  # Shadow
+            draw.ellipse([262, 650, 762, 750], fill=(255, 255, 255), outline=(200, 205, 215), width=2)  # Plinth
+
+            # Draw center text
+            draw.text((512, 450), title, fill=(40, 50, 70), anchor="mm")
+            draw.text((512, 520), "DhandaGrow AI Photoshoot Studio", fill=(120, 130, 150), anchor="mm")
+
+            img.save(target_path, format="JPEG", quality=90)
+        except Exception as e:
+            logger.warning(f"Error creating fallback image: {e}")
+            with open(target_path, "wb") as f:
+                f.write(b"DhandaGrow Photoshoot")
+

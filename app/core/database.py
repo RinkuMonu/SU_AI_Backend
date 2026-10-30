@@ -85,6 +85,15 @@ async def init_db_indexes():
     await _safe_create_index("payment_transactions", "payment_mode", background=True)
     await _safe_create_index("payment_transactions", "created_at", background=True)
 
+    # 10. Product Photoshoot Studio collections
+    await _safe_create_index("photoshoot_sessions", "session_id", unique=True, background=True)
+    await _safe_create_index("photoshoot_sessions", [("user_id", 1), ("created_at", -1)], background=True)
+    await _safe_create_index("photoshoot_images", "image_id", unique=True, background=True)
+    await _safe_create_index("photoshoot_images", [("session_id", 1), ("user_id", 1)], background=True)
+    await _safe_create_index("photoshoot_jobs", "job_id", unique=True, background=True)
+    await _safe_create_index("photoshoot_jobs", "session_id", background=True)
+    await _safe_create_index("photoshoot_jobs", "user_id", background=True)
+
 def close_mongo_connection():
     if db_manager.client:
         db_manager.client.close()

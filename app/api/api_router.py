@@ -15,6 +15,7 @@ from app.api.endpoints import (
     brand,
     leads,
     transactions,
+    photoshoot,
 )
 
 api_router = APIRouter()
@@ -27,6 +28,7 @@ api_router.include_router(website_builder.router, prefix="/website-builder", tag
 api_router.include_router(subscription.router)
 api_router.include_router(payments.router, prefix="/payments", tags=["payments"])
 api_router.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
+api_router.include_router(photoshoot.router, prefix="/product-photoshoot", tags=["Product Photoshoot Studio"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
