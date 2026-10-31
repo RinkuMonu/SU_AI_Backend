@@ -931,7 +931,7 @@ class FacebookService:
                 raise
             except Exception as e:
                 logger.error(f"Facebook publish unexpected exception: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to publish to Facebook: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Failed to publish to Facebook: {str(e)}")
 
     @staticmethod
     async def verify_page_token_permissions(db, user_id: str) -> Dict[str, Any]:

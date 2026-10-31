@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from bson import ObjectId
+from app.core.config import settings
 
 
 class ContentService:

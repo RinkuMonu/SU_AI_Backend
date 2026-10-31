@@ -615,13 +615,22 @@ async def facebook_publish_post(
     Publish a post (text or image) directly to the user's connected Facebook Page.
     """
     user_id = str(current_user.get("id") or current_user.get("_id"))
-    result = await FacebookService.publish_post(
-        db=db,
-        user_id=user_id,
-        caption=request.caption,
-        image_url=request.image_url,
-        content_id=request.content_id,
-    )
+    try:
+        result = await FacebookService.publish_post(
+            db=db,
+            user_id=user_id,
+            caption=request.caption,
+            image_url=request.image_url,
+            content_id=request.content_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error publishing to Facebook: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to publish to Facebook: {str(e)}"
+        )
     return FacebookPublishResponse(
         success=True,
         message="Successfully published to Facebook Page!",

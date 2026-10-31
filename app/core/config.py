@@ -216,6 +216,7 @@ class Settings(BaseSettings):
     MSG91_EMAIL_API_URL: str = "https://control.msg91.com/api/v5/email/send"
     MSG91_EMAIL_AUTH_KEY: Optional[str] = None
     MSG91_EMAIL_TEMPLATE_ID: str = "auto_pay_templete"
+    MSG91_EMAIL_PAYMENT_FAILED_TEMPLATE_ID: str = "template_31_10_2026_11_10_3"
     MSG91_EMAIL_FROM_EMAIL: str = "no-reply@dhandagrow.com"
     MSG91_EMAIL_FROM_NAME: str = "dhandagrow"
     MSG91_EMAIL_DOMAIN: str = "dhandagrow.com"

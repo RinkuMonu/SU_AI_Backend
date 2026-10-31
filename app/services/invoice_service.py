@@ -696,3 +696,334 @@ class InvoiceService:
         # Trigger safe retry reusing existing invoice_number
         result = await cls.send_invoice_email(db, tx, retry=True)
         return result
+
+    @classmethod
+    async def send_payment_failed_email(
+        cls,
+        db,
+        transaction_or_id: Any,
+        failure_reason: Optional[str] = None,
+        retry: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Dispatches MSG91 notification email when a payment or mandate authorization fails or is cancelled.
+        
+        Features:
+        - Resolves user and transaction context cleanly.
+        - Provides failure reason, attempted amount with GST, transaction/order ID, and retry link.
+        - Idempotent: avoids spamming duplicate failure emails for the same attempt unless retry=True.
+        - Logs audit trail in the payment_transactions record.
+        """
+        now = datetime.now(timezone.utc)
+
+        # 1. Resolve transaction document
+        if isinstance(transaction_or_id, dict):
+            tx = transaction_or_id
+        else:
+            clean_id = str(transaction_or_id).strip()
+            query = [
+                {"transaction_id": clean_id},
+                {"transaction_id": clean_id.upper()},
+                {"order_id": clean_id},
+                {"order_id": clean_id.upper()}
+            ]
+            if ObjectId.is_valid(clean_id):
+                query.append({"_id": ObjectId(clean_id)})
+            tx = await db["payment_transactions"].find_one({"$or": query})
+
+        if not tx:
+            logger.error("Transaction not found for payment failed email dispatch: %s", transaction_or_id)
+            return {"success": False, "status": "NOT_FOUND", "message": "Transaction record not found"}
+
+        order_id = tx.get("order_id") or tx.get("transaction_id")
+        pub_tx_id = tx.get("transaction_id") or order_id
+        tx_status = str(tx.get("status", "")).lower().strip()
+
+        # Do not send failed email for already successful payments
+        if tx_status == "success":
+            logger.info("Transaction %s is successful. Skipping payment failed email.", order_id)
+            return {"success": False, "skipped": True, "message": "Payment is successful. No failure email needed."}
+
+        # Idempotency check: don't send duplicate failure emails
+        if tx.get("payment_failed_email_sent") is True and not retry:
+            logger.info("Payment failed email already sent for transaction %s. Skipping duplicate.", order_id)
+            return {
+                "success": True,
+                "already_sent": True,
+                "status": tx.get("payment_failed_email_status", "SENT"),
+                "message": "Payment failed email already sent."
+            }
+
+        # Resolve user, business profile, recipient email and name
+        user_id = tx.get("user_id")
+        user_doc = None
+        bus_doc = None
+
+        if user_id:
+            try:
+                if ObjectId.is_valid(str(user_id)):
+                    user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
+                if not user_doc:
+                    user_doc = await db["users"].find_one({"_id": str(user_id)})
+                bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]})
+            except Exception as ex:
+                logger.warning("Error fetching user/business details for transaction %s: %s", order_id, ex)
+
+        recipient_email = tx.get("user_email")
+        if (not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email)) and user_doc:
+            recipient_email = user_doc.get("email")
+
+        recipient_name = tx.get("user_name")
+        if (not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]) and user_doc:
+            recipient_name = user_doc.get("name") or user_doc.get("full_name") or user_doc.get("firstName")
+        if not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]:
+            recipient_name = (recipient_email.split("@")[0].capitalize() if recipient_email and "@" in str(recipient_email) else "Valued Customer")
+
+        if not recipient_email or "@" not in str(recipient_email):
+            logger.info("No registered email address for transaction %s. Skipping payment failed email.", order_id)
+            await db["payment_transactions"].update_one(
+                {"order_id": order_id},
+                {
+                    "$set": {
+                        "payment_failed_email_status": "SKIPPED_NO_EMAIL",
+                        "payment_failed_email_sent": False,
+                        "updated_at": now
+                    }
+                }
+            )
+            return {"success": False, "skipped": True, "status": "SKIPPED_NO_EMAIL", "message": "User has no registered email address."}
+
+        # Resolve plan details
+        from app.core.billing_config import PLANS, calculate_plan_gst
+        raw_plan_id = (tx.get("plan_id") or "STARTER").upper().strip()
+        plan_cfg = PLANS.get(raw_plan_id, PLANS.get("STARTER", {}))
+        plan_name = tx.get("plan_name") or plan_cfg.get("name") or raw_plan_id.capitalize()
+
+        # Amounts
+        total_amount = float(tx.get("amount") or tx.get("total_payable") or 0.0)
+        base_amount = float(tx.get("base_amount") or 0.0)
+        gst_amount = float(tx.get("gst_amount") or 0.0)
+        if total_amount <= 0.0 and base_amount <= 0.0:
+            cycle = str(tx.get("billing_cycle") or "monthly").lower().strip()
+            cycle_cfg = plan_cfg.get("billing_cycles", {}).get(cycle, {})
+            base_amount = float(cycle_cfg.get("price", 799.0))
+            gst_info = calculate_plan_gst(base_amount)
+            gst_amount = gst_info["gst_amount"]
+            total_amount = gst_info["total_payable"]
+        elif base_amount <= 0.0 and total_amount > 0.0:
+            base_amount = round(total_amount / 1.18, 2)
+            gst_amount = round(total_amount - base_amount, 2)
+
+        resolved_reason = (
+            failure_reason
+            or tx.get("failure_reason")
+            or "Payment was declined, timed out, or cancelled by the user"
+        )
+
+        customer_phone = (
+            tx.get("user_phone")
+            or (user_doc.get("phone_number") if user_doc else None)
+            or (user_doc.get("phone") if user_doc else None)
+            or ""
+        )
+        company_name = (
+            (bus_doc.get("business_name") if bus_doc else None)
+            or (bus_doc.get("company_name") if bus_doc else None)
+            or tx.get("company_name")
+            or f"{recipient_name}'s Business"
+        )
+        billing_address = (
+            (bus_doc.get("address") if bus_doc else None)
+            or (bus_doc.get("city") if bus_doc else None)
+            or "Registered Business Address, India"
+        )
+
+        frontend_url = getattr(settings, "FRONTEND_URL", "https://dhandagrow.ai").rstrip("/")
+        retry_url = f"{frontend_url}/pricing"
+        inv_date_str = now.strftime("%d %b %Y")
+        pay_date_str = now.strftime("%d %b %Y, %I:%M %p")
+        logo_url = getattr(settings, "DHANDAGROW_LOGO_URL", None) or "https://dhandagrow.com/logo.png"
+        support_contact = getattr(settings, "SUPPORT_PHONE", "+91 7857889083")
+
+        # Variables matching template_31_10_2026_11_10_3 + camelCase aliases
+        variables = {
+            "company_name": "DhandaGrow",
+            "logo_url": logo_url,
+            "DhandagrowLogoURL": logo_url,
+            "company_address": "Jaipur, Rajasthan",
+            "company_city": "Jaipur",
+            "company_zip": "302020",
+            "company_country": "India",
+            "company_tax_id": "GSTIN: Registered",
+            "invoice_number": f"ATTEMPT-{order_id[-8:]}",
+            "invoiceNumber": f"ATTEMPT-{order_id[-8:]}",
+            "invoice_date": inv_date_str,
+            "invoiceDate": inv_date_str,
+            "paymentDate": pay_date_str,
+            "customer_name": recipient_name,
+            "customerName": recipient_name,
+            "email": recipient_email,
+            "phone": customer_phone,
+            "customer_address": billing_address,
+            "customer_city": "India",
+            "customer_zip": "302001",
+            "customer_country": "India",
+            "status_bg": "#fee2e2",
+            "status_color": "#b91c1c",
+            "status_border": "#f87171",
+            "payment_status": "PAYMENT FAILED",
+            "paymentStatus": "PAYMENT FAILED",
+            "total_amount": f"{total_amount:.2f}",
+            "totalInvoiceAmount": f"{total_amount:.2f}",
+            "amount": f"{total_amount:.2f}",
+            "amount_paid": "0.00",
+            "amountPaid": "0.00",
+            "pending_amount": f"{total_amount:.2f}",
+            "remainingAmount": f"{total_amount:.2f}",
+            "service_name": f"{plan_name} Subscription",
+            "planName": plan_name,
+            "plan_name": plan_name,
+            "description": f"Payment attempt failed: {resolved_reason}. Please retry to activate your plan.",
+            "failure_reason": resolved_reason,
+            "quantity": "1",
+            "rate": f"{base_amount:.2f}",
+            "originalAmount": f"{base_amount:.2f}",
+            "subtotal": f"{base_amount:.2f}",
+            "subTotal": f"{base_amount:.2f}",
+            "discount": "0.00",
+            "discountAmount": "0.00",
+            "taxableAmount": f"{base_amount:.2f}",
+            "gst_rate": "18%",
+            "gst_amount": f"{gst_amount:.2f}",
+            "gstAmount": f"{gst_amount:.2f}",
+            "grand_total": f"{total_amount:.2f}",
+            "transaction_id": pub_tx_id,
+            "transactionId": pub_tx_id,
+            "order_id": order_id,
+            "orderId": order_id,
+            "payment_reference": str(tx.get("cf_subscription_id") or order_id),
+            "gatewayRefId": str(tx.get("cf_subscription_id") or order_id),
+            "paymentMethod": tx.get("payment_mode") or "AutoPay Mandate / UPI",
+            "company_website": "https://dhandagrow.ai",
+            "company_email": "support@dhandagrow.ai",
+            "company_contact": support_contact,
+            "supportContact": support_contact,
+            "retry_url": retry_url,
+            "retryUrl": retry_url,
+            "year": str(now.year),
+            "items": []
+        }
+
+        # MSG91 API configuration
+        auth_key = settings.get_msg91_email_auth_key()
+        api_url = getattr(settings, "MSG91_EMAIL_API_URL", "https://control.msg91.com/api/v5/email/send")
+        template_id = (
+            getattr(settings, "MSG91_EMAIL_PAYMENT_FAILED_TEMPLATE_ID", None)
+            or "template_31_10_2026_11_10_3"
+        )
+        domain = getattr(settings, "MSG91_EMAIL_DOMAIN", "dhandagrow.com")
+        from_email = getattr(settings, "MSG91_EMAIL_FROM_EMAIL", "no-reply@dhandagrow.com")
+        from_name = getattr(settings, "MSG91_EMAIL_FROM_NAME", "dhandagrow")
+        reply_to_email = getattr(settings, "MSG91_EMAIL_REPLY_TO", "dhandagrow@dhandagrow.com")
+
+        if not auth_key:
+            logger.error("MSG91 auth key missing for payment failed email dispatch.")
+            return {"success": False, "status": "FAILED", "error": "MSG91 auth key unconfigured"}
+
+        payload = {
+            "recipients": [
+                {
+                    "to": [{"email": recipient_email, "name": recipient_name}],
+                    "variables": variables
+                }
+            ],
+            "from": {"name": from_name, "email": from_email},
+            "domain": domain,
+            "template_id": template_id
+        }
+
+        if reply_to_email and "@" in reply_to_email:
+            payload["reply_to"] = [{"email": reply_to_email, "name": from_name}]
+
+        headers = {"Content-Type": "application/json", "authkey": auth_key}
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                res = await client.post(api_url, json=payload, headers=headers)
+
+            res_json = res.json() if res.headers.get("content-type", "").startswith("application/json") else {}
+            has_error = res_json.get("hasError", False) if isinstance(res_json, dict) else False
+            is_success = (res.status_code in [200, 202]) and not has_error
+
+            if is_success:
+                unique_id = res_json.get("data", {}).get("unique_id") if isinstance(res_json, dict) else None
+                logger.info("MSG91 payment failed email dispatched for %s to %s (unique_id: %s)", order_id, recipient_email, unique_id)
+                audit_update = {
+                    "payment_failed_email_sent": True,
+                    "payment_failed_email_status": "SENT",
+                    "payment_failed_email_sent_at": now,
+                    "payment_failed_email_recipient": recipient_email,
+                    "payment_failed_email_response": res_json,
+                    "failure_reason": resolved_reason,
+                    "updated_at": now
+                }
+                await db["payment_transactions"].update_one(
+                    {"order_id": order_id},
+                    {"$set": audit_update, "$inc": {"payment_failed_email_attempts": 1}}
+                )
+                return {
+                    "success": True,
+                    "status": "SENT",
+                    "order_id": order_id,
+                    "recipient": recipient_email,
+                    "unique_id": unique_id,
+                    "message": "Payment failed email dispatched successfully via MSG91"
+                }
+            else:
+                err_msg = res_json.get("message") or f"HTTP {res.status_code}: {res.text}"
+                logger.error("MSG91 payment failed email delivery failed for %s: %s", order_id, err_msg)
+                fail_update = {
+                    "payment_failed_email_sent": False,
+                    "payment_failed_email_status": "FAILED",
+                    "payment_failed_email_last_error": str(err_msg),
+                    "updated_at": now
+                }
+                await db["payment_transactions"].update_one(
+                    {"order_id": order_id},
+                    {"$set": fail_update, "$inc": {"payment_failed_email_attempts": 1}}
+                )
+                return {"success": False, "status": "FAILED", "order_id": order_id, "error": str(err_msg)}
+        except Exception as e:
+            logger.error("Exception sending payment failed email for %s: %s", order_id, e)
+            await db["payment_transactions"].update_one(
+                {"order_id": order_id},
+                {"$set": {"payment_failed_email_sent": False, "payment_failed_email_last_error": str(e), "updated_at": now}}
+            )
+            return {"success": False, "status": "FAILED", "order_id": order_id, "error": str(e)}
+
+    @classmethod
+    async def retry_payment_failed_email(
+        cls,
+        db,
+        transaction_id_or_order_id: str,
+        authenticated_user_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Safely retries sending a payment failed notification email."""
+        clean_id = (transaction_id_or_order_id or "").strip()
+        query = [
+            {"transaction_id": clean_id},
+            {"transaction_id": clean_id.upper()},
+            {"order_id": clean_id},
+            {"order_id": clean_id.upper()}
+        ]
+        if ObjectId.is_valid(clean_id):
+            query.append({"_id": ObjectId(clean_id)})
+
+        tx = await db["payment_transactions"].find_one({"$or": query})
+        if not tx:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Transaction '{clean_id}' not found")
+
+        if authenticated_user_id and str(tx.get("user_id")) != str(authenticated_user_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You do not own this transaction")
+
+        return await cls.send_payment_failed_email(db, tx, retry=True)

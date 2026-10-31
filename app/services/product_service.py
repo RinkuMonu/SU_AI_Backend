@@ -11,9 +11,9 @@ from app.schemas.product import (
 
 def serialize_product(product):
     return {
-        "id": str(product["_id"]),
-        "business_id": str(product["business_id"]),
-        "name": product["name"],
+        "id": str(product.get("_id", product.get("id", ""))),
+        "business_id": str(product.get("business_id", "")),
+        "name": product.get("name", "Product"),
         "description": product.get("description"),
         "price": product["price"],
         "sale_price": product.get("sale_price"),

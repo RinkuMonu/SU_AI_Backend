@@ -389,17 +389,37 @@ class CashfreeService:
             return {"success": True, "message": "Subscription activated successfully"}
 
         elif event_type in ["SUBSCRIPTION_FAILED", "SUBSCRIPTION_CANCELLED", "SUBSCRIPTION_TERMINATED"] or sub_status in ["FAILED", "CANCELLED"]:
+            fail_reason = payload.get("message") or "Mandate authorization failed or cancelled"
             await db["payment_subscriptions"].update_one(
                 {"subscription_id": sub_id},
                 {
                     "$set": {
                         "status": sub_status or "FAILED",
-                        "failure_reason": payload.get("message") or "Mandate failed or cancelled",
+                        "failure_reason": fail_reason,
                         "updated_at": now,
                         "last_webhook_payload": payload
                     }
                 }
             )
+            # Update payment_transactions and dispatch MSG91 payment failed email
+            try:
+                await db["payment_transactions"].update_one(
+                    {"order_id": sub_id, "status": {"$ne": "success"}},
+                    {
+                        "$set": {
+                            "status": "failed",
+                            "failure_reason": fail_reason,
+                            "updated_at": now
+                        }
+                    }
+                )
+                from app.services.invoice_service import InvoiceService
+                cf_tx = await db["payment_transactions"].find_one({"order_id": sub_id})
+                if cf_tx and not cf_tx.get("payment_failed_email_sent"):
+                    await InvoiceService.send_payment_failed_email(db, cf_tx, failure_reason=fail_reason)
+            except Exception as mail_ex:
+                logger.warning("Failed to dispatch payment failed email for Cashfree subscription %s: %s", sub_id, mail_ex)
+
             return {"success": True, "message": f"Subscription marked as {sub_status}"}
 
         # Save generic webhook payload
@@ -469,6 +489,19 @@ class CashfreeService:
                     await InvoiceService.send_invoice_email(db, cf_tx)
             except Exception as e:
                 logger.warning("Could not dispatch invoice email during subscription status sync: %s", e)
+        elif record.get("status") in ["FAILED", "CANCELLED", "TERMINATED", "REJECTED"]:
+            try:
+                fail_reason = record.get("failure_reason") or f"Subscription mandate {record.get('status', 'FAILED').lower()}"
+                await db["payment_transactions"].update_one(
+                    {"order_id": subscription_id, "status": {"$ne": "success"}},
+                    {"$set": {"status": "failed", "failure_reason": fail_reason, "updated_at": datetime.now(timezone.utc)}}
+                )
+                from app.services.invoice_service import InvoiceService
+                cf_tx = await db["payment_transactions"].find_one({"order_id": subscription_id})
+                if cf_tx and not cf_tx.get("payment_failed_email_sent"):
+                    await InvoiceService.send_payment_failed_email(db, cf_tx, failure_reason=fail_reason)
+            except Exception as e:
+                logger.warning("Could not dispatch payment failed email during subscription status sync: %s", e)
 
         return {
             "success": is_active,

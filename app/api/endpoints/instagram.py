@@ -577,13 +577,22 @@ async def instagram_post(
         )
 
     effective_image_url = request.get_effective_image_url()
-    result = await InstagramService.publish_image(
-        db=db,
-        user_id=user_id,
-        image_url=effective_image_url,
-        caption=request.caption,
-        content_id=request.content_id,
-    )
+    try:
+        result = await InstagramService.publish_image(
+            db=db,
+            user_id=user_id,
+            image_url=effective_image_url,
+            caption=request.caption,
+            content_id=request.content_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error publishing to Instagram: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to publish to Instagram: {str(e)}"
+        )
 
     return InstagramPublishResponse(
         success=True,

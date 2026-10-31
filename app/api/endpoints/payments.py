@@ -507,3 +507,64 @@ async def get_invoice_email_status_alias(
             "last_attempt_at": tx.get("invoice_email_last_attempt_at")
         }
     }
+
+
+@router.post("/transactions/{transaction_id}/resend-failed-email")
+async def resend_payment_failed_email(
+    transaction_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Retries sending the MSG91 payment failed notification email for an unsuccessful transaction.
+    """
+    user_id = _extract_user_id(current_user)
+    return await InvoiceService.retry_payment_failed_email(
+        db,
+        transaction_id_or_order_id=transaction_id,
+        authenticated_user_id=user_id
+    )
+
+
+@router.get("/transactions/{transaction_id}/failed-email-status")
+async def get_payment_failed_email_status(
+    transaction_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Returns payment failed notification email delivery status for a transaction.
+    """
+    user_id = _extract_user_id(current_user)
+    clean_id = (transaction_id or "").strip()
+    from bson import ObjectId
+    query = [
+        {"transaction_id": clean_id},
+        {"transaction_id": clean_id.upper()},
+        {"order_id": clean_id},
+        {"order_id": clean_id.upper()}
+    ]
+    if ObjectId.is_valid(clean_id):
+        query.append({"_id": ObjectId(clean_id)})
+
+    tx = await db["payment_transactions"].find_one({"$or": query})
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Transaction '{transaction_id}' not found.")
+    if str(tx.get("user_id")) != str(user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You do not own this transaction.")
+
+    return {
+        "success": True,
+        "transaction_id": tx.get("transaction_id"),
+        "order_id": tx.get("order_id"),
+        "status": tx.get("status"),
+        "failure_reason": tx.get("failure_reason"),
+        "failed_email_delivery": {
+            "sent": tx.get("payment_failed_email_sent", False),
+            "status": tx.get("payment_failed_email_status", "NOT_SENT"),
+            "recipient": tx.get("payment_failed_email_recipient") or tx.get("user_email"),
+            "sent_at": tx.get("payment_failed_email_sent_at"),
+            "attempts": tx.get("payment_failed_email_attempts", 0),
+            "last_error": tx.get("payment_failed_email_last_error")
+        }
+    }

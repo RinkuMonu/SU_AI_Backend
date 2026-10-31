@@ -627,6 +627,15 @@ class PayinService:
                 {"order_id": order_id, "status": {"$ne": "success"}},
                 {"$set": c_update}
             )
+            # Dispatch payment cancelled email
+            try:
+                from app.services.invoice_service import InvoiceService
+                fail_tx = await db["payment_transactions"].find_one({"order_id": order_id})
+                if fail_tx and not fail_tx.get("payment_failed_email_sent"):
+                    await InvoiceService.send_payment_failed_email(db, fail_tx, failure_reason=remark_text or "Payment cancelled by user")
+            except Exception as mail_ex:
+                logger.warning("Error in payment cancelled email dispatch for %s: %s", order_id, mail_ex)
+
             return {"success": False, "status": "cancelled", "message": "Payment cancelled"}
             
         elif response_code in ["104", "EXPIRED"] or payload_status in ["EXPIRED"]:
@@ -645,10 +654,11 @@ class PayinService:
             )
             return {"success": False, "status": "expired", "message": "Payment expired"}
         elif response_code in ["102", "FAILED", "FAILURE", "ERROR"] or payload_status in ["FAILED", "FAILURE", "ERROR"] or (response_code.isdigit() and int(response_code) >= 400):
+            fail_msg = remark_text or "Payment failed or declined by provider"
             f_update = {
                 "status": "failed",
                 "completed_at": now,
-                "failure_reason": remark_text or "Payment failed",
+                "failure_reason": fail_msg,
                 "updated_at": now
             }
             cb_mode = PayinService.extract_payment_mode(payload)
@@ -658,6 +668,15 @@ class PayinService:
                 {"order_id": order_id, "status": {"$ne": "success"}},
                 {"$set": f_update}
             )
+            # Dispatch payment failed email
+            try:
+                from app.services.invoice_service import InvoiceService
+                fail_tx = await db["payment_transactions"].find_one({"order_id": order_id})
+                if fail_tx and not fail_tx.get("payment_failed_email_sent"):
+                    await InvoiceService.send_payment_failed_email(db, fail_tx, failure_reason=fail_msg)
+            except Exception as mail_ex:
+                logger.warning("Error in payment failed email dispatch for %s: %s", order_id, mail_ex)
+
             return {"success": False, "status": "failed", "message": "Payment failed"}
         else:
             current_status = transaction.get("status", "pending")
@@ -752,6 +771,14 @@ class PayinService:
                 "current_status": "success",
                 "message": "Payment succeeded concurrently and could not be cancelled."
             }
+
+        # Dispatch payment cancelled email
+        try:
+            from app.services.invoice_service import InvoiceService
+            if result and not result.get("payment_failed_email_sent"):
+                await InvoiceService.send_payment_failed_email(db, result, failure_reason=reason or "Payment order cancelled by user")
+        except Exception as mail_ex:
+            logger.warning("Error in cancel payment email dispatch for %s: %s", order_id, mail_ex)
 
         return {
             "success": True,

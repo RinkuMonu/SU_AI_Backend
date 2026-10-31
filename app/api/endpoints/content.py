@@ -1,3 +1,12 @@
+def _sanitize_doc(obj):
+    if isinstance(obj, ObjectId):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_doc(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_doc(item) for item in obj]
+    return obj
+
 import os
 import uuid
 from pathlib import Path
@@ -393,7 +402,7 @@ async def generate_post(
 
     return {
         "success": True,
-        "data": generated
+        "data": _sanitize_doc(generated)
     }
 
 
