@@ -84,6 +84,21 @@ async def pymongo_exception_handler(request: Request, exc: PyMongoError):
         }
     )
 
+from app.ai.providers.openai_provider import OpenAIServiceError
+
+@app.exception_handler(OpenAIServiceError)
+async def openai_service_exception_handler(request: Request, exc: OpenAIServiceError):
+    return JSONResponse(
+        status_code=exc.status_code if exc.status_code in [400, 401, 402, 403, 404, 429, 502, 504] else 502,
+        content={
+            "detail": exc.message,
+            "code": exc.error_code,
+            "status_code": exc.status_code,
+            "details": exc.details
+        }
+    )
+
+
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
 app.include_router(social.router)

@@ -575,10 +575,30 @@ class AuthService:
         }
 
         # Keep recent hashes so either WhatsApp OTP or SMS OTP remains valid
+        def _ensure_utc(dt):
+            if dt is None:
+                return now
+            if isinstance(dt, str):
+                try:
+                    dt = datetime.fromisoformat(dt)
+                except Exception:
+                    return now
+            if getattr(dt, "tzinfo", None) is None:
+                return dt.replace(tzinfo=timezone.utc)
+            return dt
+
         existing_hashes = (doc.get("recent_hashes") or []) if doc else []
-        valid_hashes = [h for h in existing_hashes if isinstance(h, dict) and h.get("expires_at", now) > now]
+        valid_hashes = [
+            h for h in existing_hashes
+            if isinstance(h, dict) and _ensure_utc(h.get("expires_at")) > now
+        ]
         if doc and doc.get("otp_hash"):
-            valid_hashes.append({"otp_hash": doc["otp_hash"], "otp": doc.get("otp"), "channel": doc.get("channel", "sms"), "expires_at": doc.get("expires_at", now)})
+            valid_hashes.append({
+                "otp_hash": doc["otp_hash"],
+                "otp": doc.get("otp"),
+                "channel": doc.get("channel", "sms"),
+                "expires_at": _ensure_utc(doc.get("expires_at"))
+            })
         valid_hashes.append({"otp_hash": otp_hash, "otp": otp, "channel": ch, "expires_at": expires_at})
         otp_doc["recent_hashes"] = valid_hashes
 
