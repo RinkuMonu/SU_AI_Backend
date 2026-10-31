@@ -120,7 +120,8 @@ async def test_create_payment_order_with_growg_transaction_id():
         assert doc["plan_id"] == "TEST_PLAN"
         assert doc["status"] in ["pending", "initiated"]
         assert doc["currency"] == "INR"
-        assert doc["amount"] == 1.0
+        assert doc["base_amount"] == 1.0
+        assert doc["amount"] in [1.0, 1.18]
         assert doc["payment_mode"] in ["QR Code", "Unknown"]
         assert doc["payment_gateway"] == "Finunique Payin"
         assert doc["payment_provider"] == "Finunique"

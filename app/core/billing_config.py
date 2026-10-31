@@ -11,6 +11,50 @@ FEATURE_PRICING = {
     "website_builder": 10,
 }
 
+from decimal import Decimal, ROUND_HALF_UP
+
+GST_RATE = Decimal("0.18")
+GST_PERCENTAGE = 18.0
+
+def calculate_plan_gst(base_price: float | int | Decimal | str) -> dict:
+    """
+    Dynamically computes 18% GST and total payable amount for any base price
+    using decimal-safe currency arithmetic rounded to 2 decimal places.
+    Formula:
+        gst_amount = base_price * 0.18
+        total_amount = base_price + gst_amount
+    """
+    try:
+        price_dec = Decimal(str(base_price or 0))
+    except Exception:
+        price_dec = Decimal("0")
+
+    if price_dec <= Decimal("0"):
+        return {
+            "base_price": 0.0,
+            "currency": "INR",
+            "gst_applicable": False,
+            "gst_rate": 0.0,
+            "gst_percentage": 0.0,
+            "gst_amount": 0.0,
+            "total_payable": 0.0,
+            "total_price": 0.0,
+        }
+
+    gst_dec = (price_dec * GST_RATE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total_dec = (price_dec + gst_dec).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    return {
+        "base_price": float(price_dec),
+        "currency": "INR",
+        "gst_applicable": True,
+        "gst_rate": float(GST_RATE),
+        "gst_percentage": GST_PERCENTAGE,
+        "gst_amount": float(gst_dec),
+        "total_payable": float(total_dec),
+        "total_price": float(total_dec),
+    }
+
 PLANS = {
     "FREE": {
         "name": "Free",
@@ -326,25 +370,51 @@ DISPLAY_PLAN_ORDER = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER", "TE
 
 
 def get_formatted_plans(active_plan_id: str | None = None) -> list:
-    """Returns a list of structured plan dictionaries ordered for frontend display."""
+    """Returns a list of structured plan dictionaries with dynamic 18% GST breakdown ordered for frontend display."""
     result = []
     normalized_active = (active_plan_id or "").upper().strip()
     if normalized_active == "PRO":
         normalized_active = "GROWTH"
+    elif normalized_active == "BASIC":
+        normalized_active = "STARTER"
 
     for key in DISPLAY_PLAN_ORDER:
         plan_data = PLANS[key]
+        base_price = float(plan_data["price"])
+        gst_info = calculate_plan_gst(base_price)
+
+        formatted_cycles = {}
+        for cycle_name, cycle_info in plan_data.get("billing_cycles", {}).items():
+            cycle_base = float(cycle_info.get("price", 0))
+            cycle_gst = calculate_plan_gst(cycle_base)
+            formatted_cycles[cycle_name] = {
+                "price": cycle_base,
+                "base_price": cycle_base,
+                "currency": plan_data.get("currency", "INR"),
+                "gst_applicable": cycle_gst["gst_applicable"],
+                "gst_rate": cycle_gst["gst_rate"],
+                "gst_percentage": cycle_gst["gst_percentage"],
+                "gst_amount": cycle_gst["gst_amount"],
+                "total_payable": cycle_gst["total_payable"],
+                "total_price": cycle_gst["total_payable"],
+                "formatted_price": cycle_info.get("formatted_price", f"₹{cycle_base:,.0f}"),
+                "period_label": cycle_info.get("period_label", "/ month + GST"),
+                "duration_days": cycle_info.get("duration_days", 30)
+            }
+
         item = {
             "id": key,
             "name": plan_data["name"],
             "plan_tier": plan_data.get("plan_tier", f"PLAN {len(result)+1}"),
-            "price": plan_data["price"],
-            "base_price": plan_data["price"],
+            "price": base_price,
+            "base_price": base_price,
             "currency": plan_data.get("currency", "INR"),
-            "gst_applicable": plan_data.get("gst_applicable", False),
-            "gst_rate": plan_data.get("gst_rate", 0.0),
-            "gst_amount": plan_data.get("gst_amount", 0.0),
-            "total_price": plan_data.get("total_price", plan_data["price"]),
+            "gst_applicable": gst_info["gst_applicable"],
+            "gst_rate": gst_info["gst_rate"],
+            "gst_percentage": gst_info["gst_percentage"],
+            "gst_amount": gst_info["gst_amount"],
+            "total_payable": gst_info["total_payable"],
+            "total_price": gst_info["total_payable"],
             "display_price": plan_data.get("billing_cycles", {}).get("monthly", {}).get("formatted_price", f"₹{plan_data['price']:,}"),
             "period_label": plan_data.get("period_label", "/ month + GST"),
             "credits": plan_data.get("credits", 0),
@@ -355,7 +425,7 @@ def get_formatted_plans(active_plan_id: str | None = None) -> list:
             "team_members": plan_data.get("team_members", 1),
             "highlights": plan_data.get("highlights", []),
             "features": plan_data.get("features", []),
-            "billing_cycles": plan_data.get("billing_cycles", {}),
+            "billing_cycles": formatted_cycles,
             "watermark": plan_data.get("watermark", False),
             "multiple_businesses": plan_data.get("multiple_businesses", False),
             "api_access": plan_data.get("api_access", False),
@@ -365,3 +435,25 @@ def get_formatted_plans(active_plan_id: str | None = None) -> list:
         result.append(item)
     return result
 
+# Automatically enrich all entries in PLANS with dynamic decimal-safe GST
+for _pk, _pdata in PLANS.items():
+    _pbase = float(_pdata.get("price", 0))
+    _pgst = calculate_plan_gst(_pbase)
+    _pdata["base_price"] = _pbase
+    _pdata["gst_applicable"] = _pgst["gst_applicable"]
+    _pdata["gst_rate"] = _pgst["gst_rate"]
+    _pdata["gst_percentage"] = _pgst["gst_percentage"]
+    _pdata["gst_amount"] = _pgst["gst_amount"]
+    _pdata["total_payable"] = _pgst["total_payable"]
+    _pdata["total_price"] = _pgst["total_payable"]
+    if "billing_cycles" in _pdata:
+        for _cname, _cinfo in _pdata["billing_cycles"].items():
+            _cbase = float(_cinfo.get("price", 0))
+            _cgst = calculate_plan_gst(_cbase)
+            _cinfo["base_price"] = _cbase
+            _cinfo["gst_applicable"] = _cgst["gst_applicable"]
+            _cinfo["gst_rate"] = _cgst["gst_rate"]
+            _cinfo["gst_percentage"] = _cgst["gst_percentage"]
+            _cinfo["gst_amount"] = _cgst["gst_amount"]
+            _cinfo["total_payable"] = _cgst["total_payable"]
+            _cinfo["total_price"] = _cgst["total_payable"]

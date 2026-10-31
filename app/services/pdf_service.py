@@ -227,9 +227,9 @@ class PDFService:
         credits_count = transaction.get("credits_included") or transaction.get("purchased_credits") or 0
         currency = transaction.get("currency", "INR")
         total_amount = float(transaction.get("amount", 0.0))
-        base_amount = float(transaction.get("base_amount", total_amount))
-        gst_amount = float(transaction.get("gst_amount", 0.0))
-        gst_rate = float(transaction.get("gst_rate", 0.18)) if gst_amount > 0 else 0.0
+        base_amount = float(transaction.get("base_amount") or total_amount)
+        gst_amount = float(transaction.get("gst_amount") or (round(total_amount - base_amount, 2) if total_amount > base_amount else 0.0))
+        gst_rate = float(transaction.get("gst_rate") or (round(gst_amount / base_amount, 2) if base_amount > 0 and gst_amount > 0 else (0.18 if gst_amount > 0 else 0.0)))
 
         item_desc = f"<b>{plan_name}</b> ({billing_cycle})<br/><font color='#718096' size='8'>Includes {credits_count} AI Credits • Full Feature Access</font>"
 
@@ -268,7 +268,7 @@ class PDFService:
         ]
         if gst_amount > 0:
             totals_rows.append([
-                Paragraph(f"GST ({int(gst_rate * 100)}%):", cell_normal),
+                Paragraph(f"GST ({int(round(gst_rate * 100))}%):", cell_normal),
                 Paragraph(f"₹ {gst_amount:,.2f}", cell_right)
             ])
         totals_rows.append([

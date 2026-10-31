@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from pymongo.collection import ReturnDocument
 from bson import ObjectId
 from app.core.config import settings
-from app.core.billing_config import PLANS
+from app.core.billing_config import PLANS, calculate_plan_gst
 from app.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -107,22 +107,16 @@ class PayinService:
         else:
             base_amount = float(plan.get("base_price", plan["price"]))
             
-        if not settings.PAYIN_URL or not settings.PAYIN_TOKEN:
+        if not getattr(settings, "PAYIN_URL", "") or not getattr(settings, "PAYIN_TOKEN", ""):
             raise HTTPException(status_code=500, detail="Finunique Payin configuration missing")
 
         order_id = f"ORDER_{uuid.uuid4().hex[:12].upper()}"
-        if normalized_plan_id == "HIRE_INFLUENCER":
-            gst_rate = 0.0
-            gst_amount = 0.0
-            total_amount = base_amount
-        elif plan.get("gst_applicable"):
-            gst_rate = float(plan.get("gst_rate", 0.18))
-            gst_amount = float(round(base_amount * gst_rate, 2))
-            total_amount = float(round(base_amount + gst_amount, 2))
-        else:
-            gst_rate = 0.0
-            gst_amount = 0.0
-            total_amount = base_amount
+        # Decimal-safe 18% GST calculation (Formula: gst_amount = base_price * 0.18, total_amount = base_price + gst_amount)
+        gst_info = calculate_plan_gst(base_amount)
+        gst_rate = gst_info["gst_rate"]
+        gst_percentage = gst_info["gst_percentage"]
+        gst_amount = gst_info["gst_amount"]
+        total_amount = gst_info["total_payable"]
         
         # Clean & sanitize email (Finunique strictly requires a valid email string)
         clean_email = (user_email or "").strip()
@@ -165,7 +159,9 @@ class PayinService:
             "amount": total_amount,
             "base_amount": base_amount,
             "gst_rate": gst_rate,
+            "gst_percentage": gst_percentage,
             "gst_amount": gst_amount,
+            "total_payable": total_amount,
             "currency": plan.get("currency", "INR"),
             "payment_mode": "Unknown",
             "payment_gateway": "Finunique Payin",
@@ -204,13 +200,13 @@ class PayinService:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+            "Authorization": f"Bearer {getattr(settings, 'PAYIN_TOKEN', '')}"
         }
         
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    settings.PAYIN_URL,
+                    getattr(settings, "PAYIN_URL", ""),
                     json=payload,
                     headers=headers,
                     timeout=30.0
@@ -297,17 +293,17 @@ class PayinService:
         Directly queries Finunique's official server-side API to retrieve official transaction status.
         Uses GET https://server.finuniques.in/api/v1/payment/payin/{order_id} with authorized PAYIN_TOKEN.
         """
-        if not settings.PAYIN_URL or not settings.PAYIN_TOKEN:
+        if not getattr(settings, "PAYIN_URL", "") or not getattr(settings, "PAYIN_TOKEN", ""):
             return {"confirmed_success": False, "provider_status": "unconfigured", "data": None}
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+            "Authorization": f"Bearer {getattr(settings, 'PAYIN_TOKEN', '')}"
         }
         status_url = getattr(settings, "PAYIN_STATUS_URL", None)
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                finunique_get_url = f"{settings.PAYIN_URL.rstrip('/')}/{order_id}"
+                finunique_get_url = f"{getattr(settings, 'PAYIN_URL', '').rstrip('/')}/{order_id}"
                 res = await client.get(finunique_get_url, headers=headers)
                 if res.status_code != 200 and status_url:
                     res = await client.post(status_url, json={"reference": order_id, "orderId": order_id}, headers=headers)
@@ -364,12 +360,12 @@ class PayinService:
         status_url = getattr(settings, "PAYIN_STATUS_URL", None)
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+            "Authorization": f"Bearer {getattr(settings, 'PAYIN_TOKEN', '')}"
         }
 
         try:
             async with httpx.AsyncClient(timeout=20.0) as client:
-                finunique_get_url = f"{(settings.PAYIN_URL or 'https://server.finuniques.in/api/v1/payment/payin').rstrip('/')}/{order_id}"
+                finunique_get_url = f"{(getattr(settings, 'PAYIN_URL', '') or 'https://server.finuniques.in/api/v1/payment/payin').rstrip('/')}/{order_id}"
                 res = await client.get(finunique_get_url, headers=headers)
                 if res.status_code != 200 and status_url:
                     res = await client.post(status_url, json={"reference": order_id, "orderId": order_id}, headers=headers)
@@ -515,10 +511,10 @@ class PayinService:
 
             # 5. Direct server-side verification check with payment provider if received externally
             is_live_provider = (
-                bool(settings.PAYIN_URL) and
-                "mock" not in str(settings.PAYIN_URL).lower() and
-                bool(settings.PAYIN_TOKEN) and
-                "mock" not in str(settings.PAYIN_TOKEN).lower()
+                bool(getattr(settings, "PAYIN_URL", "")) and
+                "mock" not in str(getattr(settings, "PAYIN_URL", "")).lower() and
+                bool(getattr(settings, "PAYIN_TOKEN", "")) and
+                "mock" not in str(getattr(settings, "PAYIN_TOKEN", "")).lower()
             )
             if not from_provider_verification and is_live_provider:
                 provider_check = await PayinService.query_provider_order_status(order_id)
@@ -640,7 +636,7 @@ class PayinService:
                 {"$set": e_update}
             )
             return {"success": False, "status": "expired", "message": "Payment expired"}
-        elif response_code in ["102", "FAILED", "FAILURE", "ERROR"] or payload_status in ["FAILED", "FAILURE", "ERROR"]:
+        elif response_code in ["102", "FAILED", "FAILURE", "ERROR"] or payload_status in ["FAILED", "FAILURE", "ERROR"] or (response_code.isdigit() and int(response_code) >= 400):
             f_update = {
                 "status": "failed",
                 "completed_at": now,
@@ -716,10 +712,10 @@ class PayinService:
 
         # 4. Notify provider of cancellation if supported
         try:
-            cancel_url = getattr(settings, "PAYIN_CANCEL_URL", None) or f"{(settings.PAYIN_URL or '').rstrip('/')}/cancel"
+            cancel_url = getattr(settings, "PAYIN_CANCEL_URL", None) or f"{(getattr(settings, 'PAYIN_URL', '') or '').rstrip('/')}/cancel"
             headers = {
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {settings.PAYIN_TOKEN}"
+                "Authorization": f"Bearer {getattr(settings, 'PAYIN_TOKEN', '')}"
             }
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(cancel_url, json={"orderId": order_id, "reference": order_id}, headers=headers)
@@ -876,6 +872,8 @@ class PayinService:
                 "base_amount": doc.get("base_amount"),
                 "gst_amount": doc.get("gst_amount"),
                 "gst_rate": doc.get("gst_rate"),
+                "gst_percentage": doc.get("gst_percentage", 18.0 if doc.get("gst_rate") else 0.0),
+                "total_payable": doc.get("total_payable") or doc.get("amount"),
                 "currency": doc.get("currency", "INR"),
                 "payment_mode": doc.get("payment_mode") or "Unknown",
                 "payment_gateway": doc.get("payment_gateway") or "Finunique Payin",
@@ -972,6 +970,8 @@ class PayinService:
             "base_amount": doc.get("base_amount"),
             "gst_amount": doc.get("gst_amount"),
             "gst_rate": doc.get("gst_rate"),
+            "gst_percentage": doc.get("gst_percentage", 18.0 if doc.get("gst_rate") else 0.0),
+            "total_payable": doc.get("total_payable") or doc.get("amount"),
             "currency": doc.get("currency", "INR"),
             "payment_mode": doc.get("payment_mode") or "Unknown",
             "payment_gateway": doc.get("payment_gateway") or "Finunique Payin",

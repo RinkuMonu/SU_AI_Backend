@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional
 import httpx
 from fastapi import HTTPException
 from app.core.config import settings
-from app.core.billing_config import PLANS
+from app.core.billing_config import PLANS, calculate_plan_gst
 from app.services.subscription_service import SubscriptionService
 from app.services.credit_service import CreditService
 
@@ -57,9 +57,10 @@ class CashfreeService:
             intervals = 1
             max_cycles = 12
 
+        clean_name = f"{plan_data.get('name', plan_id)} {cycle.capitalize()}".replace("(", "").replace(")", "").strip()[:50]
         plan_payload = {
             "plan_id": cf_plan_id,
-            "plan_name": f"{plan_data.get('name', plan_id)} ({cycle.capitalize()})",
+            "plan_name": clean_name,
             "plan_type": "PERIODIC",
             "plan_currency": plan_data.get("currency", "INR"),
             "plan_recurring_amount": float(recurring_amount),
@@ -73,7 +74,16 @@ class CashfreeService:
             # Check if plan exists
             get_res = await client.get(f"{base_url}/plans/{cf_plan_id}", headers=headers)
             if get_res.status_code == 200:
-                return cf_plan_id
+                p_data = get_res.json() if get_res.headers.get("content-type", "").startswith("application/json") else {}
+                existing_amt = float(p_data.get("plan_recurring_amount") or 0)
+                if abs(existing_amt - float(recurring_amount)) < 0.05:
+                    return cf_plan_id
+                # Existing plan amount mismatch (e.g. was 799.0 without GST), create versioned plan ID
+                cf_plan_id = f"{cf_plan_id}_{int(recurring_amount)}"
+                plan_payload["plan_id"] = cf_plan_id
+                get_res2 = await client.get(f"{base_url}/plans/{cf_plan_id}", headers=headers)
+                if get_res2.status_code == 200:
+                    return cf_plan_id
 
             # Create plan
             create_res = await client.post(f"{base_url}/plans", json=plan_payload, headers=headers)
@@ -122,14 +132,12 @@ class CashfreeService:
         else:
             base_amount = float(plan.get("base_price", plan["price"]))
 
-        if normalized_plan != "HIRE_INFLUENCER" and plan.get("gst_applicable"):
-            gst_rate = float(plan.get("gst_rate", 0.18))
-            gst_amount = float(round(base_amount * gst_rate, 2))
-            recurring_total = float(round(base_amount + gst_amount, 2))
-        else:
-            gst_rate = 0.0
-            gst_amount = 0.0
-            recurring_total = base_amount
+        # Decimal-safe 18% GST calculation
+        gst_info = calculate_plan_gst(base_amount)
+        gst_rate = gst_info["gst_rate"]
+        gst_percentage = gst_info["gst_percentage"]
+        gst_amount = gst_info["gst_amount"]
+        recurring_total = gst_info["total_payable"]
 
         # Cashfree credentials verification
         if not settings.CASHFREE_APP_ID or not settings.CASHFREE_SECRET_KEY:
@@ -283,6 +291,9 @@ class CashfreeService:
             "auth_amount": recurring_total,
             "recurring_amount": recurring_total,
             "amount": recurring_total,
+            "base_amount": base_amount,
+            "gst_amount": gst_amount,
+            "gst_rate": gst_rate,
             "plan_id": normalized_plan,
             "plan_name": plan.get("name", normalized_plan),
             "billing_cycle": cycle,
@@ -420,21 +431,28 @@ class CashfreeService:
                 if res.status_code == 200:
                     cf_data = res.json()
                     cf_status = cf_data.get("subscription_status")
-                    if cf_status and cf_status != record.get("status"):
-                        await db["payment_subscriptions"].update_one(
-                            {"subscription_id": subscription_id},
-                            {"$set": {"status": cf_status, "updated_at": datetime.now(timezone.utc)}}
-                        )
-                        record["status"] = cf_status
-                        # Activate if became active
-                        if cf_status == "ACTIVE" and record.get("status") != "ACTIVE":
-                            await SubscriptionService.upgrade_plan(
-                                db, record["user_id"], record["plan_id"], billing_cycle=record["billing_cycle"]
+                    prev_status = record.get("status")
+                    if cf_status:
+                        if cf_status != prev_status:
+                            await db["payment_subscriptions"].update_one(
+                                {"subscription_id": subscription_id},
+                                {"$set": {"status": cf_status, "updated_at": datetime.now(timezone.utc)}}
                             )
+                            record["status"] = cf_status
+                        # Automatically activate plan in subscription collection
+                        if cf_status in ["ACTIVE", "AUTHENTICATED", "APPROVAL_PENDING"]:
+                            user_sub = await db["subscriptions"].find_one({"user_id": record["user_id"]})
+                            current_plan = (user_sub.get("plan") or user_sub.get("plan_id") or "").upper() if user_sub else ""
+                            target_plan = (record.get("plan_id") or "").upper()
+                            if current_plan != target_plan or not (user_sub and user_sub.get("verified_payment")):
+                                await SubscriptionService.upgrade_plan(
+                                    db, record["user_id"], record["plan_id"], billing_cycle=record.get("billing_cycle", "monthly")
+                                )
+                                logger.info("Upgraded user %s to plan %s via Cashfree sync", record["user_id"], record["plan_id"])
         except Exception as e:
             logger.warning("Could not sync live Cashfree subscription status: %s", e)
 
-        is_active = (record.get("status") == "ACTIVE")
+        is_active = (record.get("status") in ["ACTIVE", "AUTHENTICATED"])
         if is_active:
             try:
                 await db["payment_transactions"].update_one(
@@ -445,10 +463,11 @@ class CashfreeService:
                 pass
 
         return {
+            "success": is_active,
             "subscription_id": subscription_id,
             "order_id": subscription_id,
             "cf_subscription_id": record.get("cf_subscription_id"),
-            "status": record.get("status", "INITIALIZED"),
+            "status": "ACTIVE" if is_active else record.get("status", "INITIALIZED"),
             "auth_amount": record.get("auth_amount", record.get("recurring_amount", 0.0)),
             "recurring_amount": record.get("recurring_amount", 0.0),
             "amount": record.get("recurring_amount", record.get("auth_amount", 0.0)),

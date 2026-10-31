@@ -13,7 +13,7 @@ from app.schemas.payment import (
     TestPlanResetResponse,
 )
 from app.schemas.billing_onboarding import PlanOnboardingStatusResponse
-from app.core.billing_config import PLANS, BILLING_CYCLES, get_formatted_plans
+from app.core.billing_config import PLANS, BILLING_CYCLES, get_formatted_plans, calculate_plan_gst
 
 router = APIRouter(
     prefix="/subscription",
@@ -53,13 +53,16 @@ async def get_plans(
     enriched_plans = {}
     for k, v in PLANS.items():
         enriched = dict(v)
-        if enriched.get("gst_applicable"):
-            gst = enriched.get("gst_amount", int(enriched["price"] * 0.18))
-            enriched["gst_amount"] = gst
-            enriched["total_price"] = enriched.get("total_price", enriched["price"] + gst)
-        else:
-            enriched["gst_amount"] = 0
-            enriched["total_price"] = enriched["price"]
+        base_p = float(enriched.get("price", 0))
+        gst_info = calculate_plan_gst(base_p)
+        enriched["base_price"] = base_p
+        enriched["currency"] = enriched.get("currency", "INR")
+        enriched["gst_applicable"] = gst_info["gst_applicable"]
+        enriched["gst_rate"] = gst_info["gst_rate"]
+        enriched["gst_percentage"] = gst_info["gst_percentage"]
+        enriched["gst_amount"] = gst_info["gst_amount"]
+        enriched["total_payable"] = gst_info["total_payable"]
+        enriched["total_price"] = gst_info["total_payable"]
         enriched_plans[k] = enriched
 
     formatted = get_formatted_plans(active_plan_id)

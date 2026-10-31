@@ -124,3 +124,4 @@ async def test_create_and_verify_cashfree_subscription(setup_test_user):
             data = res.json()
             assert data["verified"] is True
             assert data["status"] == "ACTIVE"
+

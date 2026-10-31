@@ -47,7 +47,10 @@ class PaymentStatusResponse(BaseModel):
     can_cancel: bool = True
     amount: float
     base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
     gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
     currency: Optional[str] = "INR"
     payment_mode: Optional[str] = "Unknown"
     payment_gateway: Optional[str] = "Finunique Payin"
@@ -71,6 +74,11 @@ class PaymentVerifyResponse(BaseModel):
     message: str
     plan_id: Optional[str] = None
     amount: Optional[float] = None
+    base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
+    gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
     payment_mode: Optional[str] = "Unknown"
     provider_reference: Optional[str] = None
 
@@ -92,7 +100,9 @@ class PaymentTransactionItem(BaseModel):
     amount: float
     base_amount: Optional[float] = None
     gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
     gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
     currency: str = "INR"
     payment_mode: Optional[str] = "Unknown"
     payment_gateway: Optional[str] = "Finunique Payin"
@@ -166,9 +176,15 @@ class CashfreeSubscriptionResponse(BaseModel):
     plan_id: str
     plan_name: Optional[str] = None
     billing_cycle: str
+    base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
+    gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
     currency: str = "INR"
 
 class CashfreeSubscriptionStatusResponse(BaseModel):
+    success: Optional[bool] = True
     subscription_id: str
     order_id: Optional[str] = None
     cf_subscription_id: Optional[str] = None
@@ -176,6 +192,11 @@ class CashfreeSubscriptionStatusResponse(BaseModel):
     auth_amount: float
     recurring_amount: float
     amount: Optional[float] = None
+    base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
+    gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
     plan_id: str
     plan_name: Optional[str] = None
     billing_cycle: str

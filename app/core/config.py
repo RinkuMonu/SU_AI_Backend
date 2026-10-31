@@ -228,7 +228,7 @@ class Settings(BaseSettings):
     MSG91_WHATSAPP_NAMESPACE: str = "a84d2159_8fa6_4354_9967_74f013129d57"
 
     _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
-    model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="allow")
 
 
 settings = Settings()
