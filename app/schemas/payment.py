@@ -155,27 +155,39 @@ class CashfreeSubscriptionCreateRequest(BaseModel):
 class CashfreeSubscriptionResponse(BaseModel):
     success: bool
     subscription_id: str
+    order_id: Optional[str] = None
     cf_subscription_id: Optional[str] = None
     subscription_session_id: Optional[str] = None
     payment_url: Optional[str] = None
     status: str
     auth_amount: float
     recurring_amount: float
+    amount: Optional[float] = None
     plan_id: str
+    plan_name: Optional[str] = None
     billing_cycle: str
     currency: str = "INR"
 
 class CashfreeSubscriptionStatusResponse(BaseModel):
     subscription_id: str
+    order_id: Optional[str] = None
     cf_subscription_id: Optional[str] = None
     status: str
     auth_amount: float
     recurring_amount: float
+    amount: Optional[float] = None
     plan_id: str
+    plan_name: Optional[str] = None
     billing_cycle: str
     customer_email: Optional[str] = None
     auth_status: Optional[str] = None
     next_schedule_date: Optional[str] = None
+    verified: Optional[bool] = False
+    message: Optional[str] = None
+
+class CashfreeSubscriptionVerifyRequest(BaseModel):
+    subscription_id: Optional[str] = None
+    order_id: Optional[str] = None
 
 class WebhookResponse(BaseModel):
     success: bool

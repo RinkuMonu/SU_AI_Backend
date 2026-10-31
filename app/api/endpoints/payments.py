@@ -8,6 +8,7 @@ from app.schemas.payment import (
     CashfreeSubscriptionCreateRequest,
     CashfreeSubscriptionResponse,
     CashfreeSubscriptionStatusResponse,
+    CashfreeSubscriptionVerifyRequest,
     WebhookResponse,
     PaymentCreateRequest,
     PaymentCreateResponse,
@@ -338,3 +339,23 @@ async def get_subscription_status(
         current_user_id=user_id
     )
     return result
+
+
+@router.post("/subscription/verify", response_model=CashfreeSubscriptionStatusResponse)
+async def verify_subscription(
+    request: CashfreeSubscriptionVerifyRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Verify and sync subscription mandate status for an authenticated user.
+    """
+    sub_id = request.subscription_id or request.order_id
+    if not sub_id:
+        raise HTTPException(status_code=400, detail="subscription_id or order_id is required")
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    return await CashfreeService.get_subscription_status(
+        db=db,
+        subscription_id=sub_id,
+        current_user_id=user_id
+    )

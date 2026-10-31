@@ -155,7 +155,7 @@ class CashfreeService:
             "customer_phone": phone
         }
 
-        default_return_url = return_url or f"{settings.FRONTEND_URL}/billing/callback?sub_id={subscription_id}"
+        default_return_url = return_url or f"{settings.FRONTEND_URL}/payment/success?order_id={subscription_id}&sub_id={subscription_id}"
 
         sub_payload = {
             "subscription_id": subscription_id,
@@ -235,16 +235,56 @@ class CashfreeService:
 
         await db["payment_subscriptions"].insert_one(record)
 
+        # Record initial pending transaction for user billing history
+        from app.services.payin_service import PayinService
+        try:
+            tx_seq_id = await PayinService.generate_transaction_id(db)
+        except Exception:
+            tx_seq_id = f"GROWG{uuid.uuid4().hex[:6].upper()}"
+
+        tx_record = {
+            "transaction_id": tx_seq_id,
+            "order_id": subscription_id,
+            "subscription_id": subscription_id,
+            "cf_subscription_id": cf_sub_id,
+            "user_id": user_id,
+            "user_email": user_email,
+            "user_name": user_name,
+            "user_phone": phone,
+            "plan_id": normalized_plan,
+            "plan_name": plan.get("name", normalized_plan),
+            "billing_cycle": cycle,
+            "amount": recurring_total,
+            "base_amount": base_amount,
+            "gst_amount": gst_amount,
+            "gst_rate": gst_rate,
+            "currency": "INR",
+            "payment_mode": "AutoPay Mandate",
+            "payment_gateway": "Cashfree Subscriptions & AutoPay",
+            "payment_provider": "cashfree",
+            "status": "pending",
+            "payment_url": payment_url,
+            "created_at": now,
+            "updated_at": now
+        }
+        try:
+            await db["payment_transactions"].insert_one(tx_record)
+        except Exception as tx_err:
+            logger.warning("Failed to insert initial payment_transactions record: %s", tx_err)
+
         return {
             "success": True,
             "subscription_id": subscription_id,
+            "order_id": subscription_id,
             "cf_subscription_id": cf_sub_id,
             "subscription_session_id": session_id,
             "payment_url": payment_url,
             "status": "INITIALIZED",
             "auth_amount": recurring_total,
             "recurring_amount": recurring_total,
+            "amount": recurring_total,
             "plan_id": normalized_plan,
+            "plan_name": plan.get("name", normalized_plan),
             "billing_cycle": cycle,
             "currency": "INR"
         }
@@ -322,6 +362,15 @@ class CashfreeService:
                 except Exception as ex:
                     logger.error("Failed to activate user subscription in SubscriptionService: %s", ex)
 
+                # Update transaction record
+                try:
+                    await db["payment_transactions"].update_one(
+                        {"order_id": sub_id},
+                        {"$set": {"status": "success", "completed_at": now, "verified_at": now, "updated_at": now}}
+                    )
+                except Exception as e:
+                    logger.warning("Failed to update payment_transactions on webhook active: %s", e)
+
             return {"success": True, "message": "Subscription activated successfully"}
 
         elif event_type in ["SUBSCRIPTION_FAILED", "SUBSCRIPTION_CANCELLED", "SUBSCRIPTION_TERMINATED"] or sub_status in ["FAILED", "CANCELLED"]:
@@ -385,14 +434,29 @@ class CashfreeService:
         except Exception as e:
             logger.warning("Could not sync live Cashfree subscription status: %s", e)
 
+        is_active = (record.get("status") == "ACTIVE")
+        if is_active:
+            try:
+                await db["payment_transactions"].update_one(
+                    {"order_id": subscription_id},
+                    {"$set": {"status": "success", "completed_at": datetime.now(timezone.utc), "verified_at": datetime.now(timezone.utc)}}
+                )
+            except Exception:
+                pass
+
         return {
             "subscription_id": subscription_id,
+            "order_id": subscription_id,
             "cf_subscription_id": record.get("cf_subscription_id"),
             "status": record.get("status", "INITIALIZED"),
             "auth_amount": record.get("auth_amount", record.get("recurring_amount", 0.0)),
             "recurring_amount": record.get("recurring_amount", 0.0),
+            "amount": record.get("recurring_amount", record.get("auth_amount", 0.0)),
             "plan_id": record.get("plan_id"),
+            "plan_name": record.get("plan_name"),
             "billing_cycle": record.get("billing_cycle"),
             "customer_email": record.get("customer_email"),
-            "auth_status": record.get("auth_status")
+            "auth_status": record.get("auth_status"),
+            "verified": is_active,
+            "message": "Subscription is active" if is_active else f"Subscription status: {record.get('status', 'INITIALIZED')}"
         }
