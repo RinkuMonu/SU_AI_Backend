@@ -4,7 +4,7 @@ import io
 import hmac
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, Optional, Tuple
 from bson import ObjectId
 import httpx
@@ -228,25 +228,31 @@ class InvoiceService:
                 "message": "Invoice email already delivered successfully."
             }
 
-        # 4. Resolve recipient email and name
-        recipient_email = tx.get("user_email")
-        recipient_name = tx.get("user_name")
+        # 4. Resolve user, business profile, recipient email and name
+        user_id = tx.get("user_id")
+        user_doc = None
+        bus_doc = None
 
-        if not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email):
-            user_id = tx.get("user_id")
-            if user_id:
-                try:
+        if user_id:
+            try:
+                if ObjectId.is_valid(str(user_id)):
                     user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
-                    if user_doc:
-                        recipient_email = user_doc.get("email")
-                        if not recipient_name or recipient_name == "Valued Customer":
-                            recipient_name = user_doc.get("name") or user_doc.get("full_name")
-                except Exception as ex:
-                    logger.warning("Error fetching user email for transaction %s: %s", order_id, ex)
+                if not user_doc:
+                    user_doc = await db["users"].find_one({"_id": str(user_id)})
+                if user_id:
+                    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]})
+            except Exception as ex:
+                logger.warning("Error fetching user/business details for transaction %s: %s", order_id, ex)
 
-        # Fallback recipient name
+        recipient_email = tx.get("user_email")
+        if (not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email)) and user_doc:
+            recipient_email = user_doc.get("email")
+
+        recipient_name = tx.get("user_name")
+        if (not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]) and user_doc:
+            recipient_name = user_doc.get("name") or user_doc.get("full_name") or user_doc.get("firstName")
         if not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]:
-            recipient_name = (recipient_email.split("@")[0].capitalize() if recipient_email and "@" in recipient_email else "Valued Customer")
+            recipient_name = (recipient_email.split("@")[0].capitalize() if recipient_email and "@" in str(recipient_email) else "Valued Customer")
 
         # If user has no registered email (e.g. phone-only signup without email added yet)
         if not recipient_email or "@" not in str(recipient_email):
@@ -276,27 +282,173 @@ class InvoiceService:
             tx, tx.get("invoice_download_token", "")
         )
 
-        # 6. Format dynamic template variables
-        base_amount = float(tx.get("base_amount") or 0.0)
-        gst_amount = float(tx.get("gst_amount") or 0.0)
-        total_amount = float(tx.get("amount") or tx.get("total_payable") or 0.0)
-        plan_name = tx.get("plan_name") or tx.get("plan_id") or "DhandaGrow Subscription"
-        
+        # 6. Resolve plan specifications from centralized billing config
+        from app.core.billing_config import PLANS
+        raw_plan_id = (tx.get("plan_id") or "STARTER").upper().strip()
+        plan_cfg = PLANS.get(raw_plan_id, PLANS.get("STARTER", {}))
+        plan_name = tx.get("plan_name") or plan_cfg.get("name") or raw_plan_id.capitalize()
+
+        cycle = str(tx.get("billing_cycle") or "monthly").lower().strip()
+        cycle_cfg = plan_cfg.get("billing_cycles", {}).get(cycle, {})
+        duration_days = cycle_cfg.get("duration_days", 30 if cycle == "monthly" else (90 if cycle == "quarterly" else 365))
+
         completed_at = tx.get("completed_at") or tx.get("verified_at") or tx.get("created_at") or now
         if isinstance(completed_at, str):
             try:
                 completed_at = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
             except Exception:
                 completed_at = now
-        date_str = completed_at.strftime("%d %b %Y, %I:%M %p")
+        if completed_at.tzinfo is None:
+            completed_at = completed_at.replace(tzinfo=timezone.utc)
 
-        # Dynamic template variables dictionary (supports lower and upper case conventions)
+        end_dt = completed_at + timedelta(days=duration_days)
+
+        # Date formatting
+        inv_date_str = completed_at.strftime("%d %b %Y")
+        pay_date_str = completed_at.strftime("%d %b %Y, %I:%M %p")
+        start_date_str = completed_at.strftime("%d %b %Y")
+        end_date_str = end_dt.strftime("%d %b %Y")
+        next_billing_date_str = end_dt.strftime("%d %b %Y")
+
+        # Plan feature metrics
+        credits_val = str(plan_cfg.get("credits_badge") or f"{plan_cfg.get('credits', 100)} Credits")
+        post_limit = plan_cfg.get("post_limit", 30)
+        ai_posts_str = f"{post_limit} Posts / month" if post_limit else "Unlimited"
+        reel_limit = plan_cfg.get("reel_limit", 10)
+        ai_reels_str = f"{reel_limit} Reels / month" if reel_limit else "N/A"
+        team_members = plan_cfg.get("team_members", 1)
+        team_members_str = f"{team_members} Member{'s' if team_members > 1 else ''}"
+
+        feature_name_map = {
+            "ai_caption": "AI Caption",
+            "ai_post": "AI Post Generator",
+            "ai_photoshoot": "Product Photoshoot",
+            "ai_avatar": "AI Avatar Studio",
+            "ai_actor": "AI Actor Videos",
+            "ai_reel": "AI Reel Maker",
+            "content_calendar": "Content Calendar",
+            "website_builder": "AI Website Builder",
+            "instagram_ai": "Instagram Auto-Publish",
+            "analytics": "Marketing Analytics",
+            "ads": "AI Ad Creator"
+        }
+        raw_features = plan_cfg.get("features", [])
+        tools_list_str = ", ".join([feature_name_map.get(f, f.replace("_", " ").title()) for f in raw_features]) or "AI Social Posts, Product Photoshoot, Content Calendar"
+
+        # Customer company, phone & address resolution
+        customer_phone = (
+            tx.get("user_phone")
+            or (user_doc.get("phone_number") if user_doc else None)
+            or (user_doc.get("phone") if user_doc else None)
+            or (user_doc.get("mobile") if user_doc else None)
+            or ""
+        )
+        company_name = (
+            (bus_doc.get("business_name") if bus_doc else None)
+            or (bus_doc.get("company_name") if bus_doc else None)
+            or (bus_doc.get("name") if bus_doc else None)
+            or (user_doc.get("businessName") if user_doc else None)
+            or tx.get("company_name")
+            or f"{recipient_name}'s Business"
+        )
+        billing_address = (
+            (bus_doc.get("address") if bus_doc else None)
+            or (bus_doc.get("city") if bus_doc else None)
+            or (user_doc.get("city") if user_doc else None)
+            or "Registered Business Address, India"
+        )
+        gstin = (
+            (bus_doc.get("gstin") if bus_doc else None)
+            or (bus_doc.get("gst_number") if bus_doc else None)
+            or tx.get("gstin")
+            or ""
+        )
+
+        # Payment details
+        pay_method = (
+            tx.get("payment_method")
+            or tx.get("payment_mode")
+            or tx.get("mode")
+            or "AutoPay Mandate / UPI"
+        )
+        if "cf_" in str(order_id).lower() or "sub_" in str(order_id).lower():
+            pay_method = "Cashfree AutoPay Mandate"
+
+        gateway_ref = (
+            tx.get("cf_subscription_id")
+            or tx.get("cf_payment_id")
+            or tx.get("payment_id")
+            or tx.get("bank_reference")
+            or tx.get("gateway_reference_id")
+            or pub_tx_id
+        )
+
+        # Amounts breakdown
+        base_amount = float(tx.get("base_amount") or 0.0)
+        gst_amount = float(tx.get("gst_amount") or 0.0)
+        total_amount = float(tx.get("amount") or tx.get("total_payable") or (base_amount + gst_amount))
+        discount_amount = float(tx.get("discount_amount") or 0.0)
+        remaining_amount = 0.0
+        recurring_amount = total_amount
+        frequency_str = f"{cycle.capitalize()} (Auto-renews every {duration_days} days)"
+
+        logo_url = (
+            getattr(settings, "DHANDAGROW_LOGO_URL", None)
+            or "https://dhandagrow.com/logo.png"
+        )
+        support_contact = getattr(settings, "SUPPORT_PHONE", "+91 7857889083")
+        terms_url = "https://www.dhandagrow.ai/terms"
+
+        # Construct comprehensive template variables (both exact camelCase from mail body & legacy aliases)
         variables = {
+            # 1. Exact 38 variables required by auto_pay_templete [[variableName]]
+            "customerName": recipient_name,
+            "email": recipient_email,
+            "phone": customer_phone,
+            "companyName": company_name,
+            "billingAddress": billing_address,
+            "gstin": gstin,
+            "invoiceNumber": invoice_number,
+            "orderId": order_id,
+            "invoiceDate": inv_date_str,
+            "paymentDate": pay_date_str,
+            "paymentMethod": pay_method,
+            "transactionId": pub_tx_id,
+            "gatewayRefId": str(gateway_ref),
+            "paymentStatus": "PAID",
+            "planName": plan_name,
+            "billingCycle": cycle.capitalize(),
+            "startDate": start_date_str,
+            "endDate": end_date_str,
+            "credits": credits_val,
+            "aiPosts": ai_posts_str,
+            "aiReels": ai_reels_str,
+            "toolsList": tools_list_str,
+            "teamMembers": team_members_str,
+            "originalAmount": f"{base_amount:.2f}",
+            "discountAmount": f"{discount_amount:.2f}",
+            "subTotal": f"{base_amount:.2f}",
+            "taxableAmount": f"{base_amount:.2f}",
+            "gstAmount": f"{gst_amount:.2f}",
+            "totalInvoiceAmount": f"{total_amount:.2f}",
+            "amountPaid": f"{total_amount:.2f}",
+            "remainingAmount": f"{remaining_amount:.2f}",
+            "recurringAmount": f"{recurring_amount:.2f}",
+            "billingFrequency": frequency_str,
+            "nextBillingDate": next_billing_date_str,
+            "DhandagrowLogoURL": logo_url,
+            "supportContact": support_contact,
+            "termsUrl": terms_url,
+            "year": str(now.year),
+
+            # 2. Legacy snake_case and UPPERCASE aliases for backward compatibility
             "customer_name": recipient_name,
             "name": recipient_name,
             "invoice_number": invoice_number,
             "invoice_no": invoice_number,
             "plan_name": plan_name,
+            "payment_date": pay_date_str,
+            "transaction_id": pub_tx_id,
             "plan": plan_name,
             "base_amount": f"{base_amount:.2f}",
             "amount": f"{base_amount:.2f}",
@@ -307,12 +459,9 @@ class InvoiceService:
             "total_amount": f"{total_amount:.2f}",
             "total": f"{total_amount:.2f}",
             "payment_id": pub_tx_id,
-            "transaction_id": pub_tx_id,
-            "payment_date": date_str,
-            "date": date_str,
+            "date": pay_date_str,
             "invoice_link": invoice_link,
             "invoice_url": invoice_link,
-            # Uppercase aliases
             "CUSTOMER_NAME": recipient_name,
             "INVOICE_NUMBER": invoice_number,
             "PLAN_NAME": plan_name,
@@ -322,7 +471,7 @@ class InvoiceService:
             "TOTAL_AMOUNT": f"{total_amount:.2f}",
             "PAYMENT_ID": pub_tx_id,
             "TRANSACTION_ID": pub_tx_id,
-            "PAYMENT_DATE": date_str,
+            "PAYMENT_DATE": pay_date_str,
             "INVOICE_LINK": invoice_link,
             "INVOICE_URL": invoice_link
         }

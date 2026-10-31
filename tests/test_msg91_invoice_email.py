@@ -156,10 +156,32 @@ async def test_02_successful_payment_auto_sends_msg91_invoice_email(mock_msg91_s
     assert payload["from"]["email"] == "no-reply@dhandagrow.com"
     assert payload["domain"] == "dhandagrow.com"
 
-    # Verify dynamic variables
+    # Verify dynamic variables (both exact camelCase from mail body & legacy aliases)
     recipient = payload["recipients"][0]
     assert recipient["to"][0]["email"] == "priya@dhandagrow.com"
     vars_dict = recipient["variables"]
+    # 1. Exact template variables from auto_pay_templete
+    assert vars_dict["customerName"] == "Priya Sharma"
+    assert vars_dict["email"] == "priya@dhandagrow.com"
+    assert vars_dict["invoiceNumber"].startswith("INV-")
+    assert vars_dict["orderId"] == order_id
+    assert vars_dict["transactionId"] == tx_id
+    assert vars_dict["planName"] == "Starter Plan"
+    assert vars_dict["billingCycle"] == "Monthly"
+    assert vars_dict["credits"] == "100 Credits"
+    assert "Posts" in vars_dict["aiPosts"]
+    assert "Reels" in vars_dict["aiReels"]
+    assert vars_dict["paymentStatus"] == "PAID"
+    assert vars_dict["originalAmount"] == "799.00"
+    assert vars_dict["gstAmount"] == "143.82"
+    assert vars_dict["totalInvoiceAmount"] == "942.82"
+    assert vars_dict["amountPaid"] == "942.82"
+    assert vars_dict["recurringAmount"] == "942.82"
+    assert "DhandagrowLogoURL" in vars_dict
+    assert "supportContact" in vars_dict
+    assert "termsUrl" in vars_dict
+    assert "year" in vars_dict
+    # 2. Legacy aliases
     assert vars_dict["customer_name"] == "Priya Sharma"
     assert vars_dict["plan_name"] == "Starter Plan"
     assert vars_dict["base_amount"] == "799.00"
