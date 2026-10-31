@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DhandaGrow AI Premium Subscription Invoice</title>
+</head>
+
+<body style="background: #f7f9fc; margin: 0; padding: 0; font-family: Arial, Helvetica, sans-serif; color: #232342;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background: #f7f9fc; padding: 24px 0;">
+        <tr>
+            <td align="center">
+                <table width="600" cellpadding="0" cellspacing="0"
+                    style="background: #ffffff; border-radius: 16px; box-shadow: 0 4px 24px rgba(112, 86, 255, 0.07); overflow: hidden;">
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(90deg, #6C4EF6 0%, #3D7BF6 100%); padding: 40px 0 20px 0;"
+                            align="center">
+                            <!-- DhandaGrow Logo Asset -->
+                            <img src="{{DhandagrowLogoURL}}" alt="DhandaGrow AI Logo" width="160" style="display: block; margin: 0 auto 12px auto; max-width: 160px;">
+                            <h2
+                                style="color: #fff; font-size: 2rem; margin: 0 0 10px 0; font-weight: 700; letter-spacing: 0.5px;">
+                                Invoice</h2>
+                        </td>
+                    </tr>
+                    <!-- Payment Confirmation -->
+                    <tr>
+                        <td style="padding: 28px 32px 18px 32px; border-bottom: 1px solid #f0f1f7;">
+                            <table width="100%">
+                                <tr>
+                                    <td style="font-size: 20px; font-weight: 600; color: #232342; padding-bottom: 6px;">
+                                        Your Plan is Active!
+                                    </td>
+                                    <td align="right">
+                                        <span style="background: #27c285; color: #fff; padding: 6px 16px; border-radius: 16px; font-weight: 700; font-size: 14px; letter-spacing: 0.5px;">PAID</span>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div style="color: #616179; margin-bottom: 3px;">Thank you for choosing DhandaGrow AI.</div>
+                            <div style="font-size: 15px; color: #4cb050; margin-bottom: 8px;">Payment Successfully
+                                Processed</div>
+                            <div style="margin-bottom: 8px;">
+                                <span style="background: #f2f5ff; border-radius: 11px; padding: 6px 13px; font-size: 13px; color: #5c40e6; font-weight: 500; margin-right: 7px;">{{planName}}</span>
+                                <span style="background: #e7f7fd; border-radius: 12px; color: #2484dd; padding: 5px 13px; font-size: 13px; font-weight: 500;">AutoPay Enabled</span>
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Customer & Invoice Details -->
+                    <tr>
+                        <td style="padding: 24px 32px 0 32px">
+                            <table width="100%" cellpadding="0" cellspacing="0"
+                                style="border-radius: 10px; background: #f5f8ff;">
+                                <tr>
+                                    <!-- Customer Details -->
+                                    <td style="width:50%; padding: 16px 18px; vertical-align: top;">
+                                        <div
+                                            style="font-size: 14px; color: #616179; font-weight:600; margin-bottom: 3px;">
+                                            Billed To</div>
+                                        <div style="font-size:16px; color:#232342; font-weight:700;">{{customerName}}
+                                        </div>
+                                        <div style="font-size:14px; color:#616179; margin: 3px 0 0 0;">{{email}}</div>
+                                        <div style="font-size:14px; color:#616179;">{{phone}}</div>
+                                        <div style="font-size:14px; color:#616179;">{{companyName}}</div>
+                                        <div style="font-size:15px; color:#232342; margin-top: 4px;">{{billingAddress}}
+                                        </div>
+                                        {{#if gstin}}<div style="font-size:14px; color:#616179;">GSTIN: {{gstin}}</div>
+                                        {{/if}}
+                                    </td>
+                                    <!-- Invoice Details -->
+                                    <td
+                                        style="width:50%; padding: 16px 18px; vertical-align: top; background:#f8fafc; border-radius: 10px;">
+                                        <div
+                                            style="font-size: 14px; color: #616179; font-weight:600; margin-bottom: 3px;">
+                                            Invoice Details</div>
+                                        <table style="font-size:14px; color:#232342;">
+                                            <tr>
+                                                <td>Invoice No.:</td>
+                                                <td><strong>{{invoiceNumber}}</strong></td>
+                                            </tr>
+                                            <tr>
+                                                <td>Order ID:</td>
+                                                <td>{{orderId}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Invoice Date:</td>
+                                                <td>{{invoiceDate}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Payment Date:</td>
+                                                <td>{{paymentDate}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Payment Method:</td>
+                                                <td>{{paymentMethod}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Transaction ID:</td>
+                                                <td>{{transactionId}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Gateway Ref ID:</td>
+                                                <td>{{gatewayRefId}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Status:</td>
+                                                <td style="color:#27c285; font-weight:600;">{{paymentStatus}}</td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <!-- Subscription Plan Details -->
+                    <tr>
+                        <td style="padding: 30px 32px 0 32px;">
+                            <div
+                                style="font-size:15px; letter-spacing:0.5px; color:#232342; font-weight:700; margin-bottom:12px;">
+                                Subscription Details</div>
+                            <table width="100%" cellpadding="0" cellspacing="0"
+                                style="background: #f5f8ff; border-radius: 12px;">
+                                <tr>
+                                    <td style="padding: 16px; font-size:15px; color:#232342;">
+                                        <div>
+                                            <strong>Plan:</strong> <span>{{planName}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>Billing Cycle:</strong> <span>{{billingCycle}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>Subscription Period:</strong>
+                                            <span>{{startDate}} - {{endDate}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>Credits:</strong> <span>{{credits}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>AI Posts:</strong> <span>{{aiPosts}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>AI Reels:</strong> <span>{{aiReels}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>Available Tools:</strong> <span>{{toolsList}}</span>
+                                        </div>
+                                        <div>
+                                            <strong>Team Members:</strong> <span>{{teamMembers}}</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <!-- Payment Calculation -->
+                    <tr>
+                        <td style="padding: 32px 32px 12px 32px;">
+                            <div style="font-size:15px; color:#232342; font-weight:700; margin-bottom:10px;">Invoice
+                                Summary</div>
+                            <table width="100%" cellpadding="0" cellspacing="0"
+                                style="background: #f8fafc; border-radius: 12px;">
+                                <tr>
+                                    <td style="padding: 17px 20px;">
+                                        <table width="100%" style="font-size:15px; color:#232342;">
+                                            <tr>
+                                                <td>Original Plan Price</td>
+                                                <td align="right">₹{{originalAmount}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Discount</td>
+                                                <td align="right">₹{{discountAmount}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Subtotal</td>
+                                                <td align="right">₹{{subTotal}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Taxable Amount</td>
+                                                <td align="right">₹{{taxableAmount}}</td>
+                                            </tr>
+                                            {{#if gstAmount}}<tr>
+                                                <td>GST (18%)</td>
+                                                <td align="right">₹{{gstAmount}}</td>
+                                            </tr>{{/if}}
+                                            <tr>
+                                                <td style="font-weight:700; font-size:16px; color:#232342;">Total
+                                                    Invoice Amount</td>
+                                                <td align="right"
+                                                    style="font-weight:700; font-size:16px; color:#232342;">
+                                                    ₹{{totalInvoiceAmount}}</td>
+                                            </tr>
+                                            <tr>
+                                                <td>Amount Paid</td>
+                                                <td align="right" style="color:#228856; font-weight:600;">
+                                                    ₹{{amountPaid}}</td>
+                                            </tr>
+                                            {{#if remainingAmount}}<tr>
+                                                <td>Remaining Amount</td>
+                                                <td align="right" style="color: #f05353;">₹{{remainingAmount}}</td>
+                                            </tr>{{/if}}
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <!-- AutoPay & Renewal Information -->
+                    <tr>
+                        <td style="padding: 25px 32px 14px 32px;">
+                            <div style="font-size: 15px; color: #232342; font-weight: 700; margin-bottom:9px;">AutoPay &
+                                Renewal Information
+                                <span style="background: #e7f7fd; color: #2484dd; border-radius: 12px; padding: 5px 15px; font-weight: 600; font-size:13px; margin-left:10px; vertical-align:middle;">AUTO PAY ENABLED</span>
+                            </div>
+                            <table width="100%" cellpadding="0" cellspacing="0"
+                                style="background: #f5f8ff; border-radius:12px;">
+                                <tr>
+                                    <td style="padding: 13px 18px; font-size:15px; color:#232342;">
+                                        <div><strong>AutoPay Status:</strong> Enabled</div>
+                                        <div><strong>Next Billing Date:</strong> {{nextBillingDate}}</div>
+                                        <div><strong>Recurring Billing Amount:</strong> ₹{{recurringAmount}}</div>
+                                        <div><strong>Billing Frequency:</strong> {{billingFrequency}}</div>
+                                        <div><strong>Subscription Status:</strong>
+                                            <span style="color: #27c285; font-weight:700;">Active</span></div>
+                                        <div><strong>Payment Gateway:</strong> Cashfree</div>
+                                        <div style="margin-top:3px;color:#616179;">Your subscription will renew
+                                            automatically on the next billing date via secured AutoPay.</div>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 40px 0 26px 0; background: #f6f6fb; border-radius: 0 0 16px 16px;">
+                            <table width="100%" cellpadding="0" cellspacing="0">
+                                <tr>
+                                    <td align="center">
+                                        <!-- DhandaGrow Logo Asset -->
+                                        <img src="{{DhandagrowLogoURL}}" alt="DhandaGrow AI Logo" width="80" style="display: block; margin: 0 auto 8px auto; max-width: 80px;">
+                                    </td>
+                                </tr>
+                            </table>
+                            <div
+                                style="font-size: 17px; color:#232342; font-weight:600; margin:4px 0 10px 0; text-align:center;">
+                                Thank you for growing your business with DhandaGrow AI.</div>
+                            <div style="text-align: center; color: #7a7a98; font-size:14px; line-height: 1.5;">
+                                Website: <a href="https://www.dhandagrow.ai"
+                                    style="color:#5c40e6; text-decoration:none;">www.dhandagrow.ai</a>&nbsp; |
+                                &nbsp;Support Email: <a href="mailto:support@dhandagrow.ai"
+                                    style="color:#5c40e6; text-decoration:none;">support@dhandagrow.ai</a><br>
+                Customer Support: {{supportContact}}<br>
+                                <a href="{{termsUrl}}" style="color:#616179; text-decoration:underline;">Terms &
+                                    Conditions</a>
+                            </div>
+                            <table width="96%" align="center" style="margin:30px auto 0 auto;">
+                                <tr>
+                                    <td
+                                        style="font-size: 13px; color:#616179; border-top:1px solid #ebeef7; padding-top: 16px;">
+                                        <div style="margin-bottom:7px;">Authorized Signature:</div>
+                                        <div style="height:18px; border-bottom:1px solid #a6a6b5; width: 224px;"></div>
+                                    </td>
+                                </tr>
+                            </table>
+                            <div style="text-align: center; color: #babacf; font-size: 12px; margin-top:26px;">
+                                &copy; {{year}} DhandaGrow AI. All rights reserved.
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+
+</html>
+
