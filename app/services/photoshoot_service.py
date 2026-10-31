@@ -115,7 +115,111 @@ CURATED_AI_MODELS: List[AIModelItem] = [
 # ===========================================================================
 
 PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
-    # --- Model-based Clothing Poses ---
+    # =======================================================================
+    # 10 CANONICAL STYLES: Avatar Photoshoot (requires_model = True)
+    # =======================================================================
+    PhotographyStyleItem(
+        id="avatar_fashion_studio",
+        name="Fashion Studio",
+        description="High-fashion studio catalog lighting with sleek seamless backdrop and confident commercial pose.",
+        category_fit=["All", "Clothing", "Men's Apparel", "Women's Apparel", "Dresses", "Activewear"],
+        requires_model=True,
+        pose="Direct standing commercial stance with natural arms and confident gaze",
+        lighting="Three-point softbox studio lighting with diffused hair light and subtle fill",
+        preview_url="https://images.unsplash.com/photo-1509631179647-0177331693ae?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_editorial",
+        name="Editorial",
+        description="Vogue-grade high-fashion editorial styling, dynamic angular posing, and dramatic magazine aesthetic.",
+        category_fit=["All", "Clothing", "Designer Wear", "Ethnic Wear", "Luxury Apparel"],
+        requires_model=True,
+        pose="Expressive geometric high-fashion pose with dynamic body angles",
+        lighting="Moody chiaroscuro lighting with dramatic beauty dish focus and sculpted shadows",
+        preview_url="https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_lifestyle",
+        name="Lifestyle",
+        description="Natural real-world lifestyle setting capturing effortless elegance and authentic mood.",
+        category_fit=["All", "Clothing", "Streetwear", "Footwear", "Accessories", "Casual Wear"],
+        requires_model=True,
+        pose="Relaxed natural movement in contemporary urban cafe or modern interior",
+        lighting="Soft natural golden hour sunlight with ambient environmental fill",
+        preview_url="https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_campaign_photography",
+        name="Campaign Photography",
+        description="Elevated advertising campaign with bold color-blocked studio styling and high-impact presence.",
+        category_fit=["All", "Clothing", "Footwear", "Watches", "Eyewear", "Streetwear"],
+        requires_model=True,
+        pose="Dynamic hero stance with strong commanding posture",
+        lighting="High-energy commercial pop lighting with crisp chromatic contrast",
+        preview_url="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_studio_premium",
+        name="Studio Premium",
+        description="Clean, sophisticated commercial studio portrait highlighting garment drape, texture, and tailored fit.",
+        category_fit=["All", "Clothing", "Men's Apparel", "Women's Apparel", "Formal Wear", "Suits"],
+        requires_model=True,
+        pose="Poised standing stance with slight 15-degree shoulder rotation",
+        lighting="Balanced double octabox lighting creating soft enveloping luminosity",
+        preview_url="https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_luxury_cinematic",
+        name="Luxury Cinematic",
+        description="Warm chiaroscuro lighting, rich deep tones, and cinematic depth of field for luxury fashion.",
+        category_fit=["All", "Jewellery", "Luxury Fashion", "Watches", "Evening Wear"],
+        requires_model=True,
+        pose="Intimate cinematic portrait with refined facial framing and subtle posture",
+        lighting="Warm tungsten key light with rich shadows and luminous rim lighting",
+        preview_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_close_up",
+        name="Close-Up",
+        description="Intimate macro crop portrait showcasing fine jewellery, neckline, collar detail, or eyewear worn on model.",
+        category_fit=["All", "Jewellery", "Earrings", "Necklaces", "Eyewear", "Cosmetics"],
+        requires_model=True,
+        pose="Tight beauty framing with hands subtly positioning or framing the piece",
+        lighting="High-CRI beauty dish lighting emphasizing skin glow, gemstone sparkle, and metal finish",
+        preview_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_minimal",
+        name="Minimal",
+        description="Clean neutral palette, uncluttered composition, and serene minimalist studio aesthetics.",
+        category_fit=["All", "Clothing", "Loungewear", "Contemporary Wear", "Accessories"],
+        requires_model=True,
+        pose="Calm relaxed stance against neutral plaster backdrop with clean silhouette",
+        lighting="Diffused northern window daylight simulation with soft gradient shadows",
+        preview_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_marketplace_white",
+        name="Marketplace White",
+        description="Clean e-commerce studio portrait on pure white seamless backdrop compliant with top marketplaces.",
+        category_fit=["All", "Clothing", "Footwear", "Apparel", "E-commerce"],
+        requires_model=True,
+        pose="Upright front catalog stance presenting complete product silhouette",
+        lighting="Even commercial studio lighting on pure #FFFFFF white background",
+        preview_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="avatar_top_down",
+        name="Top-Down",
+        description="High-angle overhead composition capturing model styling and coordinated outfit arrangement.",
+        category_fit=["All", "Clothing", "Loungewear", "Activewear", "Footwear"],
+        requires_model=True,
+        pose="Seated or reclining overhead viewpoint with relaxed natural posture",
+        lighting="Wide diffused overhead softbox for consistent illumination",
+        preview_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=800&auto=format&fit=crop&q=80"
+    ),
+
+    # --- Model-based Clothing & Jewellery Legacy Poses ---
     PhotographyStyleItem(
         id="clothing_front_view",
         name="Front View",
@@ -123,7 +227,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "T-shirts", "Shirts", "Dresses"],
         requires_model=True,
         pose="Direct standing pose facing camera with arms naturally at sides",
-        lighting="Three-point studio softbox with subtle fill light"
+        lighting="Three-point studio softbox with subtle fill light",
+        preview_url="https://images.unsplash.com/photo-1487222477894-8943e31ef7b2?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="clothing_back_view",
@@ -132,7 +237,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "T-shirts", "Hoodies", "Jackets"],
         requires_model=True,
         pose="Turned 180 degrees away showing full back details and posture",
-        lighting="Rim lighting accentuating garment edges against soft backdrop"
+        lighting="Rim lighting accentuating garment edges against soft backdrop",
+        preview_url="https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="clothing_side_view",
@@ -141,7 +247,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "Pants", "Dresses"],
         requires_model=True,
         pose="Clean 90-degree profile stance showing full garment side silhouette",
-        lighting="Directional soft key light sculpting garment contours"
+        lighting="Directional soft key light sculpting garment contours",
+        preview_url="https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="clothing_sitting_pose",
@@ -150,7 +257,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Men's Apparel", "Women's Apparel", "Loungewear", "Denim"],
         requires_model=True,
         pose="Seated comfortably on neutral concrete studio cube or modern wood stool",
-        lighting="Warm architectural ambient lighting with soft diffused shadows"
+        lighting="Warm architectural ambient lighting with soft diffused shadows",
+        preview_url="https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="clothing_walking_pose",
@@ -159,7 +267,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Streetwear", "Activewear", "Footwear", "Dresses"],
         requires_model=True,
         pose="Natural mid-stride walk toward camera with subtle fabric flutter",
-        lighting="Natural daylight simulation with crisp editorial contrast"
+        lighting="Natural daylight simulation with crisp editorial contrast",
+        preview_url="https://images.unsplash.com/photo-1483985988355-763728e1935b?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="clothing_editorial_pose",
@@ -168,10 +277,9 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Clothing", "Designer Wear", "Ethnic Wear", "Luxury Apparel"],
         requires_model=True,
         pose="Expressive high-fashion geometric pose with dynamic body angles",
-        lighting="Moody editorial chiaroscuro with dramatic beauty dish focus"
+        lighting="Moody editorial chiaroscuro with dramatic beauty dish focus",
+        preview_url="https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=800&auto=format&fit=crop&q=80"
     ),
-
-    # --- Model-based Jewellery Poses ---
     PhotographyStyleItem(
         id="jewellery_closeup",
         name="Close-up Model Shot",
@@ -179,7 +287,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Jewellery", "Earrings", "Necklaces", "Rings", "Watches"],
         requires_model=True,
         pose="Intimate close-up portrait with hands framing or touching the piece",
-        lighting="High-CRI beauty glow emphasizing gemstone facets and metal luster"
+        lighting="High-CRI beauty glow emphasizing gemstone facets and metal luster",
+        preview_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="jewellery_front_portrait",
@@ -188,7 +297,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Jewellery", "Necklaces", "Bridal Wear"],
         requires_model=True,
         pose="Straight portrait with shoulders angled and chin gently lifted",
-        lighting="Glamour butterfly lighting with catchlights in eyes"
+        lighting="Glamour butterfly lighting with catchlights in eyes",
+        preview_url="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="jewellery_side_portrait",
@@ -197,10 +307,115 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["Jewellery", "Earrings", "Eyewear"],
         requires_model=True,
         pose="Profile head turn showing earring suspended elegantly",
-        lighting="Contoured edge lighting creating luminous silhouette"
+        lighting="Contoured edge lighting creating luminous silhouette",
+        preview_url="https://images.unsplash.com/photo-1517841905240-472988babdf9?w=800&auto=format&fit=crop&q=80"
     ),
 
-    # --- Product-only Styles ---
+    # =======================================================================
+    # 10 CANONICAL STYLES: Product Photography (requires_model = False)
+    # =======================================================================
+    PhotographyStyleItem(
+        id="product_studio_premium",
+        name="Studio Premium",
+        description="Iconic commercial studio shot with crisp softbox reflection, soft contact shadow, and balanced fill.",
+        category_fit=["All", "Candle", "Home Decor", "Electronics", "Cosmetics", "Packaged Goods", "Footwear"],
+        requires_model=False,
+        pose=None,
+        lighting="Diffused double-softbox studio lighting with pure neutral reflections",
+        preview_url="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_luxury_cinematic",
+        name="Luxury Cinematic",
+        description="Artistic podium staging on travertine, fluted plaster, or marble with architectural shadows and warm spotlight.",
+        category_fit=["All", "Candle", "Perfume", "Jewellery", "Skincare", "Watches"],
+        requires_model=False,
+        pose=None,
+        lighting="Dramatic warm spotlight with soft organic leaf shadows and rich contrast",
+        preview_url="https://images.unsplash.com/photo-1541643600914-78b084683601?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_marketplace_white",
+        name="Marketplace White",
+        description="Pure pure clean #FFFFFF white background, crisp e-commerce shadow, compliant with Amazon and Shopify standards.",
+        category_fit=["All", "Clothing", "Electronics", "Footwear", "Packaged Goods", "Kitchenware"],
+        requires_model=False,
+        pose=None,
+        lighting="High-key studio strobe lighting eliminating background gradients completely",
+        preview_url="https://images.unsplash.com/photo-1583394838336-acd977736f90?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_lifestyle",
+        name="Lifestyle",
+        description="Organic product placement in an authentic upscale modern home, cafe, or office setting.",
+        category_fit=["All", "Candle", "Home Decor", "Electronics", "Kitchenware", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Golden hour sunbeams filtering through window with gentle natural bokeh",
+        preview_url="https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_minimal",
+        name="Minimal",
+        description="Pure geometric plinth, subtle neutral tones, clean lines, and uncluttered composition.",
+        category_fit=["All", "Cosmetics", "Skincare", "Tech", "Jewellery", "Perfume"],
+        requires_model=False,
+        pose=None,
+        lighting="Soft natural diffused daylight with clean architectural edge shadows",
+        preview_url="https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_top_down",
+        name="Top-Down",
+        description="Direct 90-degree overhead flat lay composition arranged with harmonious aesthetic props.",
+        category_fit=["All", "Clothing", "Jewellery", "Stationery", "Food", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Even shadowless daylight flat lighting on linen, wood, or marble surface",
+        preview_url="https://images.unsplash.com/photo-1491553895911-0055eca6402d?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_close_up",
+        name="Close-Up",
+        description="Macro focus on texture, material grain, stitching, engraving, and fine craftsmanship.",
+        category_fit=["All", "Jewellery", "Candle", "Leather Goods", "Footwear", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Raking directional light sculpting micro-texture and premium materials",
+        preview_url="https://images.unsplash.com/photo-1608248597359-57790b4d40e1?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_campaign_photography",
+        name="Campaign Photography",
+        description="Bold conceptual visual with color-blocked studio backdrops and elevated dynamic styling.",
+        category_fit=["All", "Footwear", "Beverages", "Tech", "Beauty"],
+        requires_model=False,
+        pose=None,
+        lighting="Vibrant pop lighting with chromatic contrast and razor-sharp clarity",
+        preview_url="https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_editorial",
+        name="Editorial",
+        description="Art-directed editorial still life for luxury print catalogs with curated textural elements.",
+        category_fit=["All", "Perfume", "Jewellery", "Luxury Goods", "Cosmetics"],
+        requires_model=False,
+        pose=None,
+        lighting="Dramatic editorial spotlighting with nuanced chiaroscuro and atmospheric depth",
+        preview_url="https://images.unsplash.com/photo-1512496015851-a90fb38ba796?w=800&auto=format&fit=crop&q=80"
+    ),
+    PhotographyStyleItem(
+        id="product_fashion_studio",
+        name="Fashion Studio",
+        description="Garment, footwear or accessory displayed on high-end invisible plinth or clean tabletop with crisp fashion studio light.",
+        category_fit=["All", "Clothing", "Footwear", "Bags", "Accessories"],
+        requires_model=False,
+        pose=None,
+        lighting="High-key crisp studio lighting with subtle dimensional drop shadow",
+        preview_url="https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=800&auto=format&fit=crop&q=80"
+    ),
+
+    # --- Product-only Legacy Styles ---
     PhotographyStyleItem(
         id="clean_hero_shot",
         name="Clean Hero Product Shot",
@@ -208,7 +423,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Candle", "Home Decor", "Electronics", "Cosmetics", "Packaged Goods", "Footwear"],
         requires_model=False,
         pose=None,
-        lighting="Diffused double-softbox studio lighting with pure neutral reflections"
+        lighting="Diffused double-softbox studio lighting with pure neutral reflections",
+        preview_url="https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="lifestyle_placement",
@@ -217,7 +433,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Candle", "Home Decor", "Electronics", "Kitchenware", "Cosmetics"],
         requires_model=False,
         pose=None,
-        lighting="Golden hour sunbeams filtering through window with gentle bokeh"
+        lighting="Golden hour sunbeams filtering through window with gentle bokeh",
+        preview_url="https://images.unsplash.com/photo-1507679799987-c73779587ccf?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="top_down_flat_lay",
@@ -226,7 +443,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Clothing", "Jewellery", "Stationery", "Food", "Cosmetics"],
         requires_model=False,
         pose=None,
-        lighting="Even shadowless daylight flat lighting on linen, wood, or marble"
+        lighting="Even shadowless daylight flat lighting on linen, wood, or marble",
+        preview_url="https://images.unsplash.com/photo-1491553895911-0055eca6402d?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="closeup_detail_shot",
@@ -235,7 +453,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Jewellery", "Candle", "Leather Goods", "Footwear", "Cosmetics"],
         requires_model=False,
         pose=None,
-        lighting="Raking directional light sculpting micro-texture and premium materials"
+        lighting="Raking directional light sculpting micro-texture and premium materials",
+        preview_url="https://images.unsplash.com/photo-1608248597359-57790b4d40e1?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="luxury_studio_composition",
@@ -244,7 +463,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Candle", "Perfume", "Jewellery", "Skincare", "Watches"],
         requires_model=False,
         pose=None,
-        lighting="Dramatic warm spotlight with soft organic leaf shadows"
+        lighting="Dramatic warm spotlight with soft organic leaf shadows",
+        preview_url="https://images.unsplash.com/photo-1541643600914-78b084683601?w=800&auto=format&fit=crop&q=80"
     ),
     PhotographyStyleItem(
         id="creative_campaign",
@@ -253,7 +473,8 @@ PHOTOGRAPHY_STYLES_CATALOG: List[PhotographyStyleItem] = [
         category_fit=["All", "Footwear", "Beverages", "Tech", "Beauty"],
         requires_model=False,
         pose=None,
-        lighting="Vibrant pop lighting with chromatic contrast and razor-sharp clarity"
+        lighting="Vibrant pop lighting with chromatic contrast and razor-sharp clarity",
+        preview_url="https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?w=800&auto=format&fit=crop&q=80"
     )
 ]
 
@@ -285,6 +506,7 @@ class PhotoshootService:
         user_id: str,
         files: List[UploadFile],
         session_id: Optional[str] = None,
+        workflow_mode: Optional[str] = None,
         product_category: Optional[str] = None,
         angles: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
@@ -295,6 +517,13 @@ class PhotoshootService:
         allowed_exts = {".jpg", ".jpeg", ".png", ".webp"}
         max_file_size = 10 * 1024 * 1024  # 10MB per image
 
+        # Validate workflow mode if provided
+        clean_workflow_mode = None
+        if workflow_mode:
+            clean_mode = workflow_mode.strip().lower()
+            if clean_mode in ("avatar_photoshoot", "product_photography"):
+                clean_workflow_mode = clean_mode
+
         # Initialize or fetch session
         session_doc = None
         if session_id:
@@ -304,6 +533,7 @@ class PhotoshootService:
             })
 
         actual_session_id = session_id if session_doc else f"sess_{uuid.uuid4().hex[:12]}"
+        resolved_mode = clean_workflow_mode or (session_doc.get("workflow_mode") if session_doc else None) or "product_photography"
         now = datetime.now(timezone.utc)
 
         uploaded_assets = []
@@ -387,21 +617,26 @@ class PhotoshootService:
 
         # Upsert session document
         if session_doc:
+            update_fields: Dict[str, Any] = {
+                "product_category": product_category or session_doc.get("product_category"),
+                "status": "uploaded",
+                "updated_at": now
+            }
+            if clean_workflow_mode:
+                update_fields["workflow_mode"] = clean_workflow_mode
+
             await db["photoshoot_sessions"].update_one(
                 {"session_id": actual_session_id},
                 {
                     "$push": {"original_images": {"$each": uploaded_assets}},
-                    "$set": {
-                        "product_category": product_category or session_doc.get("product_category"),
-                        "status": "uploaded",
-                        "updated_at": now
-                    }
+                    "$set": update_fields
                 }
             )
         else:
             session_payload = {
                 "session_id": actual_session_id,
                 "user_id": str(user_id),
+                "workflow_mode": resolved_mode,
                 "title": f"Photoshoot - {product_category or 'Product'}",
                 "product_category": product_category,
                 "product_type": None,
@@ -409,7 +644,7 @@ class PhotoshootService:
                 "original_images": uploaded_assets,
                 "enhanced_images": [],
                 "selected_enhanced_image_ids": [],
-                "use_model": False,
+                "use_model": resolved_mode == "avatar_photoshoot",
                 "model_id": None,
                 "model_details": None,
                 "selected_styles": [],
@@ -427,6 +662,7 @@ class PhotoshootService:
         return {
             "success": True,
             "session_id": actual_session_id,
+            "workflow_mode": resolved_mode,
             "product_category": product_category,
             "total_uploaded": len(uploaded_assets),
             "uploaded_images": uploaded_assets,
@@ -738,15 +974,22 @@ class PhotoshootService:
         category: Optional[str] = None,
         use_model: bool = False,
         model_id: Optional[str] = None,
+        workflow_mode: Optional[str] = None,
     ) -> List[PhotographyStyleItem]:
         cat_clean = (category or "All").strip().lower()
+
+        # Determine target model requirement based on mode or use_model flag
+        if workflow_mode == "avatar_photoshoot":
+            target_requires_model = True
+        elif workflow_mode == "product_photography":
+            target_requires_model = False
+        else:
+            target_requires_model = bool(use_model)
 
         styles = []
         for s in PHOTOGRAPHY_STYLES_CATALOG:
             # Filter by model requirement
-            if use_model and not s.requires_model:
-                continue
-            if not use_model and s.requires_model:
+            if s.requires_model != target_requires_model:
                 continue
 
             # Category filtering: check if style fits category or is universal 'All'
@@ -757,12 +1000,12 @@ class PhotoshootService:
             if fits_cat:
                 styles.append(s)
 
-        # Ensure at least 3 fallback styles exist if strict filter was too narrow
-        if len(styles) < 3:
+        # Ensure at least 5 fallback styles exist if strict filter was too narrow
+        if len(styles) < 5:
             for s in PHOTOGRAPHY_STYLES_CATALOG:
-                if s.requires_model == use_model and s not in styles:
+                if s.requires_model == target_requires_model and s not in styles:
                     styles.append(s)
-                if len(styles) >= 4:
+                if len(styles) >= 10:
                     break
 
         return styles
@@ -776,6 +1019,7 @@ class PhotoshootService:
         db,
         user_id: str,
         session_id: str,
+        workflow_mode: Optional[str] = None,
         custom_prompt: Optional[str] = None,
         language: Optional[str] = "en",
         use_model: bool = False,
@@ -789,6 +1033,37 @@ class PhotoshootService:
         })
         if not session_doc:
             raise HTTPException(status_code=404, detail="Photoshoot session not found.")
+
+        # Determine workflow mode
+        clean_workflow_mode = (workflow_mode or "").strip().lower()
+        if clean_workflow_mode in ("avatar_photoshoot", "product_photography"):
+            resolved_mode = clean_workflow_mode
+        elif use_model or model_id:
+            resolved_mode = "avatar_photoshoot"
+        elif session_doc.get("workflow_mode"):
+            resolved_mode = session_doc["workflow_mode"]
+        else:
+            resolved_mode = "product_photography"
+
+        # Mode validation
+        if resolved_mode == "avatar_photoshoot":
+            target_model_id = model_id or session_doc.get("model_id")
+            if not target_model_id or not str(target_model_id).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="model_id is mandatory for avatar_photoshoot mode. Please select an AI model."
+                )
+            valid_model_ids = {m.model_id for m in CURATED_AI_MODELS}
+            if target_model_id not in valid_model_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid model_id '{target_model_id}'. Selected model does not exist in curated catalog."
+                )
+            use_model = True
+            model_id = target_model_id
+        else:  # product_photography
+            use_model = False
+            model_id = None
 
         user_instruction = (custom_prompt or "").strip()
         detected_lang = language or "en"
@@ -817,6 +1092,8 @@ class PhotoshootService:
         p_name = session_doc.get("product_type") or session_doc.get("product_category") or "Product"
         colors = ", ".join(analysis.get("main_colors", ["natural colors"]))
         texture = analysis.get("material_and_texture", "premium texture")
+        brand_logo = analysis.get("brand_logo_and_text")
+        logo_note = f", preserving brand logo/label '{brand_logo}'" if brand_logo and brand_logo.lower() != "none detected" else ""
 
         # Synthesize professional photoshoot generation prompt using Gemini LLM
         client = get_primary_gemini_client()
@@ -824,13 +1101,26 @@ class PhotoshootService:
 
         if client:
             try:
+                if resolved_mode == "avatar_photoshoot":
+                    photo_type_desc = (
+                        f"Model-based commercial catalog fashion photoshoot on {model_obj['name'] if model_obj else 'model'}. "
+                        f"Position product accurately and naturally on model while maintaining model identity consistently across images."
+                    )
+                else:
+                    photo_type_desc = (
+                        "Product-only commercial still-life photography. "
+                        "STRICT REQUIREMENT: Do NOT include any human model, person, hands, body parts, or mannequins in this image. "
+                        "Focus on lighting, background, shadows, camera angle, and composition."
+                    )
+
                 sys_prompt = (
                     "You are a Vogue Commercial Creative Director. "
                     "Synthesize the following product specifications, styling, and user instructions into a single concise, "
                     "master photography generation prompt (under 60 words). "
-                    "CRITICAL: Keep the product identity, color, and texture strictly preserved.\n"
-                    f"Product: {p_name} ({colors}, {texture})\n"
-                    f"Photography Type: {'Model-based commercial on ' + (model_obj['name'] if model_obj else 'model') if use_model else 'Product-only commercial photography'}\n"
+                    "CRITICAL: Keep the product identity, color, texture, shape, and branding strictly preserved.\n"
+                    f"Product: {p_name} ({colors}, {texture}{logo_note})\n"
+                    f"Photography Mode: {resolved_mode}\n"
+                    f"Photography Specification: {photo_type_desc}\n"
                     f"Selected Styles/Poses: {', '.join(styles_to_apply)}\n"
                     f"User Custom Instructions: {user_instruction or 'None'}\n"
                     "Output ONLY the final generation prompt text."
@@ -847,20 +1137,28 @@ class PhotoshootService:
                 logger.warning(f"Prompt preparation LLM note: {e}")
 
         if not prepared_prompt:
-            model_part = f"worn by {model_obj['name'] if model_obj else 'model'}" if use_model else "product-only hero shot"
             styles_part = ", ".join(styles_to_apply)
             user_part = f", {user_instruction}" if user_instruction else ""
-            prepared_prompt = (
-                f"Commercial advertising photoshoot of {p_name} in {colors}, {texture}. "
-                f"{model_part}, {styles_part}{user_part}. "
-                f"Studio lighting, 8k resolution, photorealistic commercial product photography, razor-sharp details."
-            )
+            if resolved_mode == "avatar_photoshoot":
+                model_name_str = model_obj['name'] if model_obj else 'model'
+                prepared_prompt = (
+                    f"Commercial fashion catalog photoshoot of authentic {p_name} in {colors}, {texture}{logo_note}, "
+                    f"modeled naturally by {model_name_str}. Style: {styles_part}{user_part}. "
+                    f"Consistent model appearance, studio lighting, 8k resolution, razor-sharp details."
+                )
+            else:
+                prepared_prompt = (
+                    f"Professional commercial product photoshoot of authentic {p_name} in {colors}, {texture}{logo_note}. "
+                    f"Product-only still life without human model or mannequin. Style: {styles_part}{user_part}. "
+                    f"Studio lighting, 8k resolution, photorealistic commercial product photography, razor-sharp details."
+                )
 
         now = datetime.now(timezone.utc)
         await db["photoshoot_sessions"].update_one(
             {"session_id": session_id},
             {
                 "$set": {
+                    "workflow_mode": resolved_mode,
                     "use_model": bool(use_model),
                     "model_id": model_id if use_model else None,
                     "model_details": model_obj if use_model else None,
@@ -876,9 +1174,11 @@ class PhotoshootService:
         return {
             "success": True,
             "session_id": session_id,
+            "workflow_mode": resolved_mode,
             "prepared_prompt": prepared_prompt,
             "detected_language": detected_lang,
             "workflow_summary": {
+                "workflow_mode": resolved_mode,
                 "use_model": use_model,
                 "model_name": model_obj.get("name") if model_obj else "None (Product Only)",
                 "product_type": p_name,
@@ -897,6 +1197,7 @@ class PhotoshootService:
         db,
         user_id: str,
         session_id: str,
+        workflow_mode: Optional[str] = None,
         selected_enhanced_image_ids: Optional[List[str]] = None,
         product_category: Optional[str] = None,
         use_model: bool = False,
@@ -913,6 +1214,37 @@ class PhotoshootService:
         if not session_doc:
             raise HTTPException(status_code=404, detail="Photoshoot session not found.")
 
+        # Determine workflow mode
+        clean_workflow_mode = (workflow_mode or "").strip().lower()
+        if clean_workflow_mode in ("avatar_photoshoot", "product_photography"):
+            resolved_mode = clean_workflow_mode
+        elif use_model or model_id:
+            resolved_mode = "avatar_photoshoot"
+        elif session_doc.get("workflow_mode"):
+            resolved_mode = session_doc["workflow_mode"]
+        else:
+            resolved_mode = "product_photography"
+
+        # Mode validation
+        if resolved_mode == "avatar_photoshoot":
+            target_model_id = model_id or session_doc.get("model_id")
+            if not target_model_id or not str(target_model_id).strip():
+                raise HTTPException(
+                    status_code=400,
+                    detail="model_id is mandatory for avatar_photoshoot mode. Please select an AI model."
+                )
+            valid_model_ids = {m.model_id for m in CURATED_AI_MODELS}
+            if target_model_id not in valid_model_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid model_id '{target_model_id}'. Selected model does not exist in curated catalog."
+                )
+            use_model = True
+            model_id = target_model_id
+        else:  # product_photography
+            use_model = False
+            model_id = None
+
         # Prevent duplicate active jobs / charges on repeated requests
         active_job = await db["photoshoot_jobs"].find_one({
             "session_id": session_id,
@@ -923,6 +1255,7 @@ class PhotoshootService:
             return {
                 "success": True,
                 "session_id": session_id,
+                "workflow_mode": active_job.get("workflow_mode", resolved_mode),
                 "job_id": active_job["job_id"],
                 "status": active_job["status"],
                 "estimated_time_seconds": active_job.get("total_images", 5) * 3,
@@ -935,13 +1268,15 @@ class PhotoshootService:
         # 2. Prepare job configuration
         count = min(max(1, image_count), 10)
         job_id = f"job_{uuid.uuid4().hex[:12]}"
-        styles_list = selected_styles or session_doc.get("selected_styles") or ["Clean Hero Product Shot"]
+        default_style = "Fashion Studio" if resolved_mode == "avatar_photoshoot" else "Clean Hero Product Shot"
+        styles_list = selected_styles or session_doc.get("selected_styles") or [default_style]
 
         now = datetime.now(timezone.utc)
         job_doc = {
             "job_id": job_id,
             "session_id": session_id,
             "user_id": str(user_id),
+            "workflow_mode": resolved_mode,
             "status": "pending",
             "progress_percent": 0,
             "total_images": count,
@@ -963,6 +1298,7 @@ class PhotoshootService:
             {
                 "$push": {"generation_jobs": job_id},
                 "$set": {
+                    "workflow_mode": resolved_mode,
                     "status": "generating",
                     "use_model": bool(use_model),
                     "model_id": model_id if use_model else None,
@@ -983,6 +1319,7 @@ class PhotoshootService:
                 job_id=job_id,
                 session_id=session_id,
                 user_id=user_id,
+                workflow_mode=resolved_mode,
                 use_model=use_model,
                 model_id=model_id,
                 styles=styles_list,
@@ -994,6 +1331,7 @@ class PhotoshootService:
         return {
             "success": True,
             "session_id": session_id,
+            "workflow_mode": resolved_mode,
             "job_id": job_id,
             "status": "pending",
             "estimated_time_seconds": count * 3,
@@ -1007,6 +1345,7 @@ class PhotoshootService:
         job_id: str,
         session_id: str,
         user_id: str,
+        workflow_mode: str,
         use_model: bool,
         model_id: Optional[str],
         styles: List[str],
@@ -1029,7 +1368,7 @@ class PhotoshootService:
             logo_clause = f", accurately rendering visible logo/label '{logo_info}'" if logo_info and logo_info.lower() != "none detected" else ""
 
             model_info = None
-            if use_model:
+            if workflow_mode == "avatar_photoshoot" or use_model:
                 for m in CURATED_AI_MODELS:
                     if m.model_id == model_id:
                         model_info = m
@@ -1045,23 +1384,24 @@ class PhotoshootService:
             failed_items = []
 
             for i in range(count):
-                applied_style = styles[i % len(styles)] if styles else "Commercial Studio"
+                applied_style = styles[i % len(styles)] if styles else ("Fashion Studio" if workflow_mode == "avatar_photoshoot" else "Commercial Studio")
                 img_id = f"final_{uuid.uuid4().hex[:12]}"
                 filename = f"photoshoot_{img_id}.jpg"
                 target_path = cls.FINAL_DIR / filename
 
                 # Vary angle, pose, and composition per iteration while keeping strict model & product identity
-                if use_model:
+                if workflow_mode == "avatar_photoshoot" or use_model:
                     comp_prompt = (
                         f"Professional commercial fashion catalog photo of authentic {p_name} in exact original {colors}, {texture}{logo_clause}. "
                         f"Strictly preserve authentic product colors, logo labels, packaging and silhouette without artificial alteration. "
                         f"Modeled naturally by {model_name} ({model_identity}). Variation {i+1}: {applied_style}. "
                         f"{custom_prompt or ''}. High fashion commercial studio lighting, natural key and fill light, soft contact shadow, "
-                        f"realistic skin texture, 8k resolution, razor-sharp garment micro-weave, photorealistic commercial catalog."
+                        f"consistent model facial features and identity, realistic skin texture, 8k resolution, razor-sharp garment micro-weave, photorealistic commercial catalog."
                     )
-                else:
+                else:  # product_photography
                     comp_prompt = (
                         f"Professional luxury commercial product photoshoot of authentic {p_name} in exact original {colors}, {texture}{logo_clause}. "
+                        f"STRICT REQUIREMENT: Product-only commercial still life photography. Do NOT include any human model, person, hands, body parts, or mannequins in this image. "
                         f"Strictly preserve original product brand logos, packaging, colors, geometry and materials without distortion. "
                         f"Clean isolated composition on minimalist studio plinth. Variation {i+1}: {applied_style}. {custom_prompt or ''}. "
                         f"Commercial advertising studio lighting, soft natural contact shadow, subtle reflections, razor-sharp focus, 8k resolution, photorealistic."
@@ -1334,6 +1674,7 @@ class PhotoshootService:
             "success": True,
             "job_id": job["job_id"],
             "session_id": job["session_id"],
+            "workflow_mode": job.get("workflow_mode") or ("avatar_photoshoot" if job.get("use_model") else "product_photography"),
             "status": job["status"],
             "progress_percent": job.get("progress_percent", 0),
             "completed_images": job.get("completed_images", 0),
@@ -1358,6 +1699,7 @@ class PhotoshootService:
         return {
             "success": True,
             "session_id": session_id,
+            "workflow_mode": session_doc.get("workflow_mode") or ("avatar_photoshoot" if session_doc.get("use_model") else "product_photography"),
             "status": session_doc.get("status", "completed"),
             "total_images": len(results),
             "use_model": session_doc.get("use_model", False),
@@ -1523,12 +1865,25 @@ class PhotoshootService:
         limit: int = 12,
         category: Optional[str] = None,
         use_model: Optional[bool] = None,
+        workflow_mode: Optional[str] = None,
         sort_by: Optional[str] = "desc",
     ) -> Dict[str, Any]:
         query: Dict[str, Any] = {"user_id": str(user_id)}
         if category and category.lower() != "all":
             query["product_category"] = {"$regex": f"^{re.escape(category)}$", "$options": "i"}
-        if use_model is not None:
+        
+        # Support filtering by workflow_mode (with backward compatibility)
+        if workflow_mode:
+            clean_mode = workflow_mode.strip().lower()
+            if clean_mode == "avatar_photoshoot":
+                query["$or"] = [{"workflow_mode": "avatar_photoshoot"}, {"use_model": True}]
+            elif clean_mode == "product_photography":
+                query["$or"] = [
+                    {"workflow_mode": "product_photography"},
+                    {"workflow_mode": None, "use_model": False},
+                    {"workflow_mode": {"$exists": False}, "use_model": False}
+                ]
+        elif use_model is not None:
             query["use_model"] = use_model
 
         sort_dir = 1 if sort_by == "asc" else -1
@@ -1553,6 +1908,7 @@ class PhotoshootService:
             items.append({
                 "session_id": doc["session_id"],
                 "title": doc.get("title") or "Commercial Photoshoot",
+                "workflow_mode": doc.get("workflow_mode") or ("avatar_photoshoot" if doc.get("use_model") else "product_photography"),
                 "product_category": doc.get("product_category") or "Product",
                 "product_type": doc.get("product_type") or "Item",
                 "use_model": doc.get("use_model", False),

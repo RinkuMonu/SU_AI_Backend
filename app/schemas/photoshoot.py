@@ -20,6 +20,7 @@ class UploadedImageItem(BaseModel):
 class ProductUploadResponse(BaseModel):
     success: bool = True
     session_id: str
+    workflow_mode: Optional[str] = None
     product_category: Optional[str] = None
     total_uploaded: int
     uploaded_images: List[UploadedImageItem]
@@ -131,6 +132,7 @@ class PhotographyStylesResponse(BaseModel):
     success: bool = True
     category: str
     use_model: bool
+    workflow_mode: Optional[str] = None
     styles: List[PhotographyStyleItem]
 
 
@@ -141,6 +143,7 @@ class PhotographyStylesResponse(BaseModel):
 class PreparePromptRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
     session_id: str
+    workflow_mode: Optional[str] = None
     custom_prompt: Optional[str] = None
     language: Optional[str] = "en"
     use_model: Optional[bool] = False
@@ -151,6 +154,7 @@ class PreparePromptRequest(BaseModel):
 class PreparePromptResponse(BaseModel):
     success: bool = True
     session_id: str
+    workflow_mode: Optional[str] = None
     prepared_prompt: str
     detected_language: Optional[str] = "en"
     workflow_summary: Dict[str, Any]
@@ -164,6 +168,7 @@ class PreparePromptResponse(BaseModel):
 class PhotoshootGenerateRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
     session_id: str
+    workflow_mode: Optional[str] = None
     selected_enhanced_image_ids: Optional[List[str]] = None
     product_category: Optional[str] = None
     use_model: bool = False
@@ -176,6 +181,7 @@ class PhotoshootGenerateRequest(BaseModel):
 class PhotoshootGenerateResponse(BaseModel):
     success: bool = True
     session_id: str
+    workflow_mode: Optional[str] = None
     job_id: str
     status: str = "pending"
     estimated_time_seconds: int = 15
@@ -195,6 +201,7 @@ class PhotoshootJobStatusResponse(BaseModel):
     success: bool = True
     job_id: str
     session_id: str
+    workflow_mode: Optional[str] = None
     status: str  # pending, processing, completed, partial, failed
     progress_percent: int
     completed_images: int
@@ -218,6 +225,7 @@ class RetryJobResponse(BaseModel):
 class PhotoshootResultsResponse(BaseModel):
     success: bool = True
     session_id: str
+    workflow_mode: Optional[str] = None
     status: str
     total_images: int
     use_model: bool
@@ -248,6 +256,7 @@ class RegenerateImageRequest(BaseModel):
 class GallerySessionItem(BaseModel):
     session_id: str
     title: str
+    workflow_mode: Optional[str] = None
     product_category: Optional[str] = "Product"
     product_type: Optional[str] = "Item"
     use_model: bool = False

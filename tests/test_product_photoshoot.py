@@ -887,5 +887,304 @@ async def test_audio_prompt_preparation_and_gallery_filtering():
         assert gal_data["total"] >= 1
 
 
+# ---------------------------------------------------------------------------
+# TEST F: Avatar Photoshoot Mode Validation & Model Integrity
+# ---------------------------------------------------------------------------
+async def test_avatar_photoshoot_mode_validation():
+    """
+    Validates avatar_photoshoot mode:
+    1. model_id is mandatory -> rejects with 400 when model_id is missing/None
+    2. Invalid model_id -> rejects with 400
+    3. Valid model_id -> succeeds, persists workflow_mode and selected_model_id
+    4. Gemini prompt preserves model consistency
+    """
+    db = get_database()
+    user_id, token = await create_auth_user(db, name="Avatar Mode Tester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    img_bytes = create_dummy_image_bytes(500, 500, "darkred")
+    files = [("files", ("silk_kurta.jpg", img_bytes, "image/jpeg"))]
+    upload_data = {
+        "product_category": "Clothing",
+        "workflow_mode": "avatar_photoshoot",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Step 1: Upload with workflow_mode = avatar_photoshoot
+        up_resp = await ac.post("/api/v1/product-photoshoot/upload", headers=headers, files=files, data=upload_data)
+        assert up_resp.status_code == 200
+        up_body = up_resp.json()
+        assert up_body["workflow_mode"] == "avatar_photoshoot"
+        session_id = up_body["session_id"]
+
+        # Step 2: Validate prepare-prompt rejects missing model_id in avatar mode
+        prep_missing_model = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": None,
+                "selected_styles": ["Fashion Studio"],
+            },
+        )
+        assert prep_missing_model.status_code == 400
+        assert "model_id is mandatory" in prep_missing_model.json()["detail"]
+
+        # Step 3: Validate prepare-prompt rejects invalid model_id in avatar mode
+        prep_invalid_model = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": "non_existent_model_xyz",
+                "selected_styles": ["Fashion Studio"],
+            },
+        )
+        assert prep_invalid_model.status_code == 400
+        assert "Invalid model_id" in prep_invalid_model.json()["detail"]
+
+        # Step 4: Validate generate rejects missing model_id in avatar mode
+        gen_missing_model = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": None,
+                "image_count": 2,
+            },
+        )
+        assert gen_missing_model.status_code == 400
+        assert "model_id is mandatory" in gen_missing_model.json()["detail"]
+
+        # Step 5: Validate generate rejects invalid model_id in avatar mode
+        gen_invalid_model = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": "fake_model_999",
+                "image_count": 2,
+            },
+        )
+        assert gen_invalid_model.status_code == 400
+        assert "Invalid model_id" in gen_invalid_model.json()["detail"]
+
+        # Step 6: Valid model_id succeeds
+        prep_valid = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": "model_male_01",
+                "selected_styles": ["Fashion Studio"],
+            },
+        )
+        assert prep_valid.status_code == 200
+        prep_body = prep_valid.json()
+        assert prep_body["workflow_mode"] == "avatar_photoshoot"
+        assert prep_body["workflow_summary"]["use_model"] is True
+        assert "Arjun" in prep_body["workflow_summary"]["model_name"]
+
+        # Step 7: Generation with valid model succeeds
+        gen_valid = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "avatar_photoshoot",
+                "use_model": True,
+                "model_id": "model_male_01",
+                "selected_styles": ["Fashion Studio", "Editorial"],
+                "image_count": 2,
+            },
+        )
+        assert gen_valid.status_code == 200
+        gen_body = gen_valid.json()
+        assert gen_body["workflow_mode"] == "avatar_photoshoot"
+        job_id = gen_body["job_id"]
+
+        # Check job in database
+        job_doc = await db["photoshoot_jobs"].find_one({"job_id": job_id})
+        assert job_doc is not None
+        assert job_doc["workflow_mode"] == "avatar_photoshoot"
+        assert job_doc["use_model"] is True
+        assert job_doc["model_id"] == "model_male_01"
+
+
+# ---------------------------------------------------------------------------
+# TEST G: Product Photography Mode Validation & Strict Product-Only
+# ---------------------------------------------------------------------------
+async def test_product_photography_mode_validation():
+    """
+    Validates product_photography mode:
+    1. model_id is not required
+    2. Does not assign an AI model (use_model=False, model_id=None)
+    3. Even if model_id is accidentally passed, forces product-only (use_model=False, model_id=None)
+    4. Generates product-only still life prompts prohibiting human models/mannequins
+    """
+    db = get_database()
+    user_id, token = await create_auth_user(db, name="Product Mode Tester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    img_bytes = create_dummy_image_bytes(500, 500, "orange")
+    files = [("files", ("diffuser_bottle.jpg", img_bytes, "image/jpeg"))]
+    upload_data = {
+        "product_category": "Home Fragrance",
+        "workflow_mode": "product_photography",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Step 1: Upload with workflow_mode = product_photography
+        up_resp = await ac.post("/api/v1/product-photoshoot/upload", headers=headers, files=files, data=upload_data)
+        assert up_resp.status_code == 200
+        up_body = up_resp.json()
+        assert up_body["workflow_mode"] == "product_photography"
+        session_id = up_body["session_id"]
+
+        # Step 2: Prepare prompt without model succeeds and forces product-only
+        prep_resp = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "product_photography",
+                "custom_prompt": "Warm ambient lighting on stone plinth",
+                "selected_styles": ["Studio Premium", "Luxury Cinematic"],
+            },
+        )
+        assert prep_resp.status_code == 200
+        prep_body = prep_resp.json()
+        assert prep_body["workflow_mode"] == "product_photography"
+        assert prep_body["workflow_summary"]["use_model"] is False
+        assert prep_body["workflow_summary"]["model_name"] == "None (Product Only)"
+
+        # Step 3: Prepare prompt with accidental model_id forces use_model=False
+        prep_accidental_model = await ac.post(
+            "/api/v1/product-photoshoot/prepare-prompt",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "product_photography",
+                "use_model": True,
+                "model_id": "model_female_01",
+                "selected_styles": ["Marketplace White"],
+            },
+        )
+        assert prep_accidental_model.status_code == 200
+        prep_acc_body = prep_accidental_model.json()
+        assert prep_acc_body["workflow_mode"] == "product_photography"
+        assert prep_acc_body["workflow_summary"]["use_model"] is False
+        assert prep_acc_body["workflow_summary"]["model_name"] == "None (Product Only)"
+
+        # Step 4: Generate in product_photography mode succeeds without model
+        gen_resp = await ac.post(
+            "/api/v1/product-photoshoot/generate",
+            headers=headers,
+            json={
+                "session_id": session_id,
+                "workflow_mode": "product_photography",
+                "selected_styles": ["Studio Premium", "Minimal"],
+                "image_count": 2,
+            },
+        )
+        assert gen_resp.status_code == 200
+        gen_body = gen_resp.json()
+        assert gen_body["workflow_mode"] == "product_photography"
+        job_id = gen_body["job_id"]
+
+        # Check job in database
+        job_doc = await db["photoshoot_jobs"].find_one({"job_id": job_id})
+        assert job_doc is not None
+        assert job_doc["workflow_mode"] == "product_photography"
+        assert job_doc["use_model"] is False
+        assert job_doc["model_id"] is None
+
+        # Check session in database
+        sess_doc = await db["photoshoot_sessions"].find_one({"session_id": session_id})
+        assert sess_doc is not None
+        assert sess_doc["workflow_mode"] == "product_photography"
+        assert sess_doc["use_model"] is False
+        assert sess_doc["model_id"] is None
+
+
+# ---------------------------------------------------------------------------
+# TEST H: 10 Canonical Photography Styles and Preview URLs
+# ---------------------------------------------------------------------------
+async def test_canonical_photography_styles_and_preview_urls():
+    """
+    Validates:
+    1. Styles filtering by workflow_mode
+    2. Presence of all 10 canonical styles across modes
+    3. Every style has a valid non-empty preview_url
+    """
+    db = get_database()
+    user_id, token = await create_auth_user(db, name="Styles Tester")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    canonical_10_names = {
+        "Studio Premium",
+        "Luxury Cinematic",
+        "Marketplace White",
+        "Lifestyle",
+        "Minimal",
+        "Top-Down",
+        "Close-Up",
+        "Campaign Photography",
+        "Editorial",
+        "Fashion Studio",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Styles for avatar_photoshoot mode
+        r_avatar = await ac.get("/api/v1/product-photoshoot/styles?workflow_mode=avatar_photoshoot", headers=headers)
+        assert r_avatar.status_code == 200
+        b_avatar = r_avatar.json()
+        assert b_avatar["workflow_mode"] == "avatar_photoshoot"
+        assert b_avatar["use_model"] is True
+        avatar_styles = b_avatar["styles"]
+        assert len(avatar_styles) >= 10
+        assert all(s["requires_model"] is True for s in avatar_styles)
+        # Every style must have a valid preview_url
+        assert all(s["preview_url"] and s["preview_url"].startswith("https://") for s in avatar_styles)
+        avatar_style_names = {s["name"] for s in avatar_styles}
+        for name in canonical_10_names:
+            assert name in avatar_style_names, f"Expected canonical style '{name}' in avatar styles"
+
+        # 2. Styles for product_photography mode
+        r_product = await ac.get("/api/v1/product-photoshoot/styles?workflow_mode=product_photography", headers=headers)
+        assert r_product.status_code == 200
+        b_product = r_product.json()
+        assert b_product["workflow_mode"] == "product_photography"
+        assert b_product["use_model"] is False
+        product_styles = b_product["styles"]
+        assert len(product_styles) >= 10
+        assert all(s["requires_model"] is False for s in product_styles)
+        # Every style must have a valid preview_url
+        assert all(s["preview_url"] and s["preview_url"].startswith("https://") for s in product_styles)
+        product_style_names = {s["name"] for s in product_styles}
+        for name in canonical_10_names:
+            assert name in product_style_names, f"Expected canonical style '{name}' in product styles"
+
+        # 3. Gallery filtering by workflow_mode
+        r_gal_avatar = await ac.get("/api/v1/product-photoshoot/gallery?workflow_mode=avatar_photoshoot", headers=headers)
+        assert r_gal_avatar.status_code == 200
+        assert r_gal_avatar.json()["success"] is True
+
+        r_gal_product = await ac.get("/api/v1/product-photoshoot/gallery?workflow_mode=product_photography", headers=headers)
+        assert r_gal_product.status_code == 200
+        assert r_gal_product.json()["success"] is True
+
+
+
 
 

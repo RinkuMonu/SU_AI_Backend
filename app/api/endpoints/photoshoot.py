@@ -77,6 +77,7 @@ def _get_user_id(current_user: dict) -> str:
 async def upload_product_images(
     files: List[UploadFile] = File(...),
     session_id: Optional[str] = Form(None),
+    workflow_mode: Optional[str] = Form(None),
     product_category: Optional[str] = Form(None),
     angles: Optional[str] = Form(None),
     current_user: dict = Depends(get_current_user),
@@ -98,6 +99,7 @@ async def upload_product_images(
         user_id=user_id,
         files=files,
         session_id=session_id,
+        workflow_mode=workflow_mode,
         product_category=product_category,
         angles=angles_list,
     )
@@ -210,17 +212,20 @@ async def get_styles(
     category: Optional[str] = Query(None, description="Product category hint"),
     use_model: bool = Query(False, description="Whether an AI model will be featured"),
     model_id: Optional[str] = Query(None, description="Selected AI model ID"),
+    workflow_mode: Optional[str] = Query(None, description="avatar_photoshoot or product_photography"),
     current_user: dict = Depends(get_current_user),
 ):
     styles = PhotoshootService.get_photography_styles(
         category=category,
         use_model=use_model,
         model_id=model_id,
+        workflow_mode=workflow_mode,
     )
     return PhotographyStylesResponse(
         success=True,
         category=category or "All",
-        use_model=use_model,
+        use_model=use_model if workflow_mode is None else (workflow_mode == "avatar_photoshoot"),
+        workflow_mode=workflow_mode,
         styles=styles,
     )
 
@@ -239,6 +244,7 @@ async def prepare_prompt_json(
         db=db,
         user_id=user_id,
         session_id=payload.session_id,
+        workflow_mode=payload.workflow_mode,
         custom_prompt=payload.custom_prompt,
         language=payload.language or "en",
         use_model=bool(payload.use_model),
@@ -251,6 +257,7 @@ async def prepare_prompt_json(
 @router.post("/prepare-prompt-audio", response_model=PreparePromptResponse, summary="Synthesize prompt with optional audio voice instruction")
 async def prepare_prompt_audio(
     session_id: str = Form(...),
+    workflow_mode: Optional[str] = Form(None),
     custom_prompt: Optional[str] = Form(None),
     language: Optional[str] = Form("en"),
     use_model: bool = Form(False),
@@ -274,6 +281,7 @@ async def prepare_prompt_audio(
         db=db,
         user_id=user_id,
         session_id=session_id,
+        workflow_mode=workflow_mode,
         custom_prompt=custom_prompt,
         language=language,
         use_model=use_model,
@@ -298,6 +306,7 @@ async def generate_photoshoot(
         db=db,
         user_id=user_id,
         session_id=payload.session_id,
+        workflow_mode=payload.workflow_mode,
         selected_enhanced_image_ids=payload.selected_enhanced_image_ids,
         product_category=payload.product_category,
         use_model=payload.use_model,
@@ -351,6 +360,7 @@ async def get_gallery(
     limit: int = Query(12, ge=1, le=50),
     category: Optional[str] = Query(None),
     use_model: Optional[bool] = Query(None, description="Filter by AI model mode"),
+    workflow_mode: Optional[str] = Query(None, description="avatar_photoshoot or product_photography"),
     sort_by: Optional[str] = Query("desc", description="Sort order: 'desc' (newest first) or 'asc' (oldest first)"),
     current_user: dict = Depends(get_current_user),
     db=Depends(get_database),
@@ -363,6 +373,7 @@ async def get_gallery(
         limit=limit,
         category=category,
         use_model=use_model,
+        workflow_mode=workflow_mode,
         sort_by=sort_by,
     )
     return GalleryResponse(**result)

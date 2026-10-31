@@ -46,6 +46,7 @@ class ProductPhotoshootSession(MongoBaseModel):
     model_config = ConfigDict(protected_namespaces=())
     session_id: str = Field(default_factory=lambda: f"sess_{uuid.uuid4().hex[:12]}")
     user_id: str
+    workflow_mode: Optional[str] = "product_photography"  # avatar_photoshoot, product_photography
     title: Optional[str] = "Untitled Photoshoot"
     product_category: Optional[str] = None
     product_type: Optional[str] = None
@@ -71,6 +72,7 @@ class PhotoshootGenerationJob(MongoBaseModel):
     job_id: str = Field(default_factory=lambda: f"job_{uuid.uuid4().hex[:12]}")
     session_id: str
     user_id: str
+    workflow_mode: Optional[str] = "product_photography"  # avatar_photoshoot, product_photography
     status: str = "pending"  # pending, processing, completed, failed
     progress_percent: int = 0
     total_images: int = 5
