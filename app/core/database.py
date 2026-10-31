@@ -8,16 +8,23 @@ try:
 except Exception:
     pass
 
+import asyncio
+from typing import Any
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from app.core.config import settings
 
 class Database:
     client: AsyncIOMotorClient = None
     db: AsyncIOMotorDatabase = None
+    loop: Any = None
 
 db_manager = Database()
 
 def connect_to_mongo():
+    try:
+        db_manager.loop = asyncio.get_running_loop()
+    except RuntimeError:
+        db_manager.loop = None
     db_manager.client = AsyncIOMotorClient(settings.MONGO_URI)
     db_manager.db = db_manager.client[settings.DATABASE_NAME]
     print("Connected to MongoDB.")
@@ -102,6 +109,12 @@ def close_mongo_connection():
         print("Closed MongoDB connection.")
 
 def get_database() -> AsyncIOMotorDatabase:
+    try:
+        current_loop = asyncio.get_running_loop()
+        if db_manager.loop is not None and db_manager.loop != current_loop:
+            connect_to_mongo()
+    except RuntimeError:
+        pass
     if db_manager.db is None or db_manager.client is None:
         connect_to_mongo()
     return db_manager.db

@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 
 
 class ProductDetail(BaseModel):
@@ -53,7 +53,19 @@ class GenerateContentRequest(BaseModel):
     # Manual branding settings (applied when use_brand_kit=False)
     brand_name: Optional[str] = None
     brand_voice: Optional[str] = None
-    brand_colors: Optional[List[str]] = None
+    brand_colors: Optional[Union[List[str], Dict[str, Any], Any]] = None
+    brand_kit_id: Optional[str] = None
+    brand_font: Optional[str] = None
+    brand_tone: Optional[str] = None
+    logo_url: Optional[str] = None
+    include_logo: Optional[bool] = False
+    include_text_on_image: Optional[bool] = False
+    include_offer: Optional[bool] = False
+    offer_text: Optional[str] = None
+    generate_captions: Optional[bool] = True
+    generate_hashtags: Optional[bool] = True
+
+    model_config = {"extra": "allow"}
     target_audience: Optional[str] = None
     tone: Optional[str] = None
     cta: Optional[str] = None
