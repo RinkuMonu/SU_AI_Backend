@@ -587,6 +587,14 @@ class PayinService:
                     plan_id=transaction["plan_id"],
                     billing_cycle=cycle
                 )
+
+            # Automatically generate invoice and send MSG91 invoice email for verified payment
+            try:
+                from app.services.invoice_service import InvoiceService
+                await InvoiceService.send_invoice_email(db, updated_tx)
+            except Exception as mail_ex:
+                logger.error("Error in automated invoice email dispatch for %s: %s", order_id, mail_ex)
+
             return {"success": True, "status": "success", "message": "Payment verified and plan activated"}
             
         elif response_code in ["101", "PENDING", "INITIATED"] or payload_status in ["PENDING", "INITIATED"]:

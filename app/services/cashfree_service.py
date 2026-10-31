@@ -373,12 +373,16 @@ class CashfreeService:
                 except Exception as ex:
                     logger.error("Failed to activate user subscription in SubscriptionService: %s", ex)
 
-                # Update transaction record
+                # Update transaction record and dispatch MSG91 invoice email
                 try:
                     await db["payment_transactions"].update_one(
                         {"order_id": sub_id},
                         {"$set": {"status": "success", "completed_at": now, "verified_at": now, "updated_at": now}}
                     )
+                    from app.services.invoice_service import InvoiceService
+                    cf_tx = await db["payment_transactions"].find_one({"order_id": sub_id})
+                    if cf_tx and not cf_tx.get("invoice_email_sent"):
+                        await InvoiceService.send_invoice_email(db, cf_tx)
                 except Exception as e:
                     logger.warning("Failed to update payment_transactions on webhook active: %s", e)
 
@@ -459,8 +463,12 @@ class CashfreeService:
                     {"order_id": subscription_id},
                     {"$set": {"status": "success", "completed_at": datetime.now(timezone.utc), "verified_at": datetime.now(timezone.utc)}}
                 )
-            except Exception:
-                pass
+                from app.services.invoice_service import InvoiceService
+                cf_tx = await db["payment_transactions"].find_one({"order_id": subscription_id})
+                if cf_tx and not cf_tx.get("invoice_email_sent"):
+                    await InvoiceService.send_invoice_email(db, cf_tx)
+            except Exception as e:
+                logger.warning("Could not dispatch invoice email during subscription status sync: %s", e)
 
         return {
             "success": is_active,

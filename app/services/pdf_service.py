@@ -143,6 +143,7 @@ class PDFService:
         # Header: Branding on Left, Invoice Details on Right
         txn_id = transaction.get("transaction_id") or "GROWG---"
         order_id = transaction.get("order_id") or "N/A"
+        inv_no = transaction.get("invoice_number")
         date_str = cls._format_dt(
             transaction.get("completed_at") or transaction.get("created_at")
         )
@@ -159,14 +160,23 @@ class PDFService:
         # Status badge color
         status_color = "#38A169" if status == "SUCCESS" else ("#E53E3E" if status in ["FAILED", "CANCELLED"] else "#DD6B20")
 
-        meta_cell = [
-            Paragraph(f"<b>PAYMENT RECEIPT</b>", ParagraphStyle("BigRec", parent=title_style, alignment=2, fontSize=16, textColor=colors.HexColor("#2B6CB0"))),
+        meta_items = [
+            Paragraph(f"<b>TAX INVOICE / RECEIPT</b>", ParagraphStyle("BigRec", parent=title_style, alignment=2, fontSize=15, textColor=colors.HexColor("#2B6CB0"))),
             Spacer(1, 4),
-            Paragraph(f"<b>Receipt No:</b> {txn_id}", header_meta_style),
+        ]
+        if inv_no:
+            meta_items.append(Paragraph(f"<b>Invoice No:</b> {inv_no}", header_meta_style))
+            if txn_id and txn_id != inv_no:
+                meta_items.append(Paragraph(f"<b>Transaction ID:</b> {txn_id}", header_meta_style))
+        else:
+            meta_items.append(Paragraph(f"<b>Receipt No:</b> {txn_id}", header_meta_style))
+
+        meta_items.extend([
             Paragraph(f"<b>Order ID:</b> {order_id}", header_meta_style),
             Paragraph(f"<b>Date:</b> {date_str}", header_meta_style),
             Paragraph(f"<b>Status:</b> <font color='{status_color}'><b>{status}</b></font>", header_meta_style),
-        ]
+        ])
+        meta_cell = meta_items
 
         top_table = Table(
             [[brand_cell, meta_cell]],

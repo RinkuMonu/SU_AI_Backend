@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, Request, HTTPException, Query, Header
+from fastapi import APIRouter, Depends, Request, HTTPException, Query, Header, Response, status
 from typing import Any, Dict, Optional, List
 from datetime import datetime, timezone
 from pymongo.database import Database
 
-from app.api.dependencies import get_current_user, get_database
+from app.api.dependencies import get_current_user, get_database, _extract_user_id
+from app.core.security import get_current_user_optional, decode_access_token
+from app.services.invoice_service import InvoiceService
+from app.services.pdf_service import PDFService
 from app.schemas.payment import (
     CashfreeSubscriptionCreateRequest,
     CashfreeSubscriptionResponse,
@@ -359,3 +362,148 @@ async def verify_subscription(
         subscription_id=sub_id,
         current_user_id=user_id
     )
+
+
+@router.get("/transactions/{transaction_id}/receipt")
+async def download_transaction_receipt_alias(
+    transaction_id: str,
+    token: Optional[str] = Query(None, description="Secure download token from invoice email"),
+    current_user: Optional[dict] = Depends(get_current_user_optional),
+    db: Database = Depends(get_database)
+):
+    """
+    Generates and returns an official branded PDF receipt / tax invoice for a transaction.
+    Accessible with authenticated user ownership OR valid secure token from invoice email link.
+    """
+    from bson import ObjectId
+    clean_id = (transaction_id or "").strip()
+    query = [
+        {"transaction_id": clean_id},
+        {"transaction_id": clean_id.upper()},
+        {"order_id": clean_id},
+        {"order_id": clean_id.upper()}
+    ]
+    if ObjectId.is_valid(clean_id):
+        query.append({"_id": ObjectId(clean_id)})
+
+    tx = await db["payment_transactions"].find_one({"$or": query})
+    if not tx:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Transaction '{transaction_id}' not found."
+        )
+
+    # 1. Check secure token authentication
+    has_valid_token = False
+    if token:
+        clean_tok = token.strip()
+        pub_tx = tx.get("transaction_id") or clean_id
+        ord_id = tx.get("order_id") or clean_id
+        if InvoiceService.verify_secure_token(clean_tok, pub_tx, ord_id) or clean_tok == tx.get("invoice_download_token"):
+            has_valid_token = True
+        else:
+            jwt_payload = decode_access_token(clean_tok)
+            if jwt_payload and str(jwt_payload.get("sub")) == str(tx.get("user_id")):
+                has_valid_token = True
+
+    # 2. Check authenticated user session
+    if not has_valid_token:
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required or valid invoice download token missing."
+            )
+        user_id = _extract_user_id(current_user)
+        if str(tx.get("user_id")) != str(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: You do not have permission to download this receipt."
+            )
+
+    if not tx.get("invoice_number"):
+        tx = await InvoiceService.ensure_invoice_record(db, tx)
+
+    if current_user:
+        if not tx.get("user_name") or tx.get("user_name") == "Valued Customer":
+            tx["user_name"] = current_user.get("name") or current_user.get("full_name") or "Valued Customer"
+        if not tx.get("user_email") or tx.get("user_email") == "N/A":
+            tx["user_email"] = current_user.get("email") or "N/A"
+        if not tx.get("user_phone") or tx.get("user_phone") == "N/A":
+            tx["user_phone"] = current_user.get("phone_number") or current_user.get("mobile") or "N/A"
+
+    pdf_bytes = PDFService.generate_receipt_pdf(tx)
+    pub_id = tx.get("transaction_id") or tx.get("order_id") or tx.get("invoice_number") or "receipt"
+    filename = f"receipt_{pub_id}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Type": "application/pdf"
+        }
+    )
+
+
+@router.post("/transactions/{transaction_id}/resend-invoice-email")
+async def resend_invoice_email_alias(
+    transaction_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Retries sending the MSG91 invoice email for a successful transaction.
+    Safe and idempotent: Reuses existing invoice number without generating duplicate records.
+    """
+    user_id = _extract_user_id(current_user)
+    return await InvoiceService.retry_invoice_email(
+        db,
+        transaction_id_or_order_id=transaction_id,
+        authenticated_user_id=user_id
+    )
+
+
+@router.get("/transactions/{transaction_id}/invoice-status")
+async def get_invoice_email_status_alias(
+    transaction_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Returns invoice number, secure download URL, and MSG91 email delivery audit status for a transaction.
+    """
+    user_id = _extract_user_id(current_user)
+    clean_id = (transaction_id or "").strip()
+    from bson import ObjectId
+    query = [
+        {"transaction_id": clean_id},
+        {"transaction_id": clean_id.upper()},
+        {"order_id": clean_id},
+        {"order_id": clean_id.upper()}
+    ]
+    if ObjectId.is_valid(clean_id):
+        query.append({"_id": ObjectId(clean_id)})
+
+    tx = await db["payment_transactions"].find_one({"$or": query})
+    if not tx:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Transaction '{transaction_id}' not found.")
+    if str(tx.get("user_id")) != str(user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: You do not own this transaction.")
+
+    return {
+        "success": True,
+        "transaction_id": tx.get("transaction_id"),
+        "order_id": tx.get("order_id"),
+        "invoice_number": tx.get("invoice_number") or InvoiceService.generate_invoice_number(tx),
+        "invoice_download_url": tx.get("invoice_download_url"),
+        "status": tx.get("status"),
+        "email_delivery": {
+            "sent": tx.get("invoice_email_sent", False),
+            "status": tx.get("invoice_email_status", "NOT_SENT"),
+            "recipient": tx.get("invoice_email_recipient") or tx.get("user_email"),
+            "sent_at": tx.get("invoice_email_sent_at"),
+            "attempts": tx.get("invoice_email_attempts", 0),
+            "last_error": tx.get("invoice_email_last_error"),
+            "last_attempt_at": tx.get("invoice_email_last_attempt_at")
+        }
+    }

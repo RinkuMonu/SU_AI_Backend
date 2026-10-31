@@ -9,7 +9,7 @@ from app.core.security import get_password_hash
 async def test_otp_verification_direct_and_idempotent():
     db = get_database()
     col = await AuthService.get_otp_collection()
-    test_phone = "+917857889083"
+    test_phone = "+919999900001"
     test_otp = "324056"
     now = datetime.now(timezone.utc)
 
@@ -32,20 +32,20 @@ async def test_otp_verification_direct_and_idempotent():
     })
 
     # 3. First verification call: should succeed and create phone_verification
-    user = await AuthService.verify_phone_otp("+91-7857889083", test_otp)
+    user = await AuthService.verify_phone_otp("+91-9999900001", test_otp)
     assert user is not None
     assert user.phone_number == test_phone
 
     # 4. Immediate second verification call (duplicate submit / race condition):
     # Should succeed idempotently via phone_verifications without throwing "OTP expired or invalid."
-    user2 = await AuthService.verify_phone_otp("+91-7857889083", test_otp)
+    user2 = await AuthService.verify_phone_otp("+91-9999900001", test_otp)
     assert user2 is not None
     assert user2.phone_number == test_phone
 
 @pytest.mark.asyncio
 async def test_otp_dev_test_bypass():
     # Number in TEST_DEVELOPER_NUMBERS should accept 123456
-    user = await AuthService.verify_phone_otp("+91-7857889083", "123456")
+    user = await AuthService.verify_phone_otp("+91-9876543210", "123456")
     assert user is not None
-    assert user.phone_number == "+917857889083"
+    assert user.phone_number == "+919876543210"
 

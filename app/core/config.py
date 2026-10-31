@@ -212,6 +212,18 @@ class Settings(BaseSettings):
     MSG91_WHATSAPP_LANGUAGE: str = "en"
     MSG91_WHATSAPP_NAMESPACE: str = "a84d2159_8fa6_4354_9967_74f013129d57"
 
+    # MSG91 Email Configuration
+    MSG91_EMAIL_API_URL: str = "https://control.msg91.com/api/v5/email/send"
+    MSG91_EMAIL_AUTH_KEY: Optional[str] = None
+    MSG91_EMAIL_TEMPLATE_ID: str = "auto_pay_templete"
+    MSG91_EMAIL_FROM_EMAIL: str = "no-reply@dhandagrow.com"
+    MSG91_EMAIL_FROM_NAME: str = "dhandagrow"
+    MSG91_EMAIL_DOMAIN: str = "dhandagrow.com"
+    MSG91_EMAIL_REPLY_TO: Optional[str] = "dhandagrow@dhandagrow.com"
+
+    def get_msg91_email_auth_key(self) -> Optional[str]:
+        return self.MSG91_EMAIL_AUTH_KEY or self.MSG91_AUTH_KEY
+
     _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
     model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="allow")
 
