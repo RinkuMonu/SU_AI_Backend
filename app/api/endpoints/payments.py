@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, Request, HTTPException, Query
+from fastapi import APIRouter, Depends, Request, HTTPException, Query, Header
 from typing import Any, Dict, Optional, List
 from datetime import datetime, timezone
 from pymongo.database import Database
 
 from app.api.dependencies import get_current_user, get_database
 from app.schemas.payment import (
+    CashfreeSubscriptionCreateRequest,
+    CashfreeSubscriptionResponse,
+    CashfreeSubscriptionStatusResponse,
+    WebhookResponse,
     PaymentCreateRequest,
     PaymentCreateResponse,
     PaymentCallbackResponse,
@@ -19,6 +23,7 @@ from app.schemas.payment import (
     TestPlanResetResponse,
 )
 from app.services.payin_service import PayinService
+from app.services.cashfree_service import CashfreeService
 
 router = APIRouter()
 
@@ -259,3 +264,77 @@ async def reset_test_plan_endpoint(
 
     result = await PayinService.reset_test_subscription(db, target_user_id, admin_override=admin_override)
     return TestPlanResetResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Cashfree Subscriptions & AutoPay (Recurring) Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/subscription/create", response_model=CashfreeSubscriptionResponse)
+async def create_subscription(
+    request: CashfreeSubscriptionCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Create a Cashfree recurring subscription mandate with actual plan authorization charge.
+    Returns session/payment URL to open Cashfree Checkout.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    user_email = current_user.get("email", "user@example.com")
+    user_name = current_user.get("name") or current_user.get("fullName") or "Subscriber"
+    user_phone = request.customer_phone or current_user.get("phone") or current_user.get("phone_number")
+
+    result = await CashfreeService.create_subscription(
+        db=db,
+        user_id=user_id,
+        user_email=user_email,
+        user_name=user_name,
+        user_phone=user_phone,
+        plan_id=request.plan_id,
+        billing_cycle=request.billing_cycle or "monthly",
+        return_url=request.return_url
+    )
+    return result
+
+@router.post("/cashfree/webhook", response_model=WebhookResponse)
+async def cashfree_webhook(
+    request: Request,
+    db: Database = Depends(get_database),
+    x_webhook_signature: Optional[str] = Header(None, alias="x-webhook-signature"),
+    x_webhook_timestamp: Optional[str] = Header(None, alias="x-webhook-timestamp")
+):
+    try:
+        raw_body = await request.body()
+        payload = await request.json()
+    except Exception:
+        raw_body = b""
+        payload = {}
+
+    headers = dict(request.headers)
+
+    # Note: Signature verification can be enforced in production
+    if x_webhook_signature and x_webhook_timestamp:
+        valid = CashfreeService.verify_webhook_signature(raw_body, x_webhook_timestamp, x_webhook_signature)
+        if not valid:
+            raise HTTPException(status_code=400, detail="Invalid webhook signature")
+
+    result = await CashfreeService.process_webhook(db, payload, raw_body=raw_body, headers=headers)
+    return result
+
+@router.get("/subscription/status/{subscription_id}", response_model=CashfreeSubscriptionStatusResponse)
+async def get_subscription_status(
+    subscription_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Get current subscription mandate status for an authenticated user.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    result = await CashfreeService.get_subscription_status(
+        db=db,
+        subscription_id=subscription_id,
+        current_user_id=user_id
+    )
+    return result

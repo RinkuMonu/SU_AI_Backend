@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     PAYIN_TOKEN: str = ""
     PAYIN_STATUS_URL: Optional[str] = None
     PAYIN_CALLBACK_URL: Optional[str] = None
+
+    # Cashfree Subscriptions & AutoPay (Recurring)
+    CASHFREE_APP_ID: str = ""
+    CASHFREE_SECRET_KEY: str = ""
+    CASHFREE_ENV: str = "TEST"
+    CASHFREE_API_VERSION: str = "2023-08-01"
     
     GEOAPIFY_API_KEY: str = ""
     FIRECRAWL_API_KEY: Optional[str] = None
