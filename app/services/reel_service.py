@@ -286,12 +286,12 @@ class ReelService:
                 product_images.extend([img for img in product["images"] if img and isinstance(img, str) and img != primary_image])
 
             # -------------------------------------------------------------
-            # Stage B: Gemini Intelligent Storyboard Planning
+            # Stage B: OpenAI Intelligent Storyboard Planning
             # -------------------------------------------------------------
             await self._update_job(job_id, {
                 "status": "generating_script",
                 "progress": 25,
-                "stage": "Planning commercial storyboard with Gemini"
+                "stage": "Planning commercial storyboard with OpenAI"
             })
             
             use_bk = getattr(request, "use_brand_kit", False) and bool(brand and any(brand.values()))

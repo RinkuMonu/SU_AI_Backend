@@ -142,7 +142,7 @@ def get_reel_script_prompt(
         user_p = product.get("prompt") or product.get("custom_prompt") or additional_instruction or prod_name
         v_style = product.get("video_style", "Cinematic 8K Photoreal")
         mode_directives = f"""
-# GENERATION MODE: AI PROMPT TO REEL (GOOGLE VEO 3.1 & GEMINI STUDIO)
+# GENERATION MODE: AI PROMPT TO REEL (COMMERCIAL AI STUDIO)
 - THE CORE CREATIVE VISION: "{user_p}"
 - VISUAL STYLE: {v_style}
 - This is a custom AI-directed reel brought to life directly from the user's prompt.

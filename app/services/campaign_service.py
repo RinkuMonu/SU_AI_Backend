@@ -13,15 +13,9 @@ class CampaignService:
     def __init__(self, db):
         self.db = db
 
-    def _get_gemini_client(self):
-        if not settings.GEMINI_API_KEY:
-            return None
-        try:
-            import google.genai as genai
-            return genai.Client(api_key=settings.GEMINI_API_KEY)
-        except Exception as e:
-            logger.warning(f"Could not initialize google.genai Client: {e}")
-            return None
+    def _get_ai_provider(self):
+        from app.ai.factory import AIProviderFactory
+        return AIProviderFactory.get_provider(preferred="openai", tier="fast")
 
     async def generate_campaign_data(
         self,
@@ -73,35 +67,17 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, with th
 """
 
         raw_text = ""
-        client = self._get_gemini_client()
-
-        models_to_try = [
-            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro"),
-            getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-            getattr(settings, "GEMINI_FAST_MODEL", "gemini-3.8-flash"),
-            "gemini-3.8-flash",
-            "gemini-flash-latest",
-            "gemini-3.8-pro",
-            "gemini-pro-latest",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-        ]
-
-        if client:
-            for model_name in models_to_try:
-                try:
-                    logger.info(f"Generating campaign data using Gemini model: {model_name}")
-                    res = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if res and res.text:
-                        raw_text = res.text.strip()
-                        logger.info(f"Gemini campaign generation succeeded with {model_name}")
-                        break
-                except Exception as e:
-                    logger.warning(f"Gemini campaign generation failed with {model_name}: {e}")
-                    continue
+        try:
+            provider = self._get_ai_provider()
+            logger.info("Generating campaign data using OpenAI GPT-4.1 Mini...")
+            res = await provider.generate_text(
+                prompt=prompt,
+                system_prompt="You are an elite Chief Marketing Officer (CMO) and digital growth strategist. Return ONLY valid JSON."
+            )
+            raw_text = res.get("text", "").strip() if isinstance(res, dict) else str(res).strip()
+            logger.info("OpenAI campaign generation succeeded")
+        except Exception as e:
+            logger.warning(f"OpenAI campaign generation failed: {e}")
 
         parsed = {}
         if raw_text:
@@ -121,7 +97,7 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, with th
                     except Exception:
                         pass
 
-        # Robust fallbacks in case of unexpected Gemini response structure
+        # Robust fallbacks in case of unexpected OpenAI response structure
         if not parsed or not isinstance(parsed, dict):
             parsed = {
                 "strategy": f"Comprehensive multi-channel strategy for {name} targeting {target_audience}. Focus on building brand resonance, highlighting unique value propositions, and driving measurable {goal}.",
@@ -172,31 +148,20 @@ Instructions:
 - Highlight benefits, urgency, and a call to action.
 - Return ONLY the ad copy text, without any markdown formatting, quotation marks, or surrounding labels."""
 
-        client = self._get_gemini_client()
         ad_copy = None
-
-        if client:
-            models = [
-                getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-                "gemini-3.8-flash",
-                "gemini-flash-latest",
-                "gemini-3.8-pro",
-                "gemini-pro-latest",
-                "gemini-2.5-flash",
-                "gemini-2.5-pro",
-            ]
-            for m in models:
-                try:
-                    res = client.models.generate_content(
-                        model=m,
-                        contents=prompt,
-                    )
-                    if res and res.text:
-                        ad_copy = res.text.strip().strip('"').strip("'")
-                        break
-                except Exception as e:
-                    logger.warning(f"Gemini ad copy failed with model {m}: {e}")
-                    continue
+        try:
+            provider = self._get_ai_provider()
+            logger.info("Generating ad copy using OpenAI GPT-4.1 Mini...")
+            res = await provider.generate_text(
+                prompt=prompt,
+                system_prompt="You are a direct-response copywriter. Return ONLY the ad copy text without quotes or markdown."
+            )
+            txt = res.get("text", "").strip() if isinstance(res, dict) else str(res).strip()
+            if txt:
+                ad_copy = txt.strip('"').strip("'")
+                logger.info("OpenAI ad copy generation succeeded")
+        except Exception as e:
+            logger.warning(f"OpenAI ad copy generation failed: {e}")
 
         if not ad_copy:
             ad_copy = f"Transform your experience with {name}! ✨ Tailored exclusively for {audience} looking for real results. Don't wait — tap to explore our limited-time launch offer now! 🚀"
@@ -244,7 +209,7 @@ Instructions:
         except Exception as e:
             logger.warning(f"Error fetching product context: {e}")
 
-        # Generate realistic campaign strategy using Gemini API
+        # Generate realistic campaign strategy using OpenAI GPT-4.1 Mini
         ai_data = await self.generate_campaign_data(
             payload=payload,
             business_info=business_info,

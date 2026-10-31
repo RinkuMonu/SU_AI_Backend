@@ -18,18 +18,12 @@ _log = logging.getLogger(__name__)
 
 class PostGenerationService:
 
-    def _get_gemini_client(self):
-        if not settings.GEMINI_API_KEY:
-            return None
-        try:
-            import google.genai as genai
-            return genai.Client(api_key=settings.GEMINI_API_KEY)
-        except Exception as e:
-            _log.warning(f"Could not initialize google.genai Client: {e}")
-            return None
+    def _get_ai_provider(self):
+        from app.ai.factory import AIProviderFactory
+        return AIProviderFactory.get_provider(preferred="openai", tier="fast")
 
     async def _load_reference_images(self, reference_images: list[str]) -> list[Image.Image]:
-        """Loads and prepares reference images as PIL Image objects for Gemini."""
+        """Loads and prepares reference images as PIL Image objects for OpenAI."""
         pil_images = []
         for img_ref in (reference_images or [])[:4]:  # limit to top 4 reference images
             if not img_ref or not isinstance(img_ref, str):
@@ -101,30 +95,12 @@ class PostGenerationService:
         pil_refs = await self._load_reference_images(all_refs)
         has_refs = len(pil_refs) > 0
 
-        client = self._get_gemini_client()
-
-        # Priority list of models with proven Gemini API availability
-        models_to_try = [
-            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-            getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-            "gemini-3.8-flash",
-            "gemini-flash-latest",
-            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro"),
-            "gemini-3.8-pro",
-            "gemini-pro-latest",
-            "gemini-2.5-flash",
-            "gemini-2.5-pro",
-        ]
-        unique_models = []
-        for m in models_to_try:
-            if m not in unique_models:
-                unique_models.append(m)
-
+        provider = self._get_ai_provider()
         extracted_subject = product.get("name") if product and product.get("name") else None
         extracted_traits = None
 
-        # Step 1: Accurate Subject & Trait Extraction via Gemini Multimodal Vision
-        if client and has_refs:
+        # Step 1: Accurate Subject & Trait Extraction via OpenAI Multimodal Vision (gpt-4.1-mini)
+        if has_refs:
             vision_prompt = (
                 "Examine this reference image with extreme visual precision.\n"
                 "Identify:\n"
@@ -132,24 +108,23 @@ class PostGenerationService:
                 "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
                 "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
             )
-            for model_name in unique_models:
-                try:
-                    v_res = client.models.generate_content(
-                        model=model_name,
-                        contents=[*pil_refs, vision_prompt]
-                    )
-                    if v_res and v_res.text:
-                        v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
-                        v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
-                        if v_match:
-                            v_json = json.loads(v_match.group(0))
-                            extracted_subject = v_json.get("subject_name") or extracted_subject
-                            extracted_traits = v_json.get("key_traits")
-                            _log.info(f"Gemini identified reference subject: '{extracted_subject}'")
-                            break
-                except Exception as e:
-                    _log.warning(f"Vision extraction note on {model_name}: {e}")
-                    continue
+            try:
+                v_res = await provider.generate_text(
+                    prompt=vision_prompt,
+                    images=pil_refs,
+                    system_prompt="You are a multimodal vision analyst. Return ONLY valid JSON."
+                )
+                v_text = v_res.get("text", "").strip() if isinstance(v_res, dict) else str(v_res).strip()
+                if v_text:
+                    v_clean = v_text.replace("```json", "").replace("```", "")
+                    v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
+                    if v_match:
+                        v_json = json.loads(v_match.group(0))
+                        extracted_subject = v_json.get("subject_name") or extracted_subject
+                        extracted_traits = v_json.get("key_traits")
+                        _log.info(f"OpenAI vision identified reference subject: '{extracted_subject}'")
+            except Exception as e:
+                _log.warning(f"OpenAI vision extraction note: {e}")
 
         # Step 2: Build Content Prompt with the identified subject and product features anchored
         prompt = build_post_prompt(
@@ -170,33 +145,17 @@ class PostGenerationService:
         )
 
         raw_text = ""
-
-        if client:
-            contents = [*pil_refs, prompt] if has_refs else [prompt]
-            for model_name in unique_models:
-                try:
-                    _log.info(f"Calling Gemini ({model_name}) for {content_type} content...")
-                    response = client.models.generate_content(
-                        model=model_name,
-                        contents=contents
-                    )
-                    if response and response.text:
-                        raw_text = response.text.strip()
-                        _log.info(f"Gemini content generation succeeded with model: {model_name}")
-                        break
-                except Exception as e:
-                    _log.warning(f"Gemini model {model_name} failed: {e}")
-                    continue
-
-        # Fallback to AIProviderFactory if client loop didn't yield text
-        if not raw_text:
-            try:
-                from app.ai.factory import AIProviderFactory
-                provider = AIProviderFactory.get_provider()
-                res = await provider.generate_text(prompt=prompt)
-                raw_text = res.get("text", "") if isinstance(res, dict) else str(res)
-            except Exception as e:
-                _log.error(f"Provider fallback failed: {e}")
+        try:
+            _log.info(f"Calling OpenAI GPT-4.1 Mini for {content_type} content...")
+            c_res = await provider.generate_text(
+                prompt=prompt,
+                images=pil_refs if has_refs else None,
+                system_prompt="You are an expert social media and content marketing strategist. Return ONLY valid JSON."
+            )
+            raw_text = c_res.get("text", "").strip() if isinstance(c_res, dict) else str(c_res).strip()
+            _log.info("OpenAI content generation succeeded")
+        except Exception as e:
+            _log.warning(f"OpenAI content generation error: {e}")
 
         # Clean JSON markdown formatting
         cleaned_json = raw_text

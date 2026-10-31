@@ -20,7 +20,8 @@ from app.core.database import get_database
 from app.services.credit_service import CreditService
 from app.services.subscription_service import SubscriptionService
 from app.services.stt_service import STTService
-from app.ai.gemini_client import get_primary_gemini_client, get_gemini_clients
+# Centralized OpenAI AI Provider
+from app.ai.factory import AIProviderFactory
 from app.models.photoshoot import (
     ProductPhotoshootSession,
     ProductImageAsset,
@@ -496,6 +497,31 @@ class PhotoshootService:
         cls.ENHANCED_DIR.mkdir(parents=True, exist_ok=True)
         cls.FINAL_DIR.mkdir(parents=True, exist_ok=True)
 
+    @classmethod
+    def validate_generation_parameters(
+        cls,
+        mode: str,
+        selected_enhanced_ids: Optional[List[str]] = None,
+        model_id: Optional[str] = None,
+        styles: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """Validates generation parameters according to the selected workflow mode."""
+        clean_mode = (mode or "").strip().lower()
+        if clean_mode not in ("avatar_photoshoot", "product_photography"):
+            return {"valid": False, "error": f"Invalid workflow mode '{mode}'."}
+
+        if not selected_enhanced_ids:
+            return {"valid": False, "error": "At least one enhanced image must be selected."}
+
+        if clean_mode == "avatar_photoshoot":
+            if not model_id or not str(model_id).strip():
+                return {"valid": False, "error": "model_id is mandatory for avatar_photoshoot mode. Please select an AI model."}
+            valid_ids = {m.model_id for m in CURATED_AI_MODELS}
+            if model_id not in valid_ids:
+                return {"valid": False, "error": f"Invalid model_id '{model_id}'."}
+
+        return {"valid": True}
+
     # -----------------------------------------------------------------------
     # PHASE 1: Upload Product Images
     # -----------------------------------------------------------------------
@@ -696,26 +722,21 @@ class PhotoshootService:
         if image_ids:
             target_images = [img for img in orig_images if img.get("image_id") in image_ids] or orig_images
 
-        client = get_primary_gemini_client()
         analysis_data: Optional[Dict[str, Any]] = None
+        images_for_analysis = []
+        for asset in target_images[:4]:
+            raw_rel = asset.get("url", "").lstrip("/")
+            lp = Path(raw_rel)
+            if lp.exists():
+                try:
+                    with open(lp, "rb") as f:
+                        b = f.read()
+                    mime = asset.get("content_type", "image/jpeg")
+                    images_for_analysis.append(f"data:{mime};base64,{base64.b64encode(b).decode('utf-8')}")
+                except Exception as err:
+                    logger.warning(f"Could not load image for analysis {lp}: {err}")
 
-        # Build multimodal parts from uploaded images
-        image_parts = []
-        if client:
-            from google.genai import types
-            for asset in target_images[:4]:
-                raw_rel = asset.get("url", "").lstrip("/")
-                lp = Path(raw_rel)
-                if lp.exists():
-                    try:
-                        with open(lp, "rb") as f:
-                            b = f.read()
-                        mime = asset.get("content_type", "image/jpeg")
-                        image_parts.append(types.Part.from_bytes(data=b, mime_type=mime))
-                    except Exception as err:
-                        logger.warning(f"Could not load image part {lp}: {err}")
-
-        if client and image_parts:
+        if images_for_analysis:
             try:
                 cat_hint = session_doc.get("product_category") or ""
                 cat_context = f"\nUser indicated category: '{cat_hint}'." if cat_hint else ""
@@ -740,20 +761,21 @@ class PhotoshootService:
                     "If a detail is unclear, use 'Unspecified' or 'None detected'."
                 )
 
-                model_name = getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
-                resp = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=[*image_parts, analysis_prompt]
+                provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
+                logger.info("Executing OpenAI GPT-4.1 Mini visual product analysis...")
+                res = await provider.generate_text(
+                    prompt=analysis_prompt,
+                    images=images_for_analysis,
+                    system_prompt="You are a professional product inspector. Return ONLY valid JSON."
                 )
-                raw_text = (resp.text or "").strip()
-                # Clean possible markdown block
+                raw_text = (res.get("text", "") if isinstance(res, dict) else str(res)).strip()
                 if "```" in raw_text:
                     raw_text = re.sub(r"^```(json)?", "", raw_text).strip()
                     raw_text = re.sub(r"```$", "", raw_text).strip()
                 analysis_data = json.loads(raw_text)
+                logger.info("OpenAI visual product analysis succeeded")
             except Exception as e:
-                logger.warning(f"Gemini visual analysis failed or timed out: {e}")
+                logger.warning(f"OpenAI visual analysis failed or timed out: {e}")
 
         # Deterministic visual inspection fallback
         if not analysis_data:
@@ -1095,46 +1117,45 @@ class PhotoshootService:
         brand_logo = analysis.get("brand_logo_and_text")
         logo_note = f", preserving brand logo/label '{brand_logo}'" if brand_logo and brand_logo.lower() != "none detected" else ""
 
-        # Synthesize professional photoshoot generation prompt using Gemini LLM
-        client = get_primary_gemini_client()
+        # Synthesize professional photoshoot generation prompt using OpenAI GPT-4.1 Mini
         prepared_prompt = ""
-
-        if client:
-            try:
-                if resolved_mode == "avatar_photoshoot":
-                    photo_type_desc = (
-                        f"Model-based commercial catalog fashion photoshoot on {model_obj['name'] if model_obj else 'model'}. "
-                        f"Position product accurately and naturally on model while maintaining model identity consistently across images."
-                    )
-                else:
-                    photo_type_desc = (
-                        "Product-only commercial still-life photography. "
-                        "STRICT REQUIREMENT: Do NOT include any human model, person, hands, body parts, or mannequins in this image. "
-                        "Focus on lighting, background, shadows, camera angle, and composition."
-                    )
-
-                sys_prompt = (
-                    "You are a Vogue Commercial Creative Director. "
-                    "Synthesize the following product specifications, styling, and user instructions into a single concise, "
-                    "master photography generation prompt (under 60 words). "
-                    "CRITICAL: Keep the product identity, color, texture, shape, and branding strictly preserved.\n"
-                    f"Product: {p_name} ({colors}, {texture}{logo_note})\n"
-                    f"Photography Mode: {resolved_mode}\n"
-                    f"Photography Specification: {photo_type_desc}\n"
-                    f"Selected Styles/Poses: {', '.join(styles_to_apply)}\n"
-                    f"User Custom Instructions: {user_instruction or 'None'}\n"
-                    "Output ONLY the final generation prompt text."
+        try:
+            if resolved_mode == "avatar_photoshoot":
+                photo_type_desc = (
+                    f"Model-based commercial catalog fashion photoshoot on {model_obj['name'] if model_obj else 'model'}. "
+                    f"Position product accurately and naturally on model while maintaining model identity consistently across images."
                 )
-                model_name = getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3-flash-preview")
-                resp = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=sys_prompt
+            else:
+                photo_type_desc = (
+                    "Product-only commercial still-life photography. "
+                    "STRICT REQUIREMENT: Do NOT include any human model, person, hands, body parts, or mannequins in this image. "
+                    "Focus on lighting, background, shadows, camera angle, and composition."
                 )
-                if resp and resp.text:
-                    prepared_prompt = resp.text.strip().replace("\n", " ")
-            except Exception as e:
-                logger.warning(f"Prompt preparation LLM note: {e}")
+
+            sys_prompt = (
+                "You are a Vogue Commercial Creative Director. "
+                "Synthesize the following product specifications, styling, and user instructions into a single concise, "
+                "master photography generation prompt (under 60 words). "
+                "CRITICAL: Keep the product identity, color, texture, shape, and branding strictly preserved.\n"
+                f"Product: {p_name} ({colors}, {texture}{logo_note})\n"
+                f"Photography Mode: {resolved_mode}\n"
+                f"Photography Specification: {photo_type_desc}\n"
+                f"Selected Styles/Poses: {', '.join(styles_to_apply)}\n"
+                f"User Custom Instructions: {user_instruction or 'None'}\n"
+                "Output ONLY the final generation prompt text."
+            )
+            provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
+            logger.info("Synthesizing photoshoot prompt with OpenAI GPT-4.1 Mini...")
+            res = await provider.generate_text(
+                prompt=sys_prompt,
+                system_prompt="You are an expert commercial photoshoot creative director. Return ONLY the generation prompt."
+            )
+            txt = res.get("text", "").strip() if isinstance(res, dict) else str(res).strip()
+            if txt:
+                prepared_prompt = txt.replace("\n", " ")
+                logger.info("Photoshoot prompt synthesis succeeded")
+        except Exception as e:
+            logger.warning(f"Prompt preparation LLM note: {e}")
 
         if not prepared_prompt:
             styles_part = ", ".join(styles_to_apply)
@@ -1931,14 +1952,42 @@ class PhotoshootService:
     # -----------------------------------------------------------------------
     @classmethod
     async def _generate_and_save_visual(cls, prompt: str, target_path: Path) -> bool:
-        """Calls Flux AI image generation and downloads the result to local disk."""
+        """Calls OpenAI gpt-image-1-mini to generate photoshoot image and saves to disk."""
+        try:
+            from app.ai.providers.openai_provider import OpenAIProvider
+            provider = OpenAIProvider()
+            logger.info("Generating photoshoot image using OpenAI gpt-image-1-mini...")
+            res = await provider.generate_image(
+                prompt=prompt,
+                size="1024x1024",
+                model=getattr(settings, "OPENAI_IMAGE_MODEL", "gpt-image-1-mini")
+            )
+            if res.get("url"):
+                img_url = res["url"]
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                async with httpx.AsyncClient(timeout=30.0, headers=headers, follow_redirects=True) as client:
+                    resp = await client.get(img_url)
+                    if resp.status_code == 200 and len(resp.content) > 1000:
+                        with open(target_path, "wb") as f:
+                            f.write(resp.content)
+                        logger.info(f"Successfully saved OpenAI generated photoshoot image to {target_path}")
+                        return True
+            elif res.get("b64_json"):
+                b64_bytes = base64.b64decode(res["b64_json"])
+                with open(target_path, "wb") as f:
+                    f.write(b64_bytes)
+                logger.info(f"Successfully saved OpenAI base64 photoshoot image to {target_path}")
+                return True
+        except Exception as e:
+            logger.warning(f"OpenAI photoshoot visual generation failed: {e}")
+
+        # Fallback to remote visual pipeline
         safe_prompt = urllib.parse.quote(prompt[:300].strip())
         seed = int(uuid.uuid4().hex[:6], 16)
         flux_url = f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1024&height=1024&nologo=true&model=flux&seed={seed}"
-
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            async with httpx.AsyncClient(timeout=12.0, headers=headers, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=15.0, headers=headers, follow_redirects=True) as client:
                 res = await client.get(flux_url)
                 if res.status_code == 200 and len(res.content) > 3000:
                     with open(target_path, "wb") as f:

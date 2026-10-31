@@ -9,11 +9,14 @@ from app.schemas.ai import (
     CaptionResponse,
     AIGenerationHistoryResponse,
     ImageGenerationRequest,
+    AIGenerateRequest,
+    AIGenerateResponse,
     GeminiGenerateRequest,
     GeminiGenerateResponse,
     MarketingContentPackage,
 )
 from app.core.config import settings
+from app.services.ai_service import generate_with_openai, AIService
 from app.services.gemini_service import generate_with_gemini, GeminiService
 from app.models.ai import AIGenerationHistory
 from app.ai.services.business_context import BusinessContextService
@@ -34,27 +37,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/generate", response_model=GeminiGenerateResponse)
-async def generate_with_gemini_endpoint(
-    request: GeminiGenerateRequest,
+@router.post("/generate", response_model=AIGenerateResponse)
+async def generate_with_ai_endpoint(
+    request: AIGenerateRequest,
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """
-    Centralized Gemini AI generation endpoint with automatic task-based model switching:
-      - task='marketing_content' or 'text': Generates complete marketing package via generateContent (Function A)
-      - task='video_generation' or 'video': Generates vertical 9:16 promotional video via interactions (Function B)
-      - task='image_generation' or 'image': Generates premium Instagram ad image via interactions (Function C)
+    Centralized OpenAI generation endpoint with automatic task-based model routing:
+      - task='marketing_content' or 'text': Generates marketing package via gpt-4.1-mini
+      - task='video_generation' or 'video': Generates storyboard & visual script via gpt-4.1-mini
+      - task='image_generation' or 'image': Generates advertisement image via gpt-image-1-mini
     """
     try:
-        result = await generate_with_gemini(request)
-        return GeminiGenerateResponse(**result)
+        result = await generate_with_openai(request)
+        return AIGenerateResponse(**result)
     except Exception as e:
         logger.error(f"Error in /generate endpoint: {e}")
-        return GeminiGenerateResponse(
+        return AIGenerateResponse(
             success=False,
             task=request.task,
             model=request.model or "unknown",
-            endpoint="https://generativelanguage.googleapis.com/v1beta",
+            endpoint="/generate",
             error={"code": "GENERATION_FAILED", "message": str(e)}
         )
 
@@ -66,7 +69,7 @@ async def generate_marketing_content_endpoint(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Generates structured marketing content package using Gemini Function A."""
-    return await generate_with_gemini(task="marketing_content", prompt=prompt, model=model)
+    return await generate_with_openai(task="marketing_content", prompt=prompt, model=model)
 
 
 @router.post("/promotional-video", response_model=dict)
@@ -76,7 +79,7 @@ async def generate_promotional_video_endpoint(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Generates vertical 9:16 promotional video using Gemini Function B."""
-    return await generate_with_gemini(task="video_generation", prompt=prompt, model=model)
+    return await generate_with_openai(task="video_generation", prompt=prompt, model=model)
 
 
 @router.post("/advertisement-image", response_model=dict)
@@ -86,7 +89,7 @@ async def generate_advertisement_image_endpoint(
     current_user: Optional[User] = Depends(get_current_user_optional)
 ):
     """Generates premium advertisement image using Gemini Function C."""
-    return await generate_with_gemini(task="image_generation", prompt=prompt, model=model)
+    return await generate_with_openai(task="image_generation", prompt=prompt, model=model)
 
 
 @router.post("/generateContent", response_model=dict)
@@ -118,8 +121,8 @@ async def generate_content_endpoint(
     if not extracted_prompt:
         raise HTTPException(status_code=400, detail="Missing required 'contents' or 'prompt' in request payload.")
 
-    selected_model = model or payload.get("model") or getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash") or "gemini-3.5-flash"
-    service = GeminiService()
+    selected_model = model or payload.get("model") or getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
+    service = AIService()
     try:
         res = await service.generate_text_content(
             prompt=extracted_prompt.strip(),
@@ -139,7 +142,7 @@ async def generate_content_endpoint(
             ],
             "text": res["text"],
             "model": res["model"],
-            "provider": "gemini",
+            "provider": "openai",
             "usageMetadata": res.get("usage", {})
         }
     except Exception as e:
@@ -272,8 +275,8 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
         user_id=str(current_user.id),
         business_id=business_id,
         generation_type="image",
-        provider="gemini",
-        model_name="image-generator-v1",
+        provider="openai",
+        model_name=getattr(settings, "OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
         input_params=request.model_dump(),
         status="processing"
     )
@@ -287,11 +290,11 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
         extracted_traits = None
         pil_refs = []
 
-        # 1. If reference images provided, extract subject using Gemini Vision
-        if request.reference_images and settings.GEMINI_API_KEY:
+        # 1. If reference images provided, extract subject using OpenAI Multimodal Vision (gpt-4.1-mini)
+        if request.reference_images and getattr(settings, "OPENAI_API_KEY", None):
             try:
-                import google.genai as genai
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                from app.ai.factory import AIProviderFactory
+                provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
                 for img_ref in request.reference_images[:3]:
                     if not img_ref or not isinstance(img_ref, str):
                         continue
@@ -306,8 +309,8 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
                             continue
                     if clean_ref.startswith("http://") or clean_ref.startswith("https://"):
                         headers = {"User-Agent": "Mozilla/5.0"}
-                        async with httpx.AsyncClient(timeout=10.0, headers=headers) as c:
-                            res = await c.get(clean_ref, follow_redirects=True)
+                        async with httpx.AsyncClient(timeout=10.0, headers=headers) as h_c:
+                            res = await h_c.get(clean_ref, follow_redirects=True)
                             if res.status_code == 200 and len(res.content) > 1000:
                                 img = Image.open(io.BytesIO(res.content)).convert("RGB")
                                 img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
@@ -321,12 +324,14 @@ async def generate_image(request: ImageGenerationRequest, current_user: User = D
                         "2. Key visual traits (clothing, face, glasses, distinctive colors, textures):\n"
                         "Return ONLY a JSON object: {\"subject_name\": \"...\", \"key_traits\": \"...\"}"
                     )
-                    v_res = client.models.generate_content(
-                        model=getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-                        contents=[*pil_refs, vision_prompt]
+                    v_res = await provider.generate_text(
+                        prompt=vision_prompt,
+                        images=pil_refs,
+                        system_prompt="You are a multimodal vision analyst. Return ONLY valid JSON."
                     )
-                    if v_res and v_res.text:
-                        v_clean = v_res.text.strip().replace("```json", "").replace("```", "")
+                    v_text = (v_res.get("text", "") if isinstance(v_res, dict) else str(v_res)).strip()
+                    if v_text:
+                        v_clean = v_text.replace("```json", "").replace("```", "")
                         v_match = re.search(r'\{.*\}', v_clean, re.DOTALL)
                         if v_match:
                             v_json = json.loads(v_match.group(0))

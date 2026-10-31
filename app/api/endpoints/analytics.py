@@ -120,7 +120,7 @@ async def get_visual_forecast(
     current_user=Depends(get_current_user),
 ):
     """
-    Generate predictive visual marketing health gauges & forecast powered by Gemini API.
+    Generate predictive visual marketing health gauges & forecast powered by OpenAI GPT-4.1 Mini.
     """
     try:
         db = get_database()

@@ -701,13 +701,13 @@ class WebsiteAnalysisService:
         )
 
     # -------------------------------------------------------------------------
-    # Core Extraction Pipeline (Firecrawl -> httpx -> bs4 -> Gemini AI)
+    # Core Extraction Pipeline (Firecrawl -> httpx -> bs4 -> OpenAI)
     # -------------------------------------------------------------------------
 
     @classmethod
     async def run_analysis_pipeline(cls, db, job_id: str, url: str, user_id: str) -> None:
         """
-        Core async pipeline for fetching HTML, parsing assets, calling Gemini AI for brand extraction,
+        Core async pipeline for fetching HTML, parsing assets, calling OpenAI for brand extraction,
         and persisting results with fine-grained step-by-step progress tracking.
         """
         logger.info(f"Starting website analysis pipeline for job {job_id} ({url})")
@@ -747,7 +747,7 @@ class WebsiteAnalysisService:
         # 3. Extract metadata, colors, images, and text content
         extracted = cls._parse_html_content(html_content, final_url or url)
 
-        # 4. Step-by-step Dynamic Analysis via Gemini
+        # 4. Step-by-step Dynamic Analysis via OpenAI
         await cls._update_job(
             db, job_id,
             progress=45,
@@ -1410,11 +1410,11 @@ class WebsiteAnalysisService:
     @classmethod
     async def _execute_ai_analysis(cls, extracted: Dict[str, Any], url: str) -> Dict[str, Any]:
         """
-        Uses Google Gemini to synthesize all fields shown in the reference screens:
+        Uses OpenAI GPT-4.1 Mini to synthesize all fields shown in the reference screens:
         - Business Details: Business name, Category, Business types, Sub-category, City, Tagline, Target audience, Differentiators, Products/Services
         - Brand Preferences: Tagline card, 5 Brand colors, 16 Tones, 10 Languages, Target audience summary, Services/products summary
         """
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="fast")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
 
         system_instruction = (
             "You are an elite brand strategist and visual design AI. "
@@ -1490,7 +1490,7 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         if not isinstance(res, dict) or "business_details" not in res:
-            logger.warning("Gemini did not return full structured brand analysis; using heuristic synthesis.")
+            logger.warning("OpenAI did not return full structured brand analysis; using heuristic synthesis.")
             return cls._build_heuristic_fallback(extracted, url)
 
         # Parse & Validate BusinessDetails

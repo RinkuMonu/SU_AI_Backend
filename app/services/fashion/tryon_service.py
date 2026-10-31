@@ -42,7 +42,7 @@ class VirtualTryOnProvider:
     face, body identity, and exact garment color.
     """
 
-    SUPPORTED_PROVIDERS = ["huggingface", "gemini", "fashn_ai", "replicate"]
+    SUPPORTED_PROVIDERS = ["huggingface", "openai", "fashn_ai", "replicate"]
 
     def __init__(self, provider_name: str = "huggingface", api_key: Optional[str] = None):
         from app.core.config import settings
@@ -262,7 +262,7 @@ def get_tryon_provider() -> VirtualTryOnProvider:
     global _tryon_provider
     if _tryon_provider is None:
         from app.core.config import settings
-        provider_name = getattr(settings, "VIRTUAL_TRYON_PROVIDER", "gemini") or "gemini"
+        provider_name = getattr(settings, "VIRTUAL_TRYON_PROVIDER", "openai") or "openai"
         api_key = getattr(settings, "VIRTUAL_TRYON_API_KEY", None)
         _tryon_provider = VirtualTryOnProvider(provider_name=provider_name, api_key=api_key)
     return _tryon_provider
@@ -297,7 +297,7 @@ async def create_tryon_job(
         "garment_image_url": product.get("image_url", ""),
         "result_image_url": None,
         "status": "pending",
-        "provider": "gemini",
+        "provider": "openai",
         "provider_job_id": None,
         "prompt_used": prompt,
         "error": None,

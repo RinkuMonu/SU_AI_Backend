@@ -15,14 +15,14 @@ class CreditService:
         """Check if user has enough credits without deducting. Raises 402 if not."""
         from app.core.config import settings
         is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
-        has_custom_key = bool(getattr(settings, "GEMINI_API_KEY", None))
+        has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
 
         sub = await CreditService.get_or_create_subscription(db, user_id)
         cost = FEATURE_PRICING.get(action, 1)
 
         if sub.get("credits_remaining", 0) < cost:
             if is_dev or has_custom_key:
-                # Auto-replenish in development or when custom Gemini API key is configured
+                # Auto-replenish in development or when custom OpenAI API key is configured
                 sub_collection = db["subscriptions"]
                 await sub_collection.update_one(
                     {"user_id": user_id},
@@ -46,7 +46,7 @@ class CreditService:
         """Atomically deducts credits for an action and logs the transaction. Raises 402 if insufficient."""
         from app.core.config import settings
         is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
-        has_custom_key = bool(getattr(settings, "GEMINI_API_KEY", None))
+        has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
 
         cost = FEATURE_PRICING.get(action, 1)
 

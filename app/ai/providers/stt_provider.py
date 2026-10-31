@@ -37,117 +37,7 @@ class BaseSTTProvider(ABC):
         pass
 
 
-class GeminiSTTProvider(BaseSTTProvider):
-    """
-    Speech-to-Text provider using Google Gemini multimodal audio understanding.
-    Supports English, Hindi, and mixed Hinglish verbatim transcription.
-    """
 
-    def __init__(self, model_name: Optional[str] = None):
-        self.model = model_name or getattr(settings, "STT_GEMINI_MODEL", "gemini-3-flash-preview")
-        self.provider_name = "gemini"
-
-    async def transcribe(
-        self,
-        audio_bytes: bytes,
-        mime_type: str,
-        filename: str = "audio.wav",
-        language: Optional[str] = None,
-        prompt: Optional[str] = None,
-        **kwargs
-    ) -> STTResult:
-        from app.ai.gemini_client import get_primary_gemini_client, get_gemini_clients
-        from google.genai import types
-
-        clients = get_gemini_clients()
-        if not clients:
-            raise RuntimeError("Gemini API key is not configured or client failed to initialize.")
-
-        # Normalize clean MIME type (strip parameters like ;codecs=opus)
-        clean_mime = mime_type.split(";")[0].strip().lower()
-        if clean_mime in ["audio/x-wav", "audio/wave"]:
-            clean_mime = "audio/wav"
-        elif clean_mime in ["audio/x-m4a", "audio/mp4"]:
-            clean_mime = "audio/m4a"
-
-        audio_part = types.Part.from_bytes(data=audio_bytes, mime_type=clean_mime)
-
-        lang_instruction = ""
-        norm_lang = (language or "").strip().lower()
-        if norm_lang in ["hi", "hindi"]:
-            lang_instruction = " The audio is spoken in Hindi. Transcribe in Devanagari script."
-        elif norm_lang in ["en", "english"]:
-            lang_instruction = " The audio is spoken in English."
-        elif norm_lang in ["hi-en", "hinglish", "hi_en"]:
-            lang_instruction = " The audio is spoken in Hinglish (mixed Hindi and English). Transcribe naturally as spoken."
-        elif norm_lang and norm_lang not in ["auto", "auto-detect", "default"]:
-            lang_instruction = f" The audio is in '{norm_lang}'."
-
-        system_instruction = (
-            "You are a verbatim speech-to-text transcription engine. "
-            f"{lang_instruction} "
-            "Listen to the audio recording and transcribe exactly what is spoken word-for-word. "
-            "Do NOT summarize, do NOT answer questions, do NOT translate, and do NOT add any conversational comments. "
-            "If the audio contains Hindi, transcribe in authentic Hindi or Latin script as uttered. "
-            "If the audio is Hinglish, transcribe in natural mixed form. "
-            "If the recording is completely silent, contains only static noise, or has no discernible human speech, output strictly '[SILENCE]'. "
-            "Output ONLY the transcribed words."
-        )
-
-        contents = [audio_part, system_instruction]
-        if prompt:
-            contents.append(f"Contextual vocabulary hint: {prompt}")
-
-        # Attempt transcription across configured Gemini clients
-        last_error = None
-        for client in clients:
-            try:
-                # Use client.models.generate_content
-                response = client.models.generate_content(
-                    model=self.model,
-                    contents=contents,
-                )
-                raw_text = (response.text or "").strip()
-                
-                # Check for silence or empty output
-                if not raw_text or raw_text in ["[SILENCE]", "EMPTY_AUDIO", "[silence]", ""]:
-                    return STTResult(
-                        text="",
-                        detected_language=norm_lang or "unknown",
-                        provider=self.provider_name,
-                        model=self.model
-                    )
-
-                # Strip possible markdown code wraps if model added them
-                if raw_text.startswith("```") and raw_text.endswith("```"):
-                    lines = raw_text.splitlines()
-                    raw_text = "\n".join(lines[1:-1]).strip()
-
-                # Detect language from text script if not explicitly provided
-                detected_lang = norm_lang
-                if not detected_lang or detected_lang in ["auto", "auto-detect"]:
-                    has_devanagari = any("\u0900" <= ch <= "\u097F" for ch in raw_text)
-                    has_latin = any("a" <= ch.lower() <= "z" for ch in raw_text)
-                    if has_devanagari and has_latin:
-                        detected_lang = "hi-en"
-                    elif has_devanagari:
-                        detected_lang = "hi"
-                    elif has_latin:
-                        detected_lang = "en"
-                    else:
-                        detected_lang = "unknown"
-
-                return STTResult(
-                    text=raw_text,
-                    detected_language=detected_lang,
-                    provider=self.provider_name,
-                    model=self.model
-                )
-            except Exception as e:
-                logger.warning(f"Gemini STT attempt failed with client: {e}")
-                last_error = e
-
-        raise RuntimeError(f"Gemini speech-to-text failed: {last_error}")
 
 
 class GroqWhisperSTTProvider(BaseSTTProvider):
@@ -311,6 +201,15 @@ class MockSTTProvider(BaseSTTProvider):
         )
 
 
+class GeminiSTTProvider(OpenAIWhisperSTTProvider):
+    """
+    Backward-compatible alias for Speech-to-Text routing to OpenAI Whisper.
+    """
+    def __init__(self, model_name: Optional[str] = None):
+        super().__init__(model_name=model_name or getattr(settings, "OPENAI_STT_MODEL", "whisper-1"))
+        self.provider_name = "openai"
+
+
 def get_stt_provider(provider_name: Optional[str] = None) -> BaseSTTProvider:
     """
     Factory function resolving the configured Speech-to-Text provider adapter.
@@ -318,27 +217,21 @@ def get_stt_provider(provider_name: Optional[str] = None) -> BaseSTTProvider:
     """
     p_name = (provider_name or getattr(settings, "STT_PROVIDER", "auto")).strip().lower()
 
-    if p_name == "gemini":
-        return GeminiSTTProvider()
+    if p_name in ["openai", "gemini"]:
+        return OpenAIWhisperSTTProvider()
     elif p_name == "groq":
         return GroqWhisperSTTProvider()
-    elif p_name == "openai":
-        return OpenAIWhisperSTTProvider()
     elif p_name == "mock":
         return MockSTTProvider()
     elif p_name == "auto":
-        # Auto-selection hierarchy based on configured credentials
-        if getattr(settings, "GROQ_API_KEY", None):
-            return GroqWhisperSTTProvider()
-        elif getattr(settings, "GEMINI_API_KEY", None):
-            return GeminiSTTProvider()
-        elif getattr(settings, "OPENAI_API_KEY", None):
+        if getattr(settings, "OPENAI_API_KEY", None):
             return OpenAIWhisperSTTProvider()
+        elif getattr(settings, "GROQ_API_KEY", None):
+            return GroqWhisperSTTProvider()
         elif getattr(settings, "ENVIRONMENT", "").lower() in ["test", "development"]:
             return MockSTTProvider()
         else:
-            # Fallback to GeminiSTTProvider if GEMINI_API_KEY exists else MockSTTProvider
-            return GeminiSTTProvider() if getattr(settings, "GEMINI_API_KEY", None) else MockSTTProvider()
+            return OpenAIWhisperSTTProvider() if getattr(settings, "OPENAI_API_KEY", None) else MockSTTProvider()
 
     raise ValueError(f"Unknown STT provider '{provider_name}'. Supported: 'auto', 'gemini', 'groq', 'openai', 'mock'.")
 

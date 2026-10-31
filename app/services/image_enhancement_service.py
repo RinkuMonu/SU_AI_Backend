@@ -13,7 +13,7 @@ import httpx
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 from app.core.config import settings
-from app.ai.providers.gemini_provider import GeminiProvider
+# Image enhancement uses high-precision studio photographic filters
 
 logger = logging.getLogger(__name__)
 

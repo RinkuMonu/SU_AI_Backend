@@ -27,13 +27,13 @@ class FashionImageProvider:
     Uses Google Gemini API as primary provider.
     """
 
-    def __init__(self, provider_name: str = "gemini"):
+    def __init__(self, provider_name: str = "openai"):
         self.provider_name = provider_name
 
     async def generate(self, prompt: str, product: dict = None, request = None, **kwargs) -> dict:
         """
         Generate a fashion image from a prompt using Gemini.
-        Returns: {"status": "completed", "image_url": "...", "provider": "gemini"}
+        Returns: {"status": "completed", "image_url": "...", "provider": "openai"}
         """
         from app.services.fashion.gemini_fashion_service import get_gemini_fashion_service
         return await get_gemini_fashion_service().generate_photoshoot(
@@ -50,7 +50,7 @@ _image_provider: Optional[FashionImageProvider] = None
 def get_fashion_image_provider() -> FashionImageProvider:
     global _image_provider
     if _image_provider is None:
-        _image_provider = FashionImageProvider(provider_name="gemini")
+        _image_provider = FashionImageProvider(provider_name="openai")
     return _image_provider
 
 
@@ -84,7 +84,7 @@ async def create_fashion_generation_job(
         "view": request.view,
         "status": "pending",
         "result_images": [],
-        "provider": "gemini",
+        "provider": "openai",
         "provider_job_id": None,
         "prompt_used": None,
         "error": None,
@@ -174,7 +174,7 @@ Original prompt:
         await update_status(
             "completed",
             result_images=[image_url],
-            provider=result.get("provider", "gemini_flux"),
+            provider=result.get("provider", "openai"),
             prompt_used=final_prompt[:1000],
             completed_at=datetime.now(timezone.utc),
         )

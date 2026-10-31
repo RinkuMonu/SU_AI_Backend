@@ -78,7 +78,7 @@ class ExternalVideoProvider(VideoProvider):
 
 def get_video_provider():
     provider_name = getattr(settings, "VIDEO_PROVIDER", "veo").lower()
-    if provider_name in ["veo", "gemini"]:
+    if provider_name in ["veo", "video", "openai"]:
         return VeoVideoProvider()
     elif provider_name == "mock":
         return MockVideoProvider()

@@ -187,7 +187,7 @@ Output ONLY valid JSON, no markdown.
   ]
 }}"""
 
-    ai_provider = AIProviderFactory.get_provider("gemini")
+    ai_provider = AIProviderFactory.get_provider("openai")
     try:
         res = await ai_provider.generate_text(
             prompt=prompt,
@@ -432,7 +432,7 @@ Output ONLY valid JSON matching this schema exactly (no markdown code fences, no
   }}
 }}"""
 
-    ai_provider = AIProviderFactory.get_provider("gemini")
+    ai_provider = AIProviderFactory.get_provider("openai")
     try:
         res = await ai_provider.generate_text(
             prompt=prompt,

@@ -10,7 +10,7 @@ from app.services.review_service import (
     get_review,
     update_review,
     delete_review,
-    generate_sample_reviews_gemini,
+    generate_sample_reviews, generate_sample_reviews_gemini,
     generate_ai_reply,
     serialize_review
 )
@@ -50,7 +50,7 @@ async def list_reviews(
     business_id = await _resolve_business_id(current_user, db)
     reviews = await get_reviews(db, business_id)
     if not reviews:
-        # Automatically generate reviews with Gemini API!
+        # Automatically generate reviews with OpenAI API!
         reviews = await generate_sample_reviews_gemini(db, business_id, count=4)
     return {"success": True, "message": "Reviews fetched successfully", "data": reviews}
 
@@ -60,11 +60,11 @@ async def generate_ai_reviews(
     db=Depends(get_database)
 ):
     """
-    Manually triggers generation of authentic customer reviews using Gemini API.
+    Manually triggers generation of authentic customer reviews using OpenAI API.
     """
     business_id = await _resolve_business_id(current_user, db)
     reviews = await generate_sample_reviews_gemini(db, business_id, count=4)
-    return {"success": True, "message": "Reviews generated with Gemini API", "data": reviews}
+    return {"success": True, "message": "Reviews generated with OpenAI API", "data": reviews}
 
 @router.get("/{review_id}")
 async def get_single_review(

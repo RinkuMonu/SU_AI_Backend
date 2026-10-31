@@ -111,9 +111,14 @@ async def delete_review(db, business_id: str, review_id: str):
         
     return {"success": True, "message": "Review deleted successfully"}
 
-async def generate_sample_reviews_gemini(db, business_id: str, count: int = 4):
+async def generate_sample_reviews(db, business_id: str, count: int = 4):
+    return await _generate_sample_reviews_impl(db, business_id, count)
+
+generate_sample_reviews_gemini = generate_sample_reviews
+
+async def _generate_sample_reviews_impl(db, business_id: str, count: int = 4):
     """
-    Uses Gemini API to generate authentic, realistic Google Reviews tailored to the business.
+    Uses OpenAI API to generate authentic, realistic Google Reviews tailored to the business.
     """
     from app.ai.factory import AIProviderFactory
     import json
@@ -151,7 +156,7 @@ Output ONLY valid raw JSON with this schema (no markdown, no ```json code fences
   ]
 }}"""
 
-    ai_provider = AIProviderFactory.get_provider("gemini")
+    ai_provider = AIProviderFactory.get_provider("openai")
     try:
         res = await ai_provider.generate_text(
             prompt=prompt,
@@ -196,16 +201,16 @@ Output ONLY valid raw JSON with this schema (no markdown, no ```json code fences
             doc["_id"] = result.inserted_id
             created_reviews.append(serialize_review(doc))
 
-        logger.info(f"Generated {len(created_reviews)} reviews with Gemini for business {business_id}")
+        logger.info(f"Generated {len(created_reviews)} reviews with OpenAI for business {business_id}")
         return created_reviews
 
     except Exception as e:
-        logger.error(f"Gemini failed to generate reviews: {e}")
+        logger.error(f"OpenAI failed to generate reviews: {e}")
         return []
 
 async def generate_ai_reply(db, business_id: str, review_id: str, custom_data: dict = None):
     """
-    Uses Gemini API to generate an empathetic, professional, personalized reply to a customer review.
+    Uses OpenAI API to generate an empathetic, professional, personalized reply to a customer review.
     """
     from app.ai.factory import AIProviderFactory
     import re
@@ -243,7 +248,7 @@ Guidelines:
 - Output ONLY the reply text directly. Do NOT include quotes, placeholders, or explanations.
 """
 
-    ai_provider = AIProviderFactory.get_provider("gemini")
+    ai_provider = AIProviderFactory.get_provider("openai")
     try:
         response = await ai_provider.generate_text(
             prompt=prompt,
@@ -256,7 +261,7 @@ Guidelines:
             reply = reply[1:-1].strip()
         return reply
     except Exception as e:
-        logger.error(f"Gemini failed to generate review reply: {e}")
+        logger.error(f"OpenAI failed to generate review reply: {e}")
         if rating >= 4:
             return f"Thank you so much for your valuable feedback, {customer_name}! We're thrilled you had a great experience and look forward to serving you again."
         else:

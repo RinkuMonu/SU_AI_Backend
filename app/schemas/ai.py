@@ -153,14 +153,14 @@ class MarketingContentPackage(BaseModel):
     image_generation_prompt: str
 
 
-class GeminiGenerateRequest(BaseModel):
+class AIGenerateRequest(BaseModel):
     task: str  # marketing_content/text, video_generation/video, image_generation/image
     prompt: str
     model: Optional[str] = None
     options: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
-class GeminiGenerateResponse(BaseModel):
+class AIGenerateResponse(BaseModel):
     success: bool
     task: str
     model: str
@@ -168,6 +168,11 @@ class GeminiGenerateResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
     message: Optional[str] = None
     error: Optional[Dict[str, Any]] = None
+
+
+# Backward-compatible aliases
+GeminiGenerateRequest = AIGenerateRequest
+GeminiGenerateResponse = AIGenerateResponse
 
 
 

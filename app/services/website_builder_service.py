@@ -313,7 +313,7 @@ class WebsiteBuilderService:
         if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]) and not data:
             return await WebsiteBuilderService.generate_recommendations(session)
 
-        ai = AIProviderFactory.get_provider(preferred="gemini")
+        ai = AIProviderFactory.get_provider(preferred="openai")
         
         # 1. Fetch Business Profile if not checked yet
         if not session.collected_data.get("profile_checked"):
@@ -537,7 +537,7 @@ Respond very briefly."""
 
     @staticmethod
     async def generate_recommendations(session: WebsiteBuilderSession):
-        ai = AIProviderFactory.get_provider(preferred="gemini")
+        ai = AIProviderFactory.get_provider(preferred="openai")
         prompt = f"Generate exactly THREE website design recommendations for a business with data: {session.collected_data}. Return JSON with 'recommendations' array containing: id, name, description, reason, palette, style."
         result = await ai.generate_json(prompt, system_prompt="You are an expert web designer AI.")
         
@@ -712,7 +712,7 @@ Respond very briefly."""
                 }
             ]
         })
-        ai = AIProviderFactory.get_provider(preferred="gemini")
+        ai = AIProviderFactory.get_provider(preferred="openai")
         prompt = (
             f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
 
@@ -821,7 +821,7 @@ CRITICAL REQUIREMENTS:
         if not site:
             raise HTTPException(status_code=404, detail="Website not found")
             
-        ai = AIProviderFactory.get_provider(preferred="gemini")
+        ai = AIProviderFactory.get_provider(preferred="openai")
         prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."
         result = await ai.generate_text(prompt, system_prompt="You are an expert web designer. Return ONLY the JSON array representing the revised pages.")
         
@@ -944,7 +944,7 @@ Current Website State:
 
 Return ONLY valid JSON with the modification."""
 
-        ai_provider = AIProviderFactory.get_provider(preferred="gemini")
+        ai_provider = AIProviderFactory.get_provider(preferred="openai")
         try:
             res = await ai_provider.generate_text(
                 prompt=prompt,

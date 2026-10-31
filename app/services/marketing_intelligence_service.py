@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class MarketingIntelligenceService:
     """
-    Advanced AI Marketing Intelligence Service powered by Google Gemini.
+    Advanced AI Marketing Intelligence Service powered by OpenAI GPT-4.1 Mini.
     Features:
     - Task-specific system instructions & structured JSON schema outputs
     - Automatic connection to authentic Business & Brand Kit context without hallucination
@@ -89,7 +89,7 @@ Format response ONLY as JSON:
   "actionable_tactics": ["string"]
 }}"""
 
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="reasoning")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="reasoning")
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         # Fallback resilient parsing
@@ -182,7 +182,7 @@ Format ONLY as JSON:
   "actionable_next_steps": ["string"]
 }}"""
 
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="reasoning")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="reasoning")
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         if not isinstance(res, dict) or "overall_health_score" not in res:
@@ -265,7 +265,7 @@ Format ONLY as JSON:
   ]
 }}"""
 
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="fast")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         if not isinstance(res, dict) or "current_viral_formats" not in res:
@@ -361,7 +361,7 @@ Format response strictly as JSON:
   }}
 }}"""
 
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="fast")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         if not isinstance(res, dict) or "unique_selling_propositions" not in res:
@@ -445,7 +445,7 @@ Format ONLY as JSON:
   "growth_recommendations": ["string"]
 }}"""
 
-        provider = AIProviderFactory.get_provider(preferred="gemini", tier="reasoning")
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="reasoning")
         res = await provider.generate_json(prompt=prompt, system_prompt=system_instruction)
 
         if not isinstance(res, dict) or "voice_guidelines" not in res:

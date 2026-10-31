@@ -47,3 +47,67 @@ async def get_all_businesses(current_user: CurrentUser = Depends(require_admin))
         business["id"] = str(business["_id"])
         del business["_id"]
     return businesses
+
+@router.get("/ai-config")
+async def get_admin_ai_config(current_user: CurrentUser = Depends(require_admin)) -> Any:
+    """
+    Returns active centralized OpenAI model configuration.
+    Strictly never exposes the OPENAI_API_KEY.
+    """
+    from app.core.config import settings
+    return {
+        "provider": "openai",
+        "text_model": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini"),
+        "image_model": getattr(settings, "OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
+        "reasoning_model": getattr(settings, "OPENAI_REASONING_MODEL", "gpt-4.1-mini"),
+        "models": {
+            "text": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini"),
+            "image": getattr(settings, "OPENAI_IMAGE_MODEL", "gpt-image-1-mini"),
+            "vision": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini"),
+            "analysis": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini"),
+            "agent": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini")
+        }
+    }
+
+
+@router.post("/ai-test")
+async def test_admin_ai_connectivity(current_user: CurrentUser = Depends(require_admin)) -> Any:
+    """
+    Validates OpenAI API connectivity without exposing credentials.
+    """
+    import time
+    from app.core.config import settings
+    from app.ai.factory import AIProviderFactory
+    from fastapi import HTTPException, status
+
+    if not getattr(settings, "OPENAI_API_KEY", None):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OPENAI_API_KEY is not configured on the server."
+        )
+
+    t0 = time.time()
+    try:
+        provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
+        res = await provider.generate_text("Reply with 'OK'", max_tokens=10)
+        elapsed_ms = round((time.time() - t0) * 1000, 2)
+        return {
+            "success": True,
+            "provider": "openai",
+            "model": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini"),
+            "status": "connected",
+            "latency_ms": elapsed_ms,
+            "response": res.get("text", "").strip()
+        }
+    except Exception as e:
+        elapsed_ms = round((time.time() - t0) * 1000, 2)
+        err_msg = str(e)
+        # Redact any accidental keys
+        from app.ai.providers.openai_provider import sanitize_secrets
+        return {
+            "success": False,
+            "provider": "openai",
+            "status": "connection_error",
+            "latency_ms": elapsed_ms,
+            "error": sanitize_secrets(err_msg)
+        }

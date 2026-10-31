@@ -1103,7 +1103,7 @@ async def generate_and_save_ai_logo(
 
     image_gen = ImageGenerator(
         api_url=getattr(settings, "IMAGE_API_URL", None),
-        api_key=getattr(settings, "IMAGE_API_KEY", None) or getattr(settings, "GEMINI_API_KEY", None)
+        api_key=getattr(settings, "IMAGE_API_KEY", None) or getattr(settings, "OPENAI_API_KEY", None)
     )
 
     upload_dir = Path("uploads") / "brand"

@@ -15,25 +15,13 @@ logger = logging.getLogger(__name__)
 class AgentService:
     """
     UNI AI Agent Service: Parses natural language inputs (Hindi/Hinglish/English)
-    powered directly by Google Gemini API and routes them to appropriate tools
+    powered directly by OpenAI GPT-4.1 Mini and routes them to appropriate tools
     or returns conversational marketing advice and generation.
     """
 
-    def _get_gemini_clients(self):
-        clients = []
-        keys = getattr(settings, "get_gemini_api_keys", lambda: [])() or ([settings.GEMINI_API_KEY] if settings.GEMINI_API_KEY else [])
-        for k in keys:
-            if k:
-                try:
-                    import google.genai as genai
-                    clients.append(genai.Client(api_key=k))
-                except Exception as e:
-                    logger.warning(f"Could not initialize google.genai Client for key: {e}")
-        return clients
-
-    def _get_gemini_client(self):
-        clients = self._get_gemini_clients()
-        return clients[0] if clients else None
+    def _get_ai_provider(self):
+        from app.ai.factory import AIProviderFactory
+        return AIProviderFactory.get_provider(preferred="openai", tier="fast")
 
     async def _parse_intent_and_respond(self, command: str, business_info: dict, language: str) -> Dict[str, Any]:
         prompt = f"""You are 'UNI AI Assistant', an intelligent, conversational, and energetic AI marketing co-pilot designed specifically for Indian businesses, entrepreneurs, and creators.
@@ -68,45 +56,18 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
   "conversational_response": "A warm, natural, and highly engaging response written in {language} (Hindi/Hinglish). If generating an asset or intelligence report, introduce what was prepared enthusiastically. If chat, provide insightful advice."
 }}
 """
-        clients = self._get_gemini_clients()
-        models_to_try = [
-            getattr(settings, "GEMINI_FAST_MODEL", None) or getattr(settings, "GEMINI_MODEL", "gemini-3.5-flash"),
-            "gemini-3.5-flash",
-            "gemini-3.8-flash",
-            "gemini-flash-latest",
-            getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.5-flash"),
-            "gemini-3.8-pro",
-            "gemini-pro-latest",
-        ]
-
         raw_text = ""
-        for client in clients:
-            for model_name in models_to_try:
-                try:
-                    logger.info(f"Calling Gemini ({model_name}) for UNI AI intent and response...")
-                    res = client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                    )
-                    if res and res.text:
-                        raw_text = res.text.strip()
-                        logger.info(f"Gemini UNI AI generation succeeded with {model_name}")
-                        break
-                except Exception as e:
-                    logger.warning(f"Gemini intent parsing failed with {model_name}: {e}")
-                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
-                        break
-                    continue
-            if raw_text:
-                break
-
-        if not raw_text:
-            try:
-                provider = AIProviderFactory.get_provider()
-                res = await provider.generate_text(prompt=prompt)
-                raw_text = res.get("text", "") if isinstance(res, dict) else str(res)
-            except Exception as e:
-                logger.error(f"Fallback intent parsing failed: {e}")
+        try:
+            provider = self._get_ai_provider()
+            logger.info("Calling OpenAI GPT-4.1 Mini for UNI AI intent and response...")
+            res = await provider.generate_text(
+                prompt=prompt,
+                system_prompt="You are 'UNI AI Assistant', an intelligent, conversational, and energetic AI marketing co-pilot. Return ONLY valid JSON."
+            )
+            raw_text = res.get("text", "").strip() if isinstance(res, dict) else str(res).strip()
+            logger.info("OpenAI UNI AI generation succeeded")
+        except Exception as e:
+            logger.warning(f"OpenAI intent parsing failed: {e}")
 
         cleaned = raw_text.strip()
         if "```json" in cleaned:
@@ -139,9 +100,9 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
     async def parse_and_execute(self, db, user_id: str, command: str) -> Dict[str, Any]:
         """
         1. Fetch business context (with graceful fallback if not set up)
-        2. Parse intent and get conversational response via Gemini
+        2. Parse intent and get conversational response via OpenAI GPT-4.1 Mini
         3. Execute the right tool
-        4. Return the standard result format with Gemini's response
+        4. Return the standard result format with OpenAI's response
         """
         # Fetch business context
         business = await BusinessService.get_business_by_owner(user_id)
@@ -162,7 +123,7 @@ Return ONLY a valid, parseable JSON object without markdown code blocks, followi
                 "_id": "default"
             }
 
-        # 1. Parse Intent & Get Conversational Response from Gemini
+        # 1. Parse Intent & Get Conversational Response from OpenAI
         intent_data = await self._parse_intent_and_respond(command, business_dict, language)
         action = intent_data.get("action", "chat")
         topic = intent_data.get("topic", command)

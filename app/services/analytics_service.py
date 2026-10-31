@@ -545,7 +545,7 @@ class AnalyticsService:
 
     async def generate_visual_forecast(self, data: dict, range_days: int = 30) -> dict:
         """
-        Generates predictive visual marketing gauges and forecast using Gemini API.
+        Generates predictive visual marketing gauges and forecast using OpenAI GPT-4.1 Mini.
         """
         import json
         import re
@@ -621,35 +621,19 @@ Return ONLY valid JSON strictly matching this schema with NO conversational text
 """
 
         raw_text = ""
-        if settings.GEMINI_API_KEY:
-            try:
-                import google.genai as genai
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
-                models = [
-                    getattr(settings, "GEMINI_REASONING_MODEL", "gemini-3.8-pro"),
-                    getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
-                    getattr(settings, "GEMINI_FAST_MODEL", "gemini-3.8-flash"),
-                    "gemini-3.8-flash",
-                    "gemini-flash-latest",
-                    "gemini-3.8-pro",
-                    "gemini-pro-latest",
-                    "gemini-2.5-flash",
-                    "gemini-2.5-pro",
-                ]
-                for m in models:
-                    try:
-                        res = client.models.generate_content(model=m, contents=prompt)
-                        if res and res.text:
-                            raw_text = res.text.strip()
-                            break
-                    except Exception as model_err:
-                        logger.warning(f"Gemini forecast generation note on {m}: {model_err}")
-                        continue
-            except Exception as e:
-                logger.warning(f"Could not initialize google.genai for analytics: {e}")
-
         parsed = {}
-        if raw_text:
+        if getattr(settings, "OPENAI_API_KEY", None):
+            try:
+                from app.ai.factory import AIProviderFactory
+                provider = AIProviderFactory.get_provider(preferred="openai", tier="fast")
+                parsed = await provider.generate_json(
+                    prompt=prompt,
+                    system_prompt="You are an elite business marketing performance analyst. Return valid JSON only."
+                )
+            except Exception as e:
+                logger.warning(f"OpenAI visual forecast generation note: {e}")
+
+        if not parsed and raw_text:
             cleaned = raw_text.strip()
             if "```json" in cleaned:
                 cleaned = cleaned.split("```json")[-1].split("```")[0].strip()

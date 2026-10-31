@@ -1,6 +1,6 @@
 """
 System Persona & Training Prompt for DhandaGrow / SevenUnique AI.
-Trains Google Gemini to act as an elite AI Business & Marketing Growth Specialist
+Trains OpenAI GPT-4.1 Mini to act as an elite AI Business & Marketing Growth Specialist
 with native multilingual capabilities (English, Hindi, Hinglish) and strict factual grounding.
 """
 
@@ -35,7 +35,7 @@ def get_trained_system_instruction(
     language: str = "en"
 ) -> str:
     """
-    Returns the comprehensive trained system instruction for Gemini,
+    Returns the comprehensive trained system instruction for OpenAI GPT-4.1 Mini,
     optionally augmented with mode and business context.
     """
     instruction = DHANDAGROW_AI_SYSTEM_PROMPT.strip()

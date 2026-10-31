@@ -65,7 +65,7 @@ CURATED_CATEGORY_IMAGES = {
 class ImageGenerator:
     def __init__(self, api_url: str = None, api_key: str = None):
         self.api_url = api_url or getattr(settings, "IMAGE_API_URL", "https://api.openai.com/v1/images/generations")
-        self.api_key = api_key or getattr(settings, "GEMINI_API_KEY", None)
+        self.api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
         self.temp_dir = "uploads/temp"
         os.makedirs(self.temp_dir, exist_ok=True)
 
@@ -115,65 +115,42 @@ class ImageGenerator:
             except Exception:
                 return False
 
-    async def _try_gemini_image_generation(
+    async def _try_openai_image_generation(
         self,
         prompt: str,
         pil_refs: Optional[List[Image.Image]],
         local_path: str
     ) -> Optional[str]:
-        """Attempts direct Gemini image generation if key and quota are available."""
-        if not settings.GEMINI_API_KEY:
+        """Attempts direct OpenAI image generation using gpt-image-1-mini."""
+        if not getattr(settings, "OPENAI_API_KEY", None):
             return None
 
         try:
-            import google.genai as genai
-            from google.genai import types
-
-            client = genai.Client(api_key=settings.GEMINI_API_KEY)
-            models_to_test = [
-                "imagen-3.0-generate-002",
-                "gemini-2.5-flash-image",
-                "gemini-3.1-flash-image",
-            ]
-
-            contents = [*pil_refs, prompt] if pil_refs else [prompt]
-            config = types.GenerateContentConfig(response_modalities=["IMAGE", "TEXT"])
-
-            for model_name in models_to_test:
-                try:
-                    logger.info(f"Attempting Gemini image generation with model {model_name}...")
-                    res = client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=config
-                    )
-                    if res and res.candidates:
-                        for cand in res.candidates:
-                            if cand.content and cand.content.parts:
-                                for part in cand.content.parts:
-                                    if hasattr(part, "as_image"):
-                                        img = part.as_image()
-                                        if img:
-                                            img.save(local_path, format="JPEG", quality=95)
-                                            logger.info(f"Successfully generated image via Gemini ({model_name})")
-                                            return local_path
-                                    if hasattr(part, "inline_data") and part.inline_data and part.inline_data.data:
-                                        raw_data = part.inline_data.data
-                                        if isinstance(raw_data, str):
-                                            raw_data = base64.b64decode(raw_data)
-                                        with open(local_path, "wb") as f:
-                                            f.write(raw_data)
-                                        logger.info(f"Successfully saved Gemini inline image ({model_name})")
-                                        return local_path
-                except Exception as model_err:
-                    err_msg = str(model_err)
-                    if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "402" in err_msg or "prepayment" in err_msg:
-                        logger.info(f"Gemini model {model_name} quota/billing limit reached. Skipping Gemini direct generation.")
-                        return None
-                    logger.debug(f"Gemini {model_name} attempt: {model_err}")
-                    continue
+            from app.ai.providers.openai_provider import OpenAIProvider
+            provider = OpenAIProvider()
+            logger.info("Attempting OpenAI image generation with gpt-image-1-mini...")
+            res = await provider.generate_image(
+                prompt=prompt,
+                size="1024x1024",
+                model=getattr(settings, "OPENAI_IMAGE_MODEL", "gpt-image-1-mini")
+            )
+            if res.get("url"):
+                img_url = res["url"]
+                async with httpx.AsyncClient(timeout=30.0) as client:
+                    r = await client.get(img_url)
+                    if r.status_code == 200 and len(r.content) > 1000:
+                        with open(local_path, "wb") as f:
+                            f.write(r.content)
+                        logger.info("Successfully generated and saved OpenAI image")
+                        return local_path
+            elif res.get("b64_json"):
+                b64_bytes = base64.b64decode(res["b64_json"])
+                with open(local_path, "wb") as f:
+                    f.write(b64_bytes)
+                logger.info("Successfully saved OpenAI base64 image")
+                return local_path
         except Exception as e:
-            logger.warning(f"Gemini image generation unavailable: {e}")
+            logger.warning(f"OpenAI image generation unavailable: {e}")
         return None
 
     async def generate(
@@ -242,15 +219,15 @@ class ImageGenerator:
         )
         final_prompt = realistic_photo_prompt[:500].strip()
 
-        # 3. Attempt Gemini Direct Generation
-        gemini_result_path = await self._try_gemini_image_generation(
+        # 3. Attempt OpenAI Direct Generation
+        openai_result_path = await self._try_openai_image_generation(
             prompt=final_prompt,
             pil_refs=pil_refs,
             local_path=local_path
         )
-        if gemini_result_path and os.path.exists(gemini_result_path):
+        if openai_result_path and os.path.exists(openai_result_path):
             public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
-            return {"image_url": public_url, "local_path": local_path, "provider": "gemini"}
+            return {"image_url": public_url, "local_path": local_path, "provider": "openai"}
 
         # 4. For Indian cultural, festive and human categories:
         # Prioritize 100% verified, authentic Indian photography assets to prevent stylized/anime doll outputs
@@ -309,15 +286,15 @@ class ImageGenerator:
         local_path = target_path or os.path.join(self.temp_dir, local_filename)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-        # 1. Attempt Gemini direct generation if configured
-        gemini_result_path = await self._try_gemini_image_generation(
+        # 1. Attempt OpenAI direct generation if configured
+        openai_result_path = await self._try_openai_image_generation(
             prompt=clean_prompt,
             pil_refs=None,
             local_path=local_path
         )
-        if gemini_result_path and os.path.exists(gemini_result_path):
+        if openai_result_path and os.path.exists(openai_result_path):
             public_url = settings.get_public_url(f"/uploads/brand/{os.path.basename(local_path)}")
-            return {"image_url": public_url, "local_path": local_path, "provider": "gemini"}
+            return {"image_url": public_url, "local_path": local_path, "provider": "openai"}
 
         # 2. Pollinations vector logo pipeline
         safe_prompt = urllib.parse.quote(clean_prompt)

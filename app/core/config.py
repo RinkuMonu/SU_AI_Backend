@@ -28,15 +28,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 365 * 5  # 5 years (persistent until logout)
     REFRESH_TOKEN_EXPIRE_DAYS: int = 365 * 5  # 5 years
 
-    AI_PROVIDER: str = "gemini"
-    GEMINI_API_KEY: str | None = None
-    GEMINI_BACKUP_API_KEY: str | None = None
-    GEMINI_MODEL: str = "gemini-3.5-flash"
-    GEMINI_FAST_MODEL: str = "gemini-3.5-flash"
-    GEMINI_REASONING_MODEL: str = "gemini-3.5-flash"
-    GEMINI_MARKETING_MODEL: str = "gemini-3.5-flash"
-    GEMINI_VIDEO_MODEL: str = "gemini-omni-1.1-flash"
-    GEMINI_IMAGE_MODEL: str = "gemini-nano-banana-2.1"
+    AI_PROVIDER: str = "openai"
+    OPENAI_API_KEY: Optional[str] = None
+    OPENAI_TEXT_MODEL: str = "gpt-4.1-mini"
+    OPENAI_IMAGE_MODEL: str = "gpt-image-1-mini"
+    OPENAI_REASONING_MODEL: str = "gpt-4.1-mini"
+    OPENAI_STT_MODEL: str = "whisper-1"
     VIDEO_PROVIDER: str = "mock"
     VOICE_PROVIDER: str = "gtts"
     VIDEO_API_KEY: Optional[str] = None
@@ -44,20 +41,18 @@ class Settings(BaseSettings):
     IMAGE_API_URL: Optional[str] = None
     GROQ_API_KEY: str | None = None
     GROQ_MODEL: str = "llama-3.1-70b-versatile"
-    OPENAI_API_KEY: Optional[str] = None
 
     # Speech-to-Text (STT) configuration
     STT_PROVIDER: str = "auto"
-    STT_GEMINI_MODEL: str = "gemini-3-flash-preview"
     STT_GROQ_MODEL: str = "whisper-large-v3"
     STT_OPENAI_MODEL: str = "whisper-1"
     STT_MAX_AUDIO_SIZE_MB: int = 25
     JWT_SECRET: Optional[str] = None
     MONGODB_URI: Optional[str] = None
 
-    FASHION_IMAGE_PROVIDER: str = "gemini"
+    FASHION_IMAGE_PROVIDER: str = "openai"
     FASHION_IMAGE_API_KEY: str | None = None
-    VIRTUAL_TRYON_PROVIDER: str = "gemini"
+    VIRTUAL_TRYON_PROVIDER: str = "openai"
     VIRTUAL_TRYON_API_KEY: str | None = None
 
     INSTAGRAM_APP_ID: str | None = None
@@ -189,19 +184,9 @@ class Settings(BaseSettings):
             self.FAST2SMS_ROUTE = os.getenv("FAST2SMS_ROUTE")
         if os.getenv("FAST2SMS_VARIABLES_FORMAT"):
             self.FAST2SMS_VARIABLES_FORMAT = os.getenv("FAST2SMS_VARIABLES_FORMAT")
-        if not self.GEMINI_API_KEY and self.GEMINI_BACKUP_API_KEY:
-            self.GEMINI_API_KEY = self.GEMINI_BACKUP_API_KEY
-        elif not self.GEMINI_API_KEY and os.getenv("GEMINI_API_KEY"):
-            self.GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+        if not self.OPENAI_API_KEY and os.getenv("OPENAI_API_KEY"):
+            self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
         return self
-
-    def get_gemini_api_keys(self) -> List[str]:
-        """Returns ordered list of available Gemini API keys for primary and failover execution."""
-        keys: List[str] = []
-        for key in [self.GEMINI_API_KEY, self.GEMINI_BACKUP_API_KEY, os.getenv("GEMINI_API_KEY"), os.getenv("GEMINI_BACKUP_API_KEY")]:
-            if key and isinstance(key, str) and key.strip() and key.strip() not in keys:
-                keys.append(key.strip())
-        return keys
 
 
     # SMS / MSG91 Configuration

@@ -52,8 +52,8 @@ class ContentService:
                 "user_id": user_id,
                 "business_id": business_id,
                 "generation_type": content_type,
-                "provider": "gemini",
-                "model_name": getattr(settings, "GEMINI_MODEL", "gemini-3.8-flash") or "gemini-3.8-flash",
+                "provider": "openai",
+                "model_name": getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
                 "input_params": {
                     "product_id": payload.get("product_id"),
                     "product_ids": payload.get("product_ids"),
