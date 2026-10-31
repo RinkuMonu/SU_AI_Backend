@@ -1,7 +1,12 @@
 from typing import Optional
+from bson import ObjectId
 from fastapi import FastAPI, Request, Response
+from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+
+# Register ObjectId serialization globally so jsonable_encoder never throws 500 on MongoDB ObjectIds
+ENCODERS_BY_TYPE[ObjectId] = str
 # Reload trigger 10
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection, init_db_indexes

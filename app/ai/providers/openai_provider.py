@@ -175,29 +175,46 @@ class OpenAIProvider(AIProvider):
         self,
         prompt: str,
         size: str = "1024x1024",
-        quality: str = "standard",
+        quality: Optional[str] = None,
         n: int = 1,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Generates images using gpt-image-1-mini.
+        Generates images using OpenAI image model (e.g. gpt-image-1-mini or dall-e-3).
         Never uses gpt-4.1-mini for image generation.
         """
         client = get_openai_client()
         if not client:
             raise OpenAIServiceError("OPENAI_API_KEY is not configured.", status_code=500, error_code="CONFIG_MISSING")
 
-        model_name = kwargs.get("model") or self.image_model
+        model_name = kwargs.get("model") or self.image_model or "gpt-image-1-mini"
+
+        call_params = {
+            "model": model_name,
+            "prompt": prompt,
+            "size": size,
+            "n": n,
+        }
+
+        # Model-specific parameters
+        if "gpt-image" in model_name.lower():
+            # gpt-image-1-mini accepts quality: 'low', 'medium', 'high', 'auto'
+            # and does NOT accept response_format parameter
+            if quality and quality in ["low", "medium", "high", "auto"]:
+                call_params["quality"] = quality
+            else:
+                call_params["quality"] = "auto"
+        else:
+            # DALL-E models
+            if quality:
+                call_params["quality"] = quality
+            else:
+                call_params["quality"] = "standard"
+            if "response_format" in kwargs:
+                call_params["response_format"] = kwargs["response_format"]
 
         try:
-            resp = await client.images.generate(
-                model=model_name,
-                prompt=prompt,
-                size=size,
-                quality=quality,
-                n=n,
-                response_format=kwargs.get("response_format", "url")
-            )
+            resp = await client.images.generate(**call_params)
             image_data = []
             for item in resp.data:
                 image_data.append({
@@ -205,13 +222,18 @@ class OpenAIProvider(AIProvider):
                     "b64_json": getattr(item, "b64_json", None),
                     "revised_prompt": getattr(item, "revised_prompt", None)
                 })
+            first_url = image_data[0].get("url") if image_data else None
+            first_b64 = image_data[0].get("b64_json") if image_data else None
+
             return {
                 "success": True,
                 "model": model_name,
                 "provider": "openai",
                 "images": image_data,
-                "image_url": image_data[0]["url"] if image_data else None,
-                "revised_prompt": image_data[0]["revised_prompt"] if image_data else prompt
+                "url": first_url,
+                "image_url": first_url,
+                "b64_json": first_b64,
+                "revised_prompt": image_data[0].get("revised_prompt") if image_data else prompt
             }
         except Exception as e:
             err_str = str(e)

@@ -239,7 +239,8 @@ async def generate_post(
                 fdoc = await db["fashion_products"].find_one({"_id": ObjectId(pid)})
                 if fdoc:
                     product_doc = {
-                        "_id": fdoc["_id"],
+                        "_id": str(fdoc["_id"]),
+                        "id": str(fdoc["_id"]),
                         "name": fdoc.get("name"),
                         "category": fdoc.get("category", "Fashion & Apparel"),
                         "description": fdoc.get("description", ""),
@@ -384,7 +385,8 @@ async def generate_post(
         payload=generated
     )
 
-    generated["_id"] = saved_doc["_id"]
+    generated["_id"] = str(saved_doc["_id"])
+    generated["id"] = str(saved_doc["_id"])
 
     # Deduct credits after successful generation
     await CreditService.deduct_credits(db, user_id, credit_feature)

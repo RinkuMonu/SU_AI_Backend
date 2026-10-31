@@ -48,3 +48,4 @@ async def test_otp_dev_test_bypass():
     user = await AuthService.verify_phone_otp("+91-7857889083", "123456")
     assert user is not None
     assert user.phone_number == "+917857889083"
+
