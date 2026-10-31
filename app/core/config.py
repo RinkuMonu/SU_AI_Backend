@@ -75,8 +75,6 @@ class Settings(BaseSettings):
     CASHFREE_ENV: str = "TEST"
     CASHFREE_API_VERSION: str = "2023-08-01"
 
-    PAYIN_URL: str = ""
-    PAYIN_TOKEN: str = ""
     
     GEOAPIFY_API_KEY: str = ""
 
