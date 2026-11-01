@@ -5200,12 +5200,10 @@ class PhotoshootService:
             if created_at:
                 if isinstance(created_at, str):
                     try:
-                        from datetime import datetime, timezone
                         created_at = datetime.fromisoformat(created_at)
                     except Exception:
                         created_at = None
                 if created_at:
-                    from datetime import datetime, timezone
                     if created_at.tzinfo is None:
                         created_at = created_at.replace(tzinfo=timezone.utc)
                     age_seconds = (datetime.now(timezone.utc) - created_at).total_seconds()
@@ -5213,7 +5211,6 @@ class PhotoshootService:
                         is_stale = True
 
             if is_stale:
-                from datetime import datetime, timezone
                 await db["photoshoot_jobs"].update_one(
                     {"job_id": active_job["job_id"]},
                     {"$set": {"status": "failed", "error": "Job timed out.", "updated_at": datetime.now(timezone.utc)}}
