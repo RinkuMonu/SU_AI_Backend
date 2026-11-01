@@ -51,6 +51,7 @@ class ProductPhotoshootSession(MongoBaseModel):
     product_category: Optional[str] = None
     product_type: Optional[str] = None
     analysis: Optional[Dict[str, Any]] = None
+    product_preservation_profile: Optional[Dict[str, Any]] = None
     original_images: List[Dict[str, Any]] = Field(default_factory=list)
     enhanced_images: List[Dict[str, Any]] = Field(default_factory=list)
     selected_enhanced_image_ids: List[str] = Field(default_factory=list)

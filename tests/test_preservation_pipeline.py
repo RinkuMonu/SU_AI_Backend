@@ -4,12 +4,6 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 from app.services.photoshoot_service import PhotoshootService
 
-@pytest.fixture
-def test_images_dir(tmp_path):
-    d = tmp_path / "test_products"
-    d.mkdir()
-    return d
-
 def create_product_image(category: str, out_path: Path):
     im = Image.new("RGBA", (512, 512), (250, 250, 250, 255))
     draw = ImageDraw.Draw(im)
@@ -110,3 +104,26 @@ async def test_six_categories_studio_enhancement(tmp_path):
         assert target.stat().st_size > 500
         with Image.open(target) as enh:
             assert enh.size == (1024, 1024)
+
+@pytest.mark.asyncio
+async def test_cv_metrics_computation(tmp_path):
+    img1 = tmp_path / "img1.png"
+    img2 = tmp_path / "img2.png"
+    create_product_image("Clothing", img1)
+    create_product_image("Clothing", img2)
+    
+    cv_res = PhotoshootService._compute_cv_metrics(img1, img2)
+    assert "cv_aspect_ratio_similarity" in cv_res
+    assert "cv_structural_hash_similarity" in cv_res
+    assert cv_res["cv_aspect_ratio_similarity"] > 0.9
+    assert cv_res["cv_structural_hash_similarity"] > 0.9
+
+@pytest.mark.asyncio
+async def test_category_acceptance_thresholds_configuration():
+    expected_categories = ["clothing", "packaged food", "crockery", "jewellery", "cosmetics", "electronics", "default"]
+    for cat in expected_categories:
+        assert cat in PhotoshootService.CATEGORY_ACCEPTANCE_THRESHOLDS
+        cfg = PhotoshootService.CATEGORY_ACCEPTANCE_THRESHOLDS[cat]
+        assert "shape_and_silhouette_similarity" in cfg
+        assert "composite_preservation_score" in cfg
+        assert cfg["composite_preservation_score"] >= 0.80

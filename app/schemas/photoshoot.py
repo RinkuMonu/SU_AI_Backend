@@ -78,6 +78,7 @@ class EnhancedImageItem(BaseModel):
     product_preserved: Optional[bool] = True
     enhancement_method: Optional[str] = "ai_edit"
     fidelity_score: Optional[float] = 1.0
+    similarity_metrics: Optional[Dict[str, Any]] = None
     verification_reason: Optional[str] = None
     created_at: datetime
 
