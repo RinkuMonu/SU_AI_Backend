@@ -75,6 +75,10 @@ class EnhancedImageItem(BaseModel):
     style: str
     url: str
     is_selected: bool = False
+    product_preserved: Optional[bool] = True
+    enhancement_method: Optional[str] = "ai_edit"
+    fidelity_score: Optional[float] = 1.0
+    verification_reason: Optional[str] = None
     created_at: datetime
 
 

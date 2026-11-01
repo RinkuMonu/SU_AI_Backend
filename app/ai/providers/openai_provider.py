@@ -270,6 +270,12 @@ class OpenAIProvider(AIProvider):
             }
             if mask:
                 call_kwargs["mask"] = mask
+            if "input_fidelity" in kwargs:
+                call_kwargs["input_fidelity"] = kwargs["input_fidelity"]
+            elif "gpt-image-1" in str(model_name):
+                call_kwargs["input_fidelity"] = "low"
+            if "response_format" in kwargs:
+                call_kwargs["response_format"] = kwargs["response_format"]
 
             resp = await client.images.edit(**call_kwargs)
             image_data = []
@@ -278,12 +284,14 @@ class OpenAIProvider(AIProvider):
                     "url": getattr(item, "url", None),
                     "b64_json": getattr(item, "b64_json", None)
                 })
+            b64_top = image_data[0]["b64_json"] if (image_data and image_data[0].get("b64_json")) else None
             return {
                 "success": True,
                 "model": model_name,
                 "provider": "openai",
                 "images": image_data,
-                "image_url": image_data[0]["url"] if image_data else None
+                "image_url": image_data[0]["url"] if image_data else None,
+                "b64_json": b64_top,
             }
         except Exception as e:
             err_str = str(e)
