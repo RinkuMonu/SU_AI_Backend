@@ -1,3 +1,19 @@
+import os
+import uuid
+import logging
+import traceback
+from pathlib import Path
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from bson import ObjectId
+from app.ai.providers.openai_provider import (
+    OpenAIServiceError,
+    OpenAIQuotaExceededError,
+    OpenAIModelUnavailableError
+)
+
+logger = logging.getLogger(__name__)
+
 def _sanitize_doc(obj):
     if isinstance(obj, ObjectId):
         return str(obj)
@@ -6,13 +22,6 @@ def _sanitize_doc(obj):
     if isinstance(obj, list):
         return [_sanitize_doc(item) for item in obj]
     return obj
-
-import os
-import uuid
-from pathlib import Path
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from bson import ObjectId
 
 from app.core.security import get_current_user
 from app.core.config import settings
@@ -166,244 +175,271 @@ async def generate_post(
     Supports social media posts, captions, advertisements, and reels.
     Integrates Brand Kit ON/OFF mode and validates ownership and product inputs.
     """
-    db = get_database()
-    user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
+    try:
+        db = get_database()
+        user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
 
-    # ---------------------------------
-    # 0. Credit Check
-    # ---------------------------------
-    credit_feature = "ai_reel" if request.content_type == "reel" else "post_generation"
-    await CreditService.check_credits(db, user_id, credit_feature)
+        # ---------------------------------
+        # 0. Credit Check
+        # ---------------------------------
+        credit_feature = "ai_reel" if request.content_type == "reel" else "post_generation"
+        await CreditService.check_credits(db, user_id, credit_feature)
 
-    # ---------------------------------
-    # 1. Resolve Business
-    # ---------------------------------
-    business = await BusinessService.get_business_by_owner(user_id)
+        # ---------------------------------
+        # 1. Resolve Business
+        # ---------------------------------
+        business = await BusinessService.get_business_by_owner(user_id)
 
-    if not business:
-        from app.schemas.business import BusinessCreate
-        default_biz = BusinessCreate(
-            name="My Business",
-            industry="Retail",
-            description="Default business created automatically.",
-            target_audience="General audience",
-            category="General",
-            location="Online"
-        )
-        business = await BusinessService.create_business(user_id, default_biz)
+        if not business:
+            from app.schemas.business import BusinessCreate
+            default_biz = BusinessCreate(
+                name="My Business",
+                industry="Retail",
+                description="Default business created automatically.",
+                target_audience="General audience",
+                category="General",
+                location="Online"
+            )
+            business = await BusinessService.create_business(user_id, default_biz)
 
-    # ---------------------------------
-    # 2. Resolve Brand Kit (ON vs OFF)
-    # ---------------------------------
-    brand = None
-    manual_brand = None
+        # ---------------------------------
+        # 2. Resolve Brand Kit (ON vs OFF)
+        # ---------------------------------
+        brand = None
+        manual_brand = None
 
-    if request.use_brand_kit:
-        from app.services.brand_service import resolve_user_brand_config
-        brand = await resolve_user_brand_config(
-            db=db,
-            user_id=user_id,
-            business_id=str(business.id),
-            require_usable=True
-        )
-    else:
-        # User provided manual branding settings
-        manual_brand = {
-            "brand_name": request.brand_name,
-            "brand_voice": request.brand_voice or request.tone,
-            "brand_colors": request.brand_colors,
-            "target_audience": request.target_audience,
-            "tone": request.tone,
-            "cta": request.cta,
-        }
-
-    # ---------------------------------
-    # 3. Resolve Products & Ownership Validation
-    # ---------------------------------
-    products_data = []
-    target_ids = []
-
-    if request.product_ids:
-        target_ids.extend([pid.strip() for pid in request.product_ids if pid and pid.strip()])
-    elif request.product_id and request.product_id.strip():
-        target_ids.append(request.product_id.strip())
-
-    for pid in target_ids:
-        product_doc = None
-
-        if ObjectId.is_valid(pid):
-            # Check products collection
-            found_doc = await db["products"].find_one({"_id": ObjectId(pid)})
-            if found_doc:
-                # Validate ownership
-                doc_biz_id = str(found_doc.get("business_id"))
-                if doc_biz_id != str(business.id):
-                    raise HTTPException(
-                        status_code=403,
-                        detail=f"Access denied: Product '{pid}' belongs to another business."
-                    )
-                product_doc = found_doc
-            else:
-                # Check fashion_products collection
-                fdoc = await db["fashion_products"].find_one({"_id": ObjectId(pid)})
-                if fdoc:
-                    product_doc = {
-                        "_id": str(fdoc["_id"]),
-                        "id": str(fdoc["_id"]),
-                        "name": fdoc.get("name"),
-                        "category": fdoc.get("category", "Fashion & Apparel"),
-                        "description": fdoc.get("description", ""),
-                        "price": fdoc.get("price", 0),
-                        "image_url": fdoc.get("image_url"),
-                        "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
-                    }
+        if request.use_brand_kit:
+            from app.services.brand_service import resolve_user_brand_config
+            brand = await resolve_user_brand_config(
+                db=db,
+                user_id=user_id,
+                business_id=str(business.id),
+                require_usable=True
+            )
         else:
-            # Custom product_id or exact name lookup within the user's business
-            product_doc = await db["products"].find_one({
-                "business_id": ObjectId(str(business.id)) if ObjectId.is_valid(str(business.id)) else str(business.id),
-                "$or": [
-                    {"product_id": pid},
-                    {"name": pid}
-                ]
-            })
+            # User provided manual branding settings
+            manual_brand = {
+                "brand_name": request.brand_name,
+                "brand_voice": request.brand_voice or request.tone,
+                "brand_colors": request.brand_colors,
+                "target_audience": request.target_audience,
+                "tone": request.tone,
+                "cta": request.cta,
+            }
 
-        if product_doc:
-            products_data.append(serialize_product(product_doc))
-        elif not request.product_name:
-            # If a specific product_id was requested but does not exist and no direct product details were given
-            raise HTTPException(
-                status_code=404,
-                detail=f"Product '{pid}' not found."
+        # ---------------------------------
+        # 3. Resolve Products & Ownership Validation
+        # ---------------------------------
+        products_data = []
+        target_ids = []
+
+        if request.product_ids:
+            target_ids.extend([pid.strip() for pid in request.product_ids if pid and pid.strip()])
+        elif request.product_id and request.product_id.strip():
+            target_ids.append(request.product_id.strip())
+
+        for pid in target_ids:
+            product_doc = None
+
+            if ObjectId.is_valid(pid):
+                # Check products collection
+                found_doc = await db["products"].find_one({"_id": ObjectId(pid)})
+                if found_doc:
+                    # Validate ownership
+                    doc_biz_id = str(found_doc.get("business_id"))
+                    if doc_biz_id != str(business.id):
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"Access denied: Product '{pid}' belongs to another business."
+                        )
+                    product_doc = found_doc
+                else:
+                    # Check fashion_products collection
+                    fdoc = await db["fashion_products"].find_one({"_id": ObjectId(pid)})
+                    if fdoc:
+                        product_doc = {
+                            "_id": str(fdoc["_id"]),
+                            "id": str(fdoc["_id"]),
+                            "name": fdoc.get("name"),
+                            "category": fdoc.get("category", "Fashion & Apparel"),
+                            "description": fdoc.get("description", ""),
+                            "price": fdoc.get("price", 0),
+                            "image_url": fdoc.get("image_url"),
+                            "images": [fdoc.get("image_url")] if fdoc.get("image_url") else []
+                        }
+            else:
+                # Custom product_id or exact name lookup within the user's business
+                product_doc = await db["products"].find_one({
+                    "business_id": ObjectId(str(business.id)) if ObjectId.is_valid(str(business.id)) else str(business.id),
+                    "$or": [
+                        {"product_id": pid},
+                        {"name": pid}
+                    ]
+                })
+
+            if product_doc:
+                products_data.append(serialize_product(product_doc))
+            elif not request.product_name:
+                # If a specific product_id was requested but does not exist and no direct product details were given
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Product '{pid}' not found."
+                )
+
+        # ---------------------------------
+        # 4. Integrate Direct Product Details
+        # ---------------------------------
+        if request.product_name:
+            direct_product = {
+                "name": request.product_name,
+                "description": request.product_description or "",
+                "price": request.price or 0,
+                "sale_price": request.sale_price,
+                "category": request.category or "General",
+                "features": request.features or [],
+                "images": request.product_images or [],
+                "image_url": request.product_images[0] if request.product_images else None,
+            }
+            if products_data:
+                # Augment existing product with provided overrides
+                products_data[0].update({k: v for k, v in direct_product.items() if v is not None and v != ""})
+            else:
+                products_data.append(direct_product)
+
+        # Fallback to business catalogue only if no product or custom input was provided
+        has_custom_input = bool(request.additional_instruction or request.reference_images or request.product_images)
+        has_requested_products = bool(target_ids or request.product_name)
+
+        if not products_data and not has_requested_products and not has_custom_input:
+            all_products = await get_products(db, str(business.id))
+            if all_products:
+                products_data.append(all_products[0])
+
+        # Primary product context (defaults to empty dict if generating general brand/business content)
+        product = products_data[0] if products_data else {}
+
+        # Validate referenced local images exist on disk
+        all_image_refs = (request.product_images or []) + (request.reference_images or [])
+        for img_ref in all_image_refs:
+            if img_ref and "uploads/" in img_ref:
+                is_external_url = (img_ref.startswith("http://") or img_ref.startswith("https://")) and not ("localhost" in img_ref or "127.0.0.1" in img_ref)
+                if not is_external_url:
+                    rel_part = img_ref.split("uploads/")[-1].split("?")[0]
+                    local_path = os.path.join(os.getcwd(), "uploads", rel_part)
+                    if not os.path.exists(local_path):
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Referenced image file '{rel_part}' does not exist on server."
+                        )
+
+        # ---------------------------------
+        # 5. Handle Content Types
+        # ---------------------------------
+        clean_type = (request.content_type or "post").lower()
+
+        if clean_type == "reel":
+            from app.schemas.reel import GenerateReelRequest
+            from app.services.reel_service import ReelService
+
+            primary_img = (request.product_images[0] if request.product_images else product.get("image_url"))
+            reel_request = GenerateReelRequest(
+                product_id=request.product_id or product.get("id") or "general",
+                product_name=product.get("name") or request.product_name or "Commercial Product",
+                product_description=product.get("description") or request.product_description,
+                category=product.get("category") or request.category,
+                price=product.get("price") or request.price or 99.99,
+                image_url=primary_img,
+                use_brand_kit=request.use_brand_kit,
+                language=request.language,
+                prompt=request.additional_instruction,
             )
 
-    # ---------------------------------
-    # 4. Integrate Direct Product Details
-    # ---------------------------------
-    if request.product_name:
-        direct_product = {
-            "name": request.product_name,
-            "description": request.product_description or "",
-            "price": request.price or 0,
-            "sale_price": request.sale_price,
-            "category": request.category or "General",
-            "features": request.features or [],
-            "images": request.product_images or [],
-            "image_url": request.product_images[0] if request.product_images else None,
-        }
-        if products_data:
-            # Augment existing product with provided overrides
-            products_data[0].update({k: v for k, v in direct_product.items() if v is not None and v != ""})
-        else:
-            products_data.append(direct_product)
+            reel_svc = ReelService(db)
+            job_doc = await reel_svc.create_reel_job(
+                user_id=user_id,
+                business_id=str(business.id),
+                request=reel_request,
+                brand=brand,
+            )
+            return {
+                "success": True,
+                "data": job_doc
+            }
 
-    # Fallback to business catalogue only if no product or custom input was provided
-    has_custom_input = bool(request.additional_instruction or request.reference_images or request.product_images)
-    has_requested_products = bool(target_ids or request.product_name)
-
-    if not products_data and not has_requested_products and not has_custom_input:
-        all_products = await get_products(db, str(business.id))
-        if all_products:
-            products_data.append(all_products[0])
-
-    # Primary product context (defaults to empty dict if generating general brand/business content)
-    product = products_data[0] if products_data else {}
-
-    # Validate referenced local images exist on disk
-    all_image_refs = (request.product_images or []) + (request.reference_images or [])
-    for img_ref in all_image_refs:
-        if img_ref and "uploads/" in img_ref:
-            is_external_url = (img_ref.startswith("http://") or img_ref.startswith("https://")) and not ("localhost" in img_ref or "127.0.0.1" in img_ref)
-            if not is_external_url:
-                rel_part = img_ref.split("uploads/")[-1].split("?")[0]
-                local_path = os.path.join(os.getcwd(), "uploads", rel_part)
-                if not os.path.exists(local_path):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Referenced image file '{rel_part}' does not exist on server."
-                    )
-
-    # ---------------------------------
-    # 5. Handle Content Types
-    # ---------------------------------
-    clean_type = (request.content_type or "post").lower()
-
-    if clean_type == "reel":
-        from app.schemas.reel import GenerateReelRequest
-        from app.services.reel_service import ReelService
-
-        primary_img = (request.product_images[0] if request.product_images else product.get("image_url"))
-        reel_request = GenerateReelRequest(
-            product_id=request.product_id or product.get("id") or "general",
-            product_name=product.get("name") or request.product_name or "Commercial Product",
-            product_description=product.get("description") or request.product_description,
-            category=product.get("category") or request.category,
-            price=product.get("price") or request.price or 99.99,
-            image_url=primary_img,
-            use_brand_kit=request.use_brand_kit,
+        # Generate Post / Caption / Advertisement via PostGenerationService
+        service = PostGenerationService()
+        generated = await service.generate_post(
+            business=business.model_dump(mode="json") if hasattr(business, "model_dump") else dict(business),
+            brand=brand,
+            product=product,
+            products=products_data,
+            platform=request.platform,
+            objective=request.objective,
             language=request.language,
-            prompt=request.additional_instruction,
+            additional_instruction=request.additional_instruction,
+            reference_images=request.reference_images or [],
+            product_images=request.product_images or [],
+            use_brand_kit=request.use_brand_kit,
+            manual_brand=manual_brand,
+            content_type=clean_type,
         )
 
-        reel_svc = ReelService(db)
-        job_doc = await reel_svc.create_reel_job(
+        # ---------------------------------
+        # 6. Add metadata & Save to DB
+        # ---------------------------------
+        generated["product_id"] = request.product_id
+        generated["product_ids"] = target_ids
+        generated["product_details"] = product
+        generated["content_type"] = clean_type
+        generated["platform"] = request.platform
+        generated["objective"] = request.objective
+        generated["use_brand_kit"] = request.use_brand_kit
+        generated["brand_kit_applied"] = bool(request.use_brand_kit and brand)
+
+        # Save to database
+        content_svc = ContentService(db)
+        saved_doc = await content_svc.save_generated_post(
             user_id=user_id,
             business_id=str(business.id),
-            request=reel_request,
-            brand=brand,
+            payload=generated
         )
+
+        generated["_id"] = str(saved_doc["_id"])
+        generated["id"] = str(saved_doc["_id"])
+
+        # Deduct credits after successful generation
+        await CreditService.deduct_credits(db, user_id, credit_feature)
+
         return {
             "success": True,
-            "data": job_doc
+            "data": _sanitize_doc(generated)
         }
-
-    # Generate Post / Caption / Advertisement via PostGenerationService
-    service = PostGenerationService()
-    generated = await service.generate_post(
-        business=business.model_dump(mode="json") if hasattr(business, "model_dump") else dict(business),
-        brand=brand,
-        product=product,
-        products=products_data,
-        platform=request.platform,
-        objective=request.objective,
-        language=request.language,
-        additional_instruction=request.additional_instruction,
-        reference_images=request.reference_images or [],
-        product_images=request.product_images or [],
-        use_brand_kit=request.use_brand_kit,
-        manual_brand=manual_brand,
-        content_type=clean_type,
-    )
-
-    # ---------------------------------
-    # 6. Add metadata & Save to DB
-    # ---------------------------------
-    generated["product_id"] = request.product_id
-    generated["product_ids"] = target_ids
-    generated["product_details"] = product
-    generated["content_type"] = clean_type
-    generated["platform"] = request.platform
-    generated["objective"] = request.objective
-    generated["use_brand_kit"] = request.use_brand_kit
-    generated["brand_kit_applied"] = bool(request.use_brand_kit and brand)
-
-    # Save to database
-    content_svc = ContentService(db)
-    saved_doc = await content_svc.save_generated_post(
-        user_id=user_id,
-        business_id=str(business.id),
-        payload=generated
-    )
-
-    generated["_id"] = str(saved_doc["_id"])
-    generated["id"] = str(saved_doc["_id"])
-
-    # Deduct credits after successful generation
-    await CreditService.deduct_credits(db, user_id, credit_feature)
-
-    return {
-        "success": True,
-        "data": _sanitize_doc(generated)
-    }
+    except HTTPException:
+        raise
+    except OpenAIQuotaExceededError as qe:
+        logger.error(f"OpenAI Quota Exceeded in generate_post: {qe}")
+        raise HTTPException(
+            status_code=402,
+            detail="AI credits or quota exceeded with the AI provider. Please verify your billing or retry."
+        )
+    except OpenAIModelUnavailableError as me:
+        logger.error(f"OpenAI Model Unavailable in generate_post: {me}")
+        raise HTTPException(
+            status_code=503,
+            detail="Configured OpenAI model is temporarily unavailable. Please retry shortly."
+        )
+    except OpenAIServiceError as oe:
+        logger.error(f"OpenAI Service Error in generate_post: {oe}")
+        raise HTTPException(
+            status_code=oe.status_code if oe.status_code != 500 else 502,
+            detail=f"AI service error: {oe.message}"
+        )
+    except Exception as exc:
+        logger.error(f"Unhandled error in generate_post: {exc}\n{traceback.format_exc()}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unable to generate post: {str(exc)}"
+        )
 
 
 @router.post("/generate-ad")
