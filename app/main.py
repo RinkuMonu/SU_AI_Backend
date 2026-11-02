@@ -73,6 +73,14 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def add_private_network_access_header(request: Request, call_next):
+    response = await call_next(request)
+    if request.headers.get("access-control-request-private-network") == "true":
+        response.headers["Access-Control-Allow-Private-Network"] = "true"
+    return response
+
+
 @app.exception_handler(PyMongoError)
 async def pymongo_exception_handler(request: Request, exc: PyMongoError):
     return JSONResponse(
