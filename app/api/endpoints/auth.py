@@ -614,16 +614,16 @@ async def get_dashboard_route(current_user: CurrentUser = Depends(get_current_us
     elif role == "influencer":
         return DashboardRouteResponse(
             role="influencer",
-            dashboard_route="/dashboard/creator",
+            dashboard_route=onb_state["dashboard_route"],
             dashboard_name="Influencer/Creator Dashboard",
-            requires_onboarding=False,
-            onboarding_completed=True,
-            onboarding_status="completed",
-            can_access_dashboard=True,
-            next_step="dashboard",
-            onboarding_step=1,
+            requires_onboarding=onb_state["requires_onboarding"],
+            onboarding_completed=onb_state["onboarding_completed"],
+            onboarding_status=onb_state["onboarding_status"],
+            can_access_dashboard=onb_state["can_access_dashboard"],
+            next_step=onb_state["next_step"],
+            onboarding_step=onb_state["onboarding_step"],
             online_presence=None,
-            onboarding_route="/dashboard/creator"
+            onboarding_route=onb_state["onboarding_route"]
         )
     elif role == "admin":
         return DashboardRouteResponse(

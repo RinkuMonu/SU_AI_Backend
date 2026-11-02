@@ -175,14 +175,27 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
     if (is_social_completed or is_social_skipped) and onboarding_step == 2:
         onboarding_step = 3
 
-    is_overall_completed = bool(
-        user_doc.get("onboardingCompleted", False) or
-        user_doc.get("onboarding_completed_at") or
-        (business_completed and (is_social_completed or is_social_skipped) and (is_plan_completed or is_plan_skipped))
-    )
+    user_role = user_doc.get("role") if user_doc else (current_user.get("role") if isinstance(current_user, dict) else getattr(current_user, "role", None))
+    is_influencer = user_role in ["influencer", "creator"]
+
+    if is_influencer:
+        is_overall_completed = bool(
+            user_doc.get("influencer_onboarding_completed", False) or
+            (
+                user_doc.get("onboardingCompleted", False) and
+                int(user_doc.get("onboarding_step", 1) or 1) >= 7 and
+                str(user_doc.get("onboarding_status", "")).lower() == "completed"
+            )
+        )
+    else:
+        is_overall_completed = bool(
+            user_doc.get("onboardingCompleted", False) or
+            user_doc.get("onboarding_completed_at") or
+            (business_completed and (is_social_completed or is_social_skipped) and (is_plan_completed or is_plan_skipped))
+        )
 
     onboarding_state = OnboardingService.determine_state(user_doc or {}, business_doc)
-    if is_overall_completed:
+    if is_overall_completed and not is_influencer:
         onboarding_state["onboarding_completed"] = True
         onboarding_state["onboarding_status"] = "completed"
         onboarding_state["can_access_dashboard"] = True

@@ -262,14 +262,29 @@ class OpenAIProvider(AIProvider):
         model_name = kwargs.get("model") or self.image_model
 
         try:
+            # Ensure image is properly formatted with filename & mimetype for OpenAI multipart upload
+            formatted_image = image
+            if isinstance(image, bytes):
+                formatted_image = ("product.png", image, "image/png")
+            elif isinstance(image, io.BytesIO):
+                formatted_image = ("product.png", image.getvalue(), "image/png")
+            elif hasattr(image, "read") and not hasattr(image, "name"):
+                data = image.read()
+                formatted_image = ("product.png", data, "image/png")
+
             call_kwargs = {
                 "model": model_name,
-                "image": image,
+                "image": formatted_image,
                 "prompt": prompt,
                 "size": size,
             }
             if mask:
-                call_kwargs["mask"] = mask
+                formatted_mask = mask
+                if isinstance(mask, bytes):
+                    formatted_mask = ("mask.png", mask, "image/png")
+                elif isinstance(mask, io.BytesIO):
+                    formatted_mask = ("mask.png", mask.getvalue(), "image/png")
+                call_kwargs["mask"] = formatted_mask
             if "input_fidelity" in kwargs:
                 call_kwargs["input_fidelity"] = kwargs["input_fidelity"]
             elif "gpt-image-1" in str(model_name):

@@ -142,7 +142,7 @@ async def enhance_product_images(
         image_id=payload.image_id,
         styles=payload.styles,
     )
-    return ProductEnhanceResponse(**result)
+    return ProductEnhanceResponse(**_serialize_mongo(result))
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +315,7 @@ async def generate_photoshoot(
         custom_prompt=payload.custom_prompt,
         image_count=payload.image_count,
     )
-    return PhotoshootGenerateResponse(**result)
+    return PhotoshootGenerateResponse(**_serialize_mongo(result))
 
 
 @router.get("/jobs/{job_id}", response_model=PhotoshootJobStatusResponse, summary="Poll progress of an async photoshoot generation job")
@@ -326,7 +326,7 @@ async def get_job_status(
 ):
     user_id = _get_user_id(current_user)
     result = await PhotoshootService.get_job_status(db=db, user_id=user_id, job_id=job_id)
-    return PhotoshootJobStatusResponse(**result)
+    return PhotoshootJobStatusResponse(**_serialize_mongo(result))
 
 
 @router.post("/jobs/{job_id}/retry", response_model=RetryJobResponse, summary="Retry only failed images from a partial or failed job")
@@ -337,7 +337,7 @@ async def retry_failed_job(
 ):
     user_id = _get_user_id(current_user)
     result = await PhotoshootService.retry_failed_job_images(db=db, user_id=user_id, job_id=job_id)
-    return RetryJobResponse(**result)
+    return RetryJobResponse(**_serialize_mongo(result))
 
 
 @router.get("/{session_id}/results", response_model=PhotoshootResultsResponse, summary="Get all generated photoshoot results for a session")
@@ -348,7 +348,7 @@ async def get_session_results(
 ):
     user_id = _get_user_id(current_user)
     result = await PhotoshootService.get_session_results(db=db, user_id=user_id, session_id=session_id)
-    return PhotoshootResultsResponse(**result)
+    return PhotoshootResultsResponse(**_serialize_mongo(result))
 
 
 # ---------------------------------------------------------------------------
