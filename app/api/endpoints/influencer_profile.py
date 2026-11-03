@@ -214,7 +214,21 @@ def format_influencer_profile(doc: Dict[str, Any], user_doc: Optional[Dict[str, 
     bio = doc.get("bio") or ""
     niches = doc.get("niches", [])
     primary_niche = doc.get("primary_niche") or doc.get("category") or (niches[0] if niches else "Fashion & Style")
-    category = primary_niche
+    
+    # Map onboarding niche to frontend select options
+    niche_lower = primary_niche.lower().strip()
+    category_map = {
+        "fashion & style": "Fashion & Lifestyle",
+        "fashion & lifestyle": "Fashion & Lifestyle",
+        "beauty & skincare": "Beauty & Skincare",
+        "food & recipes": "Food & Travel",
+        "travel & lifestyle": "Food & Travel",
+        "food & travel": "Food & Travel",
+        "tech & gadgets": "Tech & Gaming",
+        "tech & gaming": "Tech & Gaming",
+        "fitness & health": "Fitness & Health",
+    }
+    category = category_map.get(niche_lower, primary_niche)
 
     location = doc.get("location") or "India"
     if any(bad in str(location).lower() for bad in ["none", "null"]):
