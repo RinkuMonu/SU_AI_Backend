@@ -105,21 +105,30 @@ class InfluencerOnboardingRepository:
             upsert=True
         )
 
-        # Mirror step progress to users collection for consistency across the application
+        # Mirror step progress and creator identity to users collection for consistency
+        users_col = cls._users_collection()
+        user_obj_id = ObjectId(user_id) if ObjectId.is_valid(user_id) else None
+        user_filter = {"_id": user_obj_id} if user_obj_id else {"_id": user_id}
+        user_updates: Dict[str, Any] = {
+            "updated_at": now
+        }
         if step_number is not None:
-            users_col = cls._users_collection()
-            user_obj_id = ObjectId(user_id) if ObjectId.is_valid(user_id) else None
-            user_filter = {"_id": user_obj_id} if user_obj_id else {"_id": user_id}
-            await users_col.update_one(
-                user_filter,
-                {
-                    "$set": {
-                        "onboarding_step": step_number,
-                        "onboarding_status": "in_progress",
-                        "updated_at": now
-                    }
-                }
-            )
+            user_updates["onboarding_step"] = step_number
+            user_updates["onboarding_status"] = "in_progress"
+        if "full_name" in updates or "fullName" in updates:
+            name_val = updates.get("full_name") or updates.get("fullName")
+            user_updates["name"] = name_val
+            user_updates["fullName"] = name_val
+        if "username" in updates and updates["username"]:
+            user_updates["username"] = updates["username"]
+        if "profile_image" in updates and updates["profile_image"]:
+            user_updates["profileImageUrl"] = updates["profile_image"]
+            user_updates["image"] = updates["profile_image"]
+
+        await users_col.update_one(
+            user_filter,
+            {"$set": user_updates}
+        )
 
         updated = await col.find_one({"user_id": str(user_id)})
         return cls._clean_doc(updated) or {}
@@ -186,23 +195,36 @@ class InfluencerOnboardingRepository:
             upsert=True
         )
 
-        # 2. Update users document
+        # 2. Update users document with completion and sync identity fields
         user_obj_id = ObjectId(user_id) if ObjectId.is_valid(user_id) else None
         user_filter = {"_id": user_obj_id} if user_obj_id else {"_id": user_id}
+        profile_doc = await col.find_one({"user_id": str(user_id)}) or {}
+        name_val = profile_doc.get("full_name") or profile_doc.get("fullName")
+        un_val = profile_doc.get("username")
+        img_val = profile_doc.get("profile_image") or profile_doc.get("profileImageUrl")
+
+        user_updates: Dict[str, Any] = {
+            "role": "influencer",
+            "accountType": "personal",
+            "onboardingCompleted": True,
+            "influencer_onboarding_completed": True,
+            "onboarding_status": "completed",
+            "onboarding_step": 7,
+            "onboarding_completed_at": now,
+            "updated_at": now
+        }
+        if name_val:
+            user_updates["name"] = name_val
+            user_updates["fullName"] = name_val
+        if un_val:
+            user_updates["username"] = un_val
+        if img_val:
+            user_updates["profileImageUrl"] = img_val
+            user_updates["image"] = img_val
+
         await users_col.update_one(
             user_filter,
-            {
-                "$set": {
-                    "role": "influencer",
-                    "accountType": "personal",
-                    "onboardingCompleted": True,
-                    "influencer_onboarding_completed": True,
-                    "onboarding_status": "completed",
-                    "onboarding_step": 7,
-                    "onboarding_completed_at": now,
-                    "updated_at": now
-                }
-            }
+            {"$set": user_updates}
         )
 
         final_doc = await col.find_one({"user_id": str(user_id)})

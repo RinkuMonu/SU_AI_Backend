@@ -110,9 +110,10 @@ class InfluencerOnboardingService:
         # Extract social accounts
         social_accounts_data = doc.get("social_accounts") or {
             "instagram": {"url": doc.get("instagram_url"), "handle": None, "connected": bool(doc.get("instagram_url")), "verified": False},
+            "facebook": {"url": doc.get("facebook_url"), "handle": None, "connected": bool(doc.get("facebook_url")), "verified": False},
+            "linkedin": {"url": doc.get("linkedin_url"), "handle": None, "connected": bool(doc.get("linkedin_url")), "verified": False},
             "youtube": {"url": doc.get("youtube_url"), "handle": None, "connected": bool(doc.get("youtube_url")), "verified": False},
             "tiktok": {"url": None, "handle": None, "connected": False, "verified": False},
-            "facebook": {"url": doc.get("facebook_url"), "handle": None, "connected": bool(doc.get("facebook_url")), "verified": False},
         }
 
         goals_data = doc.get("goals", [])
@@ -211,9 +212,10 @@ class InfluencerOnboardingService:
 
         socials_payload = {
             "instagram": _merge_platform("instagram", request.instagram),
+            "facebook": _merge_platform("facebook", request.facebook),
+            "linkedin": _merge_platform("linkedin", request.linkedin),
             "youtube": _merge_platform("youtube", request.youtube),
             "tiktok": _merge_platform("tiktok", request.tiktok),
-            "facebook": _merge_platform("facebook", request.facebook),
         }
 
         updates: Dict[str, Any] = {"social_accounts": socials_payload}
@@ -221,10 +223,12 @@ class InfluencerOnboardingService:
         # Keep top-level legacy fields in sync for backward compatibility with marketplace search
         if request.instagram and request.instagram.url:
             updates["instagram_url"] = request.instagram.url
-        if request.youtube and request.youtube.url:
-            updates["youtube_url"] = request.youtube.url
         if request.facebook and request.facebook.url:
             updates["facebook_url"] = request.facebook.url
+        if request.linkedin and request.linkedin.url:
+            updates["linkedin_url"] = request.linkedin.url
+        if request.youtube and request.youtube.url:
+            updates["youtube_url"] = request.youtube.url
 
         await InfluencerOnboardingRepository.partial_save(user_id, updates, step_number=4)
         return await cls.get_state(user_id)
