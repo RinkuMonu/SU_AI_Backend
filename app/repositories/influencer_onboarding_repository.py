@@ -119,6 +119,9 @@ class InfluencerOnboardingRepository:
             name_val = updates.get("full_name") or updates.get("fullName")
             user_updates["name"] = name_val
             user_updates["fullName"] = name_val
+            parts = name_val.strip().split()
+            user_updates["firstName"] = parts[0] if parts else ""
+            user_updates["lastName"] = " ".join(parts[1:]) if len(parts) > 1 else ""
         if "username" in updates and updates["username"]:
             user_updates["username"] = updates["username"]
         if "profile_image" in updates and updates["profile_image"]:
@@ -216,6 +219,9 @@ class InfluencerOnboardingRepository:
         if name_val:
             user_updates["name"] = name_val
             user_updates["fullName"] = name_val
+            parts = name_val.strip().split()
+            user_updates["firstName"] = parts[0] if parts else ""
+            user_updates["lastName"] = " ".join(parts[1:]) if len(parts) > 1 else ""
         if un_val:
             user_updates["username"] = un_val
         if img_val:
