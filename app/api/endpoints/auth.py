@@ -252,7 +252,7 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
 
     role = onb_state.get("role")
     requires_role = onb_state["requires_role_selection"]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    dashboard_route = onb_state["dashboard_route"]
 
     user_resp = UserResponse(
         id=str(user.id),
@@ -412,7 +412,7 @@ async def login(request: Request, response: Response):
 
     role = onb_state.get("role")
     requires_role = onb_state["requires_role_selection"]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    dashboard_route = onb_state["dashboard_route"]
 
     user_dict["online_presence"] = onb_state.get("online_presence")
     user_dict["onboarding_step"] = onb_state.get("onboarding_step", 1)
@@ -1449,9 +1449,17 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
 
     set_refresh_cookie(response, refresh_token_jwt)
 
-    role = getattr(user, "role", None)
-    requires_role = role is None or role in ["user", ""]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    role = onb_state.get("role") or getattr(user, "role", None)
+    requires_role = onb_state["requires_role_selection"]
+    dashboard_route = onb_state["dashboard_route"]
+    onboarding_completed = onb_state["onboarding_completed"]
+    is_existing = (not requires_role) and onboarding_completed
+    next_step = onb_state["next_step"]
+
     user_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
     phone_verified = getattr(user, "phone_verified", False)
 
@@ -1476,15 +1484,6 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
-
-    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
-    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
-    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
-
-    onboarding_completed = onb_state["onboarding_completed"]
-    requires_role = onb_state["requires_role_selection"]
-    is_existing = (not requires_role) and onboarding_completed
-    next_step = onb_state["next_step"]
 
     user_payload["online_presence"] = onb_state.get("online_presence")
     user_payload["onboarding_status"] = onb_state["onboarding_status"]
