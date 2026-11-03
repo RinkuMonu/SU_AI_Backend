@@ -494,6 +494,9 @@ def format_influencer_profile(doc: Dict[str, Any], user_doc: Optional[Dict[str, 
         "followers": followers,
         "follower_count": followers,
         "engagement_rate": engagement_rate,
+        "expectedPricePerPost": doc.get("expectedPricePerPost") or doc.get("expected_rate") or 5000,
+        "expected_rate": doc.get("expectedPricePerPost") or doc.get("expected_rate") or 5000,
+        "avatar_url": profile_image,
         "profile_completion": profile_completion,
         "profileCompletion": profile_completion,
         "onboarding_status": doc.get("onboarding_status", "COMPLETED"),
@@ -508,6 +511,7 @@ def format_influencer_profile(doc: Dict[str, Any], user_doc: Optional[Dict[str, 
 
 @router.get("/influencer/profile/me")
 @router.get("/influencer/profile")
+@router.get("/influencers/profile")
 @router.get("/influencer/me")
 @router.get("/influencer")
 @router.get("/influencers/me")
@@ -558,6 +562,8 @@ async def get_my_profile(current_user: CurrentUser = Depends(get_current_user)):
 @router.post("/influencer/profile/me")
 @router.put("/influencer/profile")
 @router.post("/influencer/profile")
+@router.put("/influencers/profile")
+@router.post("/influencers/profile")
 @router.put("/influencer/me")
 @router.post("/influencer/me")
 @router.put("/influencer")
@@ -678,45 +684,51 @@ async def get_influencer_dashboard(current_user: CurrentUser = Depends(get_curre
     has_pending = False
     social_account_status: Dict[str, Any] = {}
 
-    for col_name, plat_name in [
-        ("instagram_connections", "instagram"),
-        ("facebook_connections", "facebook"),
-        ("linkedin_connections", "linkedin")
-    ]:
-        conn = await db[col_name].find_one({"user_id": user_id})
-        if conn:
-            c_status = (conn.get("status") or "NOT_CONNECTED").upper()
-            social_account_status[plat_name] = {
-                "connected": c_status in ["VERIFIED", "PENDING"],
-                "status": c_status,
-                "platform_account_id": conn.get("platform_account_id"),
-                "username": conn.get("username")
-            }
+    # Initialize default status for supported platforms
+    for plat in ["instagram", "facebook", "linkedin"]:
+        social_account_status[plat] = {
+            "connected": False,
+            "status": "NOT_CONNECTED",
+            "platform_account_id": None,
+            "username": None
+        }
+
+    # Authoritative check from influencer_social_connections (OAuth verified only)
+    social_conns_cursor = db["influencer_social_connections"].find({"user_id": user_id})
+    oauth_conns = await social_conns_cursor.to_list(length=10)
+    for c in oauth_conns:
+        plat = c.get("platform")
+        c_status = (c.get("status") or "NOT_CONNECTED").upper()
+        if plat in ["instagram", "facebook", "linkedin"]:
             if c_status == "VERIFIED":
                 has_verified = True
-                connected_platforms.append(plat_name)
+                connected_platforms.append(plat)
+                social_account_status[plat] = {
+                    "connected": True,
+                    "status": "VERIFIED",
+                    "platform_account_id": c.get("platform_account_id"),
+                    "username": c.get("platform_username")
+                }
             elif c_status == "PENDING":
                 has_pending = True
-        else:
-            social_account_status[plat_name] = {
-                "connected": False,
-                "status": "NOT_CONNECTED",
-                "platform_account_id": None,
-                "username": None
-            }
+                social_account_status[plat] = {
+                    "connected": True,
+                    "status": "PENDING",
+                    "platform_account_id": c.get("platform_account_id"),
+                    "username": c.get("platform_username")
+                }
 
-    # Also inspect embedded profile_doc["social_accounts"]
+    # Manual handles from onboarding: Never mark as VERIFIED (Rule: Never verify based on manual username or URL)
     social_accounts = profile_doc.get("social_accounts") or {}
     for p, info in social_accounts.items():
         if isinstance(info, dict):
-            if info.get("verified") or info.get("connected"):
+            # Only count as verified if explicitly OAuth verified
+            if info.get("verified") is True and info.get("verification_method") == "oauth":
                 connected_platforms.append(p)
                 has_verified = True
                 if p in social_account_status:
                     social_account_status[p]["connected"] = True
                     social_account_status[p]["status"] = "VERIFIED"
-            elif info.get("status") == "pending":
-                has_pending = True
 
     connected_platforms = list(set(connected_platforms))
     verification_status = "VERIFIED" if has_verified else ("PENDING" if has_pending else "UNVERIFIED")

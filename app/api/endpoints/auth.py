@@ -490,17 +490,42 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
 
     uid = str(doc.get("_id") or doc.get("id") or user_id)
     full_name = doc.get("fullName") or doc.get("name") or "User"
+    
+    # Sync creator profile data if user is an influencer or has default temporary name
+    prof = None
+    if doc.get("role") == "influencer" or full_name == "User" or full_name.startswith("User "):
+        prof = await db["influencer_profiles"].find_one({"user_id": uid})
+        if prof:
+            prof_name = prof.get("full_name") or prof.get("fullName")
+            if prof_name and prof_name.strip() and not prof_name.startswith("User "):
+                full_name = prof_name.strip()
+                if ObjectId.is_valid(uid):
+                    await db["users"].update_one(
+                        {"_id": ObjectId(uid)},
+                        {"$set": {"name": full_name, "fullName": full_name}}
+                    )
+
     user_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
     phone_verified = doc.get("phone_verified", True if not user_phone else False)
     if not user_phone or doc.get("role") in ["businessman", "influencer", "admin"]:
         phone_verified = True
     email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
 
+    user_image = (
+        doc.get("profileImageUrl")
+        or doc.get("image")
+        or doc.get("avatar")
+        or (prof.get("profile_image") if prof else None)
+        or (prof.get("profileImageUrl") if prof else None)
+    )
+    username = doc.get("username") or (prof.get("username") if prof else None)
+
     user_dict = {
         "id": uid,
         "_id": uid,
         "fullName": full_name,
         "name": full_name,
+        "username": username,
         "firstName": doc.get("firstName") or full_name.split()[0],
         "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
         "email": doc.get("email") or None,
@@ -508,14 +533,14 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "phone": user_phone,
         "contactNumber": user_phone,
         "phone_verified": phone_verified,
-        "accountType": doc.get("accountType", "business"),
+        "accountType": doc.get("accountType", "personal" if doc.get("role") == "influencer" else "business"),
         "role": doc.get("role", "businessman") or "businessman",
         "emailVerified": email_ver,
         "email_verified": email_ver,
         "isVerified": email_ver,
-        "profileImageUrl": doc.get("profileImageUrl") or doc.get("image") or doc.get("avatar"),
-        "image": doc.get("image") or doc.get("profileImageUrl") or doc.get("avatar"),
-        "avatar": doc.get("avatar") or doc.get("profileImageUrl") or doc.get("image"),
+        "profileImageUrl": user_image,
+        "image": user_image,
+        "avatar": user_image,
         "preferredLanguage": doc.get("preferredLanguage"),
         "businessName": doc.get("businessName") or doc.get("business_name"),
         "onboardingCompleted": doc.get("onboardingCompleted", False),
