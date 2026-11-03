@@ -74,7 +74,7 @@ PLANS = {
             "1 AI reel/month",
             "5 AI credits/month"
         ],
-        "features": ["ai_assistant"],
+        "features": ["ai_assistant", "website_builder"],
         "gst_applicable": False,
         "gst_rate": 0.0,
         "gst_amount": 0.0,
@@ -122,7 +122,7 @@ PLANS = {
             "30 AI posts/month",
             "10 AI reels/month"
         ],
-        "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar"],
+        "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar", "website_builder"],
         "gst_applicable": False,
         "gst_rate": 0.0,
         "gst_amount": 0.0,
