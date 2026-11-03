@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta, timezone
 import bcrypt
 import jwt
@@ -20,7 +19,7 @@ def create_access_token(subject: Union[str, Any], expires_delta: Optional[timede
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    
+
     to_encode = {"exp": expire, "sub": str(subject)}
     encoded_jwt = jwt.encode(to_encode, settings.JWT_ACCESS_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
@@ -50,42 +49,84 @@ class CurrentUser(dict):
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
 
+# [OLD] — original helper, kept for reference
+# def get_token_from_header_or_cookie(request: Request) -> str:
+#     # Check header
+#     auth_header = request.headers.get("Authorization")
+#     if auth_header and auth_header.startswith("Bearer "):
+#         return auth_header.split(" ")[1]
+#
+#     # Check cookie (if some implementations prefer access token in cookie, but usually it's refresh)
+#     # The prompt says refresh token in HTTP-only cookie.
+#     raise HTTPException(status_code=401, detail="Not authenticated")
+
+
 def get_token_from_header_or_cookie(request: Request) -> str:
-    # Check header
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         return auth_header.split(" ")[1]
-    
-    # Check cookie (if some implementations prefer access token in cookie, but usually it's refresh)
-    # The prompt says refresh token in HTTP-only cookie.
+
+    cookie_token = request.cookies.get("access_token")
+    if cookie_token:
+        return cookie_token
+
     raise HTTPException(status_code=401, detail="Not authenticated")
 
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 security = HTTPBearer(auto_error=False)
 
-async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> CurrentUser:
+
+# async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> CurrentUser:
+#     from app.core.database import get_database
+#     db = get_database()
+#
+#     credentials_exception = HTTPException(
+#         status_code=status.HTTP_401_UNAUTHORIZED,
+#         detail="Could not validate credentials",
+#         headers={"WWW-Authenticate": "Bearer"},
+#     )
+#
+#     if not credentials or not credentials.credentials:
+#         raise credentials_exception
+#
+#     token = credentials.credentials
+#     payload = decode_access_token(token)
+#     if payload is None:
+#         raise credentials_exception
+#     ... (rest unchanged)
+
+
+async def get_current_user(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+) -> CurrentUser:
     from app.core.database import get_database
     db = get_database()
-    
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
-    if not credentials or not credentials.credentials:
+
+
+    token: Optional[str] = None
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
         raise credentials_exception
-    
-    token = credentials.credentials
+
     payload = decode_access_token(token)
     if payload is None:
         raise credentials_exception
-        
+
     user_id: str = payload.get("sub")
     if user_id is None or not ObjectId.is_valid(user_id):
         raise credentials_exception
-        
+
     user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
     is_pending = False
     if user_doc is None:
@@ -93,7 +134,7 @@ async def get_current_user(credentials: Optional[HTTPAuthorizationCredentials] =
         is_pending = True
         if user_doc is None:
             raise credentials_exception
-        
+
     business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
     def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
@@ -150,11 +191,29 @@ async def require_admin(current_user: CurrentUser = Depends(get_current_user)) -
         )
     return current_user
 
-async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[CurrentUser]:
-    if not credentials:
+
+# async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))) -> Optional[CurrentUser]:
+#     if not credentials:
+#         return None
+#     try:
+#         payload = decode_access_token(credentials.credentials)
+#         ...
+
+
+async def get_current_user_optional(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+) -> Optional[CurrentUser]:
+    
+    token: Optional[str] = None
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+    if not token:
+        token = request.cookies.get("access_token")
+    if not token:
         return None
     try:
-        payload = decode_access_token(credentials.credentials)
+        payload = decode_access_token(token)
         if not payload or not payload.get("sub"):
             return None
         from app.core.database import get_database
@@ -170,7 +229,7 @@ async def get_current_user_optional(credentials: Optional[HTTPAuthorizationCrede
             if not user_doc:
                 return None
         business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
-        
+
         def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
             if not role:
                 return None
@@ -287,6 +346,5 @@ async def require_completed_onboarding(current_user: CurrentUser = Depends(get_c
                 detail="Onboarding incomplete. Please complete business onboarding before accessing dashboard."
             )
     return current_user
-
 
 

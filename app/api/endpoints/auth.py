@@ -57,33 +57,135 @@ from app.models.user import User
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-def set_refresh_cookie(response: Response, refresh_token: str):
-    is_live = (
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COOKIE HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# [OLD] — original helper, kept for reference
+# def set_refresh_cookie(response: Response, refresh_token: str):
+#     is_live = (
+#         settings.ENVIRONMENT == "production"
+#         or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
+#         or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
+#     )
+#     response.set_cookie(
+#         key="refresh_token",
+#         value=refresh_token,
+#         httponly=True,
+#         secure=is_live,
+#         samesite="none" if is_live else "lax",
+#         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+#     )
+
+# [NEW] helpers used by the cookie-based flow
+def _is_live_env() -> bool:
+    return bool(
         settings.ENVIRONMENT == "production"
         or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
         or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
+    )
+
+def _access_cookie_max_age() -> int:
+    minutes = getattr(settings, "ACCESS_TOKEN_EXPIRE_MINUTES", 15) or 15
+    return int(minutes) * 60
+
+def _refresh_cookie_max_age() -> int:
+    days = getattr(settings, "REFRESH_TOKEN_EXPIRE_DAYS", 7) or 7
+    return int(days) * 24 * 60 * 60
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
+    """Set access_token + refresh_token as httpOnly cookies, plus readable csrf_token."""
+    is_live = _is_live_env()
+    same_site = "none" if is_live else "lax"
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=is_live,
+        samesite=same_site,
+        max_age=_access_cookie_max_age(),
+        path="/",
     )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
         httponly=True,
         secure=is_live,
-        samesite="none" if is_live else "lax",
-        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        samesite=same_site,
+        max_age=_refresh_cookie_max_age(),
+        path="/",
+    )
+    csrf_value = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf_value,
+        httponly=False,   # frontend JS must read this
+        secure=is_live,
+        samesite=same_site,
+        max_age=_refresh_cookie_max_age(),
+        path="/",
     )
 
+def clear_auth_cookies(response: Response) -> None:
+    is_live = _is_live_env()
+    same_site = "none" if is_live else "lax"
+    for name in ("access_token", "refresh_token", "csrf_token"):
+        response.delete_cookie(key=name, secure=is_live, samesite=same_site, path="/")
+
+# [NEW] Deprecated shim: keeps any external import of set_refresh_cookie working.
+def set_refresh_cookie(response: Response, refresh_token: str) -> None:
+    is_live = _is_live_env()
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=is_live,
+        samesite="none" if is_live else "lax",
+        max_age=_refresh_cookie_max_age(),
+        path="/",
+    )
+
+
+# [NEW] Opt-in CSRF dependency — apply via dependencies=[Depends(verify_csrf)] when ready.
+async def verify_csrf(request: Request) -> None:
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return
+    safe_paths = (
+        "/auth/login", "/auth/signup", "/auth/register",
+        "/auth/send-otp", "/auth/resend-otp", "/auth/verify-otp",
+        "/auth/otp/verify-phone", "/auth/otp/send-phone",
+        "/auth/refresh", "/auth/forgot-password", "/auth/reset-password",
+        "/auth/verify-email", "/auth/resend-verification",
+        "/auth/google", "/auth/facebook", "/auth/instagram", "/auth/linkedin",
+    )
+    path = request.url.path
+    if any(p in path for p in safe_paths):
+        return
+    cookie_val = request.cookies.get("csrf_token")
+    header_val = request.headers.get("X-CSRF-Token") or request.headers.get("x-csrf-token")
+    if not cookie_val or not header_val or not secrets.compare_digest(cookie_val, header_val):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CSRF token missing or invalid.",
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNUP
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED)
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def signup(request: Request, response: Response):
     body = await request.json()
-    
+
     raw_phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("contactNumber")
     raw_email = (body.get("email") or "").lower().strip()
     raw_otp = body.get("otp")
-    
+
     db = get_database()
-    
+
     # Check duplicate email
     if raw_email:
         existing = await db["users"].find_one({"email": raw_email})
@@ -112,14 +214,16 @@ async def signup(request: Request, response: Response):
                 )
         except InvalidPhoneNumberException:
             pass
-            
+
     # If raw_otp is provided or firstName+lastName without phone OTP requirement
     if raw_otp or (body.get("firstName") and body.get("lastName")) or (body.get("fullName") and not raw_phone):
         from app.schemas.auth import SignupRequest
         try:
             req = SignupRequest(**body)
             user, access_token, refresh_token = await AuthService.signup(req)
-            set_refresh_cookie(response, refresh_token)
+            # [OLD] set_refresh_cookie(response, refresh_token)
+            # [NEW] Set BOTH cookies.
+            set_auth_cookies(response, access_token, refresh_token)
             user_dict = {
                 "id": str(user.id),
                 "fullName": user.fullName or user.name or "User",
@@ -143,12 +247,39 @@ async def signup(request: Request, response: Response):
                 "next_step": "role_selection"
             }
             response.status_code = status.HTTP_200_OK
+            # [OLD] return {
+            #     "success": True,
+            #     "message": "User registered successfully.",
+            #     "access_token": access_token,
+            #     "accessToken": access_token,
+            #     "token": access_token,
+            #     "user": user_dict,
+            #     "requires_role_selection": True,
+            #     "dashboard_route": "/select-role",
+            #     "onboarding_status": "not_started",
+            #     "onboarding_step": 1,
+            #     "online_presence": None,
+            #     "can_access_dashboard": False,
+            #     "next_step": "role_selection",
+            #     "data": {
+            #         "access_token": access_token,
+            #         "accessToken": access_token,
+            #         "token": access_token,
+            #         "user": user_dict,
+            #         "requires_role_selection": True,
+            #         "dashboard_route": "/select-role",
+            #         "onboarding_status": "not_started",
+            #         "onboarding_step": 1,
+            #         "online_presence": None,
+            #         "can_access_dashboard": False,
+            #         "next_step": "role_selection"
+            #     }
+            # }
+            # [NEW] Token lives in the cookie now.
             return {
                 "success": True,
                 "message": "User registered successfully.",
-                "access_token": access_token,
-                "accessToken": access_token,
-                "token": access_token,
+                "token_type": "cookie",
                 "user": user_dict,
                 "requires_role_selection": True,
                 "dashboard_route": "/select-role",
@@ -158,9 +289,6 @@ async def signup(request: Request, response: Response):
                 "can_access_dashboard": False,
                 "next_step": "role_selection",
                 "data": {
-                    "access_token": access_token,
-                    "accessToken": access_token,
-                    "token": access_token,
                     "user": user_dict,
                     "requires_role_selection": True,
                     "dashboard_route": "/select-role",
@@ -186,6 +314,10 @@ async def signup(request: Request, response: Response):
     result = await AuthService.handle_signup(user_in)
     return result
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VERIFY OTP (login path)
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/verify-otp")
 @router.post("/otp/verify-phone")
@@ -243,8 +375,11 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
 
     db = get_database()
     jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id))
+    # [OLD] if response:
+    # [OLD]     set_refresh_cookie(response, jwt_refresh_token)
+    # [NEW] Set BOTH cookies.
     if response:
-        set_refresh_cookie(response, jwt_refresh_token)
+        set_auth_cookies(response, jwt_access_token, jwt_refresh_token)
 
     u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
     bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
@@ -268,26 +403,46 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
         onboardingCompleted=onb_state.get("onboarding_completed", False),
         onboarding_completed_at=getattr(user, "onboarding_completed_at", None)
     )
-    return TokenResponse(
-        access_token=jwt_access_token,
-        token=jwt_access_token,
-        user=user_resp,
-        role=role,
-        phone_verified=True,
-        requires_role_selection=requires_role,
-        dashboard_route=dashboard_route,
-        phone_verification_token=v_token,
-        verification_token=v_token,
-        next_step=onb_state["next_step"],
-        online_presence=onb_state.get("online_presence"),
-        onboarding_step=onb_state.get("onboarding_step", 1),
-        onboarding_status=onb_state.get("onboarding_status", "not_started"),
-        can_access_dashboard=onb_state["can_access_dashboard"],
-        onboarding_completed=onb_state["onboarding_completed"],
-        onboardingCompleted=onb_state["onboarding_completed"],
-        success=True,
-        message="OTP verified successfully. Logged in."
-    )
+    # [OLD] return TokenResponse(
+    #     access_token=jwt_access_token,
+    #     token=jwt_access_token,
+    #     user=user_resp,
+    #     role=role,
+    #     phone_verified=True,
+    #     requires_role_selection=requires_role,
+    #     dashboard_route=dashboard_route,
+    #     phone_verification_token=v_token,
+    #     verification_token=v_token,
+    #     next_step=onb_state["next_step"],
+    #     online_presence=onb_state.get("online_presence"),
+    #     onboarding_step=onb_state.get("onboarding_step", 1),
+    #     onboarding_status=onb_state.get("onboarding_status", "not_started"),
+    #     can_access_dashboard=onb_state["can_access_dashboard"],
+    #     onboarding_completed=onb_state["onboarding_completed"],
+    #     onboardingCompleted=onb_state["onboarding_completed"],
+    #     success=True,
+    #     message="OTP verified successfully. Logged in."
+    # )
+    # [NEW] No access_token in body — returned via cookie.
+    return {
+        "success": True,
+        "message": "OTP verified successfully. Logged in.",
+        "token_type": "cookie",
+        "user": user_resp,
+        "role": role,
+        "phone_verified": True,
+        "requires_role_selection": requires_role,
+        "dashboard_route": dashboard_route,
+        "phone_verification_token": v_token,
+        "verification_token": v_token,
+        "next_step": onb_state["next_step"],
+        "online_presence": onb_state.get("online_presence"),
+        "onboarding_step": onb_state.get("onboarding_step", 1),
+        "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+        "can_access_dashboard": onb_state["can_access_dashboard"],
+        "onboarding_completed": onb_state["onboarding_completed"],
+        "onboardingCompleted": onb_state["onboarding_completed"],
+    }
 
 
 @router.post("/send-otp")
@@ -308,7 +463,9 @@ async def resend_otp(request: OTPResendRequest):
     return result
 
 
-
+# ─────────────────────────────────────────────────────────────────────────────
+# PASSWORD LOGIN
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/login")
 async def login(request: Request, response: Response):
@@ -320,7 +477,7 @@ async def login(request: Request, response: Response):
     phone = body.get("phone_number") or body.get("phone") or body.get("mobile") or body.get("username")
     country_code = body.get("country_code") or body.get("countryCode")
     password = body.get("password")
-    
+
     if not password:
         raise HTTPException(status_code=400, detail="Password is required.")
 
@@ -344,7 +501,9 @@ async def login(request: Request, response: Response):
                 from app.schemas.auth import LoginRequest
                 login_req = LoginRequest(email=email, password=password)
                 user, access_token, refresh_token = await AuthService.login(login_req)
-                set_refresh_cookie(response, refresh_token)
+                # [OLD] set_refresh_cookie(response, refresh_token)
+                # [NEW] Set BOTH cookies.
+                set_auth_cookies(response, access_token, refresh_token)
                 u_phone = getattr(user, "phone", None) or getattr(user, "phone_number", None)
                 u_role = getattr(user, "role", "user")
                 u_pv = getattr(user, "phone_verified", False)
@@ -362,17 +521,27 @@ async def login(request: Request, response: Response):
                     "email_verified": getattr(user, "email_verified", True),
                     "phone_verified": u_pv,
                 }
+                # [OLD] return {
+                #     "success": True,
+                #     "message": "Logged in successfully",
+                #     "access_token": access_token,
+                #     "accessToken": access_token,
+                #     "token": access_token,
+                #     "user": user_dict,
+                #     "data": {
+                #         "access_token": access_token,
+                #         "accessToken": access_token,
+                #         "token": access_token,
+                #         "user": user_dict
+                #     }
+                # }
+                # [NEW] No access_token in body.
                 return {
                     "success": True,
                     "message": "Logged in successfully",
-                    "access_token": access_token,
-                    "accessToken": access_token,
-                    "token": access_token,
+                    "token_type": "cookie",
                     "user": user_dict,
                     "data": {
-                        "access_token": access_token,
-                        "accessToken": access_token,
-                        "token": access_token,
                         "user": user_dict
                     }
                 }
@@ -398,13 +567,15 @@ async def login(request: Request, response: Response):
         "phone_verified": u_pv,
         "email_verified": getattr(user, "email_verified", True),
     }
-    
+
     try:
         refresh_token = AuthService.create_token(str(user.id), settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-        set_refresh_cookie(response, refresh_token)
+        # [OLD] set_refresh_cookie(response, refresh_token)
+        # [NEW] Set BOTH cookies.
+        set_auth_cookies(response, access_token, refresh_token)
     except Exception as e:
-        logger.error(f"Failed to set refresh cookie in login: {e}")
-        
+        logger.error(f"Failed to set auth cookies in login: {e}")
+
     db = get_database()
     u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
     bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
@@ -422,11 +593,43 @@ async def login(request: Request, response: Response):
     user_dict["can_access_dashboard"] = onb_state["can_access_dashboard"]
     user_dict["next_step"] = onb_state["next_step"]
 
+    # [OLD] return {
+    #     "success": True,
+    #     "access_token": access_token,
+    #     "accessToken": access_token,
+    #     "token_type": "bearer",
+    #     "user": user_dict,
+    #     "role": role,
+    #     "requires_role_selection": requires_role,
+    #     "dashboard_route": dashboard_route,
+    #     "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+    #     "onboarding_step": onb_state.get("onboarding_step", 1),
+    #     "online_presence": onb_state.get("online_presence"),
+    #     "onboardingCompleted": onb_state.get("onboarding_completed", False),
+    #     "onboarding_completed": onb_state.get("onboarding_completed", False),
+    #     "can_access_dashboard": onb_state["can_access_dashboard"],
+    #     "next_step": onb_state["next_step"],
+    #     "data": {
+    #         "access_token": access_token,
+    #         "accessToken": access_token,
+    #         "token": access_token,
+    #         "user": user_dict,
+    #         "role": role,
+    #         "requires_role_selection": requires_role,
+    #         "dashboard_route": dashboard_route,
+    #         "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+    #         "onboarding_step": onb_state.get("onboarding_step", 1),
+    #         "online_presence": onb_state.get("online_presence"),
+    #         "onboardingCompleted": onb_state.get("onboarding_completed", False),
+    #         "onboarding_completed": onb_state.get("onboarding_completed", False),
+    #         "can_access_dashboard": onb_state["can_access_dashboard"],
+    #         "next_step": onb_state["next_step"]
+    #     }
+    # }
+    # [NEW] No access_token in body.
     return {
         "success": True,
-        "access_token": access_token,
-        "accessToken": access_token,
-        "token_type": "bearer",
+        "token_type": "cookie",
         "user": user_dict,
         "role": role,
         "requires_role_selection": requires_role,
@@ -439,9 +642,6 @@ async def login(request: Request, response: Response):
         "can_access_dashboard": onb_state["can_access_dashboard"],
         "next_step": onb_state["next_step"],
         "data": {
-            "access_token": access_token,
-            "accessToken": access_token,
-            "token": access_token,
             "user": user_dict,
             "role": role,
             "requires_role_selection": requires_role,
@@ -457,6 +657,10 @@ async def login(request: Request, response: Response):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OAUTH2 PASSWORD FLOW — unchanged (for mobile / API clients)
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.post("/token")
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user_in = UserLogin(username=form_data.username, password=form_data.password)
@@ -471,6 +675,10 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(subject=str(user.id))
     return {"access_token": access_token, "token_type": "bearer"}
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# /me — unchanged (works via cookie once get_current_user is patched)
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/me")
 async def get_me(current_user: CurrentUser = Depends(get_current_user)):
@@ -528,6 +736,10 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "data": user_dict,
     }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ROLE / DASHBOARD — unchanged
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/select-role", response_model=RoleSelectResponse)
 @router.post("/role", response_model=RoleSelectResponse)
@@ -684,36 +896,62 @@ async def get_influencer_dashboard(current_user: CurrentUser = Depends(require_i
         "user_id": current_user["id"]
     }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOGOUT
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.post("/logout")
 async def logout(request: Request, response: Response):
     refresh_token = request.cookies.get("refresh_token")
     if refresh_token:
         await AuthService.logout(refresh_token)
-    is_live = (
-        settings.ENVIRONMENT == "production"
-        or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
-        or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
-    )
-    response.delete_cookie(
-        key="refresh_token",
-        secure=is_live,
-        samesite="none" if is_live else "lax"
-    )
+    # [OLD] is_live = (
+    # [OLD]     settings.ENVIRONMENT == "production"
+    # [OLD]     or (settings.FRONTEND_URL and settings.FRONTEND_URL.startswith("https://"))
+    # [OLD]     or (settings.BACKEND_URL and settings.BACKEND_URL.startswith("https://"))
+    # [OLD] )
+    # [OLD] response.delete_cookie(
+    # [OLD]     key="refresh_token",
+    # [OLD]     secure=is_live,
+    # [OLD]     samesite="none" if is_live else "lax"
+    # [OLD] )
+    # [NEW] Clear ALL three cookies.
+    clear_auth_cookies(response)
     return {"success": True, "message": "Logged out successfully"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REFRESH
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/refresh")
 async def refresh(request: Request, response: Response):
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
-        return {"success": False, "message": "No refresh token"}
-    
+        # [OLD] return {"success": False, "message": "No refresh token"}
+        # [NEW] 401 lets the frontend interceptor redirect to /login.
+        raise HTTPException(status_code=401, detail="No refresh token")
+
     access_token, new_refresh_token = await AuthService.refresh(refresh_token)
-    set_refresh_cookie(response, new_refresh_token)
+    # [OLD] set_refresh_cookie(response, new_refresh_token)
+    # [OLD] return {
+    # [OLD]     "success": True,
+    # [OLD]     "message": "Token refreshed",
+    # [OLD]     "data": {"accessToken": access_token}
+    # [OLD] }
+    # [NEW] Rotate BOTH cookies; no token in body.
+    set_auth_cookies(response, access_token, new_refresh_token)
     return {
         "success": True,
         "message": "Token refreshed",
-        "data": {"accessToken": access_token}
+        "token_type": "cookie",
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EMAIL VERIFICATION — unchanged
+# ─────────────────────────────────────────────────────────────────────────────
 
 @router.get("/verify-email", response_class=HTMLResponse)
 async def verify_email_get(request: Request, token: str = Query(None), link: str = Query(None)):
@@ -974,6 +1212,7 @@ async def verify_email_get(request: Request, token: str = Query(None), link: str
 </html>"""
         return HTMLResponse(status_code=e.status_code, content=error_html)
 
+
 @router.post("/verify-email")
 async def verify_email(req: VerifyEmailRequest):
     """API endpoint to verify email. Accepts either 'link' (full link from email) or 'token'."""
@@ -994,6 +1233,7 @@ async def verify_email(req: VerifyEmailRequest):
         }
     }
 
+
 @router.post("/resend-verification")
 @router.post("/send-verification")
 async def resend_verification(req: ResendVerificationRequest):
@@ -1011,6 +1251,7 @@ async def resend_verification(req: ResendVerificationRequest):
         }
     }
 
+
 @router.get("/verification-status")
 async def get_verification_status(email: EmailStr = Query(...)):
     """Check if an email is verified or not (returns boolean true/false)."""
@@ -1027,6 +1268,7 @@ async def get_verification_status(email: EmailStr = Query(...)):
         "emailVerified": is_verified,
         "isVerified": is_verified
     }
+
 
 @router.post("/verification-status")
 async def post_verification_status(req: ResendVerificationRequest):
@@ -1046,11 +1288,16 @@ async def post_verification_status(req: ResendVerificationRequest):
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FORGOT / RESET PASSWORD — unchanged
+# ─────────────────────────────────────────────────────────────────────────────
+
 @router.post("/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
     """Send real password reset email via SMTP with Dhanda Grow branding."""
     res = await AuthService.forgot_password(req.email)
     return res
+
 
 @router.get("/reset-password", response_class=HTMLResponse)
 async def reset_password_get(request: Request, token: str = Query(None), link: str = Query(None)):
@@ -1058,8 +1305,6 @@ async def reset_password_get(request: Request, token: str = Query(None), link: s
     raw_val = link or token or request.query_params.get("token") or request.query_params.get("link")
     clean_token = AuthService.extract_token(raw_val)
 
-
-    # Pre-validate token
     token_valid = True
     user_email = ""
     error_detail = ""
@@ -1390,6 +1635,7 @@ async def reset_password_get(request: Request, token: str = Query(None), link: s
 </html>"""
     return HTMLResponse(content=form_html)
 
+
 @router.post("/reset-password")
 async def reset_password(req: ResetPasswordRequest):
     """API endpoint to reset password. Accepts either 'link' (full reset link from email) or 'token'."""
@@ -1403,16 +1649,20 @@ async def reset_password(req: ResetPasswordRequest):
     return res
 
 
-
+# ─────────────────────────────────────────────────────────────────────────────
+# GOOGLE OAUTH
+# ─────────────────────────────────────────────────────────────────────────────
 
 from app.services.google_service import GoogleService
 from app.schemas.auth import GoogleAuthLoginRequest
+
 
 @router.get("/google/connect")
 async def google_connect(redirect_uri: Optional[str] = Query(None)):
     """Returns Google OAuth authorization URL."""
     auth_url = GoogleService.get_authorization_url(redirect_uri=redirect_uri)
     return {"success": True, "authorization_url": auth_url, "url": auth_url}
+
 
 @router.post("/google/login")
 async def google_login(req: GoogleAuthLoginRequest, response: Response, request: Request = None):
@@ -1447,7 +1697,9 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
     if request and "signup" in str(request.url.path) and response:
         response.status_code = status.HTTP_201_CREATED
 
-    set_refresh_cookie(response, refresh_token_jwt)
+    # [OLD] set_refresh_cookie(response, refresh_token_jwt)
+    # [NEW] Set BOTH cookies.
+    set_auth_cookies(response, access_token_jwt, refresh_token_jwt)
 
     role = getattr(user, "role", None)
     requires_role = role is None or role in ["user", ""]
@@ -1494,6 +1746,20 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
     user_payload["can_access_dashboard"] = onb_state["can_access_dashboard"]
     user_payload["next_step"] = next_step
 
+    # [OLD] return {
+    #     "success": True,
+    #     "message": "Google login successful" if mode == "login" else "Google registration successful",
+    #     "exists": is_existing,
+    #     "is_existing_user": is_existing,
+    #     "user_exists": is_existing,
+    #     "next_step": next_step,
+    #     "access_token": access_token_jwt,
+    #     "accessToken": access_token_jwt,
+    #     "token": access_token_jwt,
+    #     "role": role,
+    #     ... (rest unchanged)
+    # }
+    # [NEW] No access_token / accessToken / token in body.
     return {
         "success": True,
         "message": "Google login successful" if mode == "login" else "Google registration successful",
@@ -1501,9 +1767,7 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "is_existing_user": is_existing,
         "user_exists": is_existing,
         "next_step": next_step,
-        "access_token": access_token_jwt,
-        "accessToken": access_token_jwt,
-        "token": access_token_jwt,
+        "token_type": "cookie",
         "role": role,
         "requires_role_selection": requires_role,
         "dashboard_route": dashboard_route,
@@ -1515,9 +1779,6 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "can_access_dashboard": onb_state["can_access_dashboard"],
         "user": user_payload,
         "data": {
-            "access_token": access_token_jwt,
-            "accessToken": access_token_jwt,
-            "token": access_token_jwt,
             "role": role,
             "requires_role_selection": requires_role,
             "dashboard_route": dashboard_route,
@@ -1541,6 +1802,7 @@ async def google_signup(req: GoogleAuthLoginRequest, response: Response, request
         response.status_code = status.HTTP_201_CREATED
     return await google_login(req=req, response=response, request=request)
 
+
 @router.get("/google/callback")
 async def google_callback(
     code: Optional[str] = Query(None),
@@ -1558,13 +1820,12 @@ async def google_callback(
     return RedirectResponse(url=f"{frontend_base}/login/user")
 
 
-@router.post("/facebook/signup", status_code=status.HTTP_201_CREATED)
-async def facebook_signup(req: FacebookAuthLoginRequest, response: Response):
-    """Register user using Facebook Login."""
-    req.mode = "signup"
-    return await facebook_login(req, response)
+# ─────────────────────────────────────────────────────────────────────────────
+# INSTAGRAM
+# ─────────────────────────────────────────────────────────────────────────────
 
 from app.services.instagram_service import InstagramService
+
 
 @router.post("/instagram/login")
 async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
@@ -1577,7 +1838,6 @@ async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
         access_token = token_data.get("access_token")
 
     if not access_token:
-        # Fallback for dev/demo or missing token
         access_token = "DEMO_IG_ACCESS_TOKEN"
 
     user, access_token_jwt, refresh_token_jwt = await InstagramService.authenticate_instagram_user(
@@ -1585,7 +1845,9 @@ async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
         access_token=access_token,
         account_type=req.accountType or "business",
     )
-    set_refresh_cookie(response, refresh_token_jwt)
+    # [OLD] set_refresh_cookie(response, refresh_token_jwt)
+    # [NEW] Set BOTH cookies.
+    set_auth_cookies(response, access_token_jwt, refresh_token_jwt)
 
     user_payload = {
         "id": str(user.id),
@@ -1607,20 +1869,26 @@ async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
 
+    # [OLD] return {
+    #     "success": True,
+    #     "message": "Instagram login successful",
+    #     "access_token": access_token_jwt,
+    #     "accessToken": access_token_jwt,
+    #     "token": access_token_jwt,
+    #     "user": user_payload,
+    #     "data": { ... }
+    # }
+    # [NEW] No access_token in body.
     return {
         "success": True,
         "message": "Instagram login successful",
-        "access_token": access_token_jwt,
-        "accessToken": access_token_jwt,
-        "token": access_token_jwt,
+        "token_type": "cookie",
         "user": user_payload,
         "data": {
-            "access_token": access_token_jwt,
-            "accessToken": access_token_jwt,
-            "token": access_token_jwt,
             "user": user_payload
         }
     }
+
 
 @router.post("/instagram/signup", status_code=status.HTTP_201_CREATED)
 async def instagram_signup(req: InstagramAuthLoginRequest, response: Response):
@@ -1629,7 +1897,12 @@ async def instagram_signup(req: InstagramAuthLoginRequest, response: Response):
     return await instagram_login(req, response)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# LINKEDIN
+# ─────────────────────────────────────────────────────────────────────────────
+
 from app.services.linkedin_service import LinkedInService
+
 
 @router.get("/linkedin/connect")
 async def linkedin_connect(
@@ -1662,7 +1935,9 @@ async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
         account_type=req.accountType or "business",
         mode=mode,
     )
-    set_refresh_cookie(response, refresh_token_jwt)
+    # [OLD] set_refresh_cookie(response, refresh_token_jwt)
+    # [NEW] Set BOTH cookies.
+    set_auth_cookies(response, access_token_jwt, refresh_token_jwt)
 
     user_payload = {
         "id": str(user.id),
@@ -1684,17 +1959,22 @@ async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
 
+    # [OLD] return {
+    #     "success": True,
+    #     "message": "LinkedIn authentication successful",
+    #     "access_token": access_token_jwt,
+    #     "accessToken": access_token_jwt,
+    #     "token": access_token_jwt,
+    #     "user": user_payload,
+    #     "data": { ... }
+    # }
+    # [NEW] No access_token in body.
     return {
         "success": True,
         "message": "LinkedIn authentication successful",
-        "access_token": access_token_jwt,
-        "accessToken": access_token_jwt,
-        "token": access_token_jwt,
+        "token_type": "cookie",
         "user": user_payload,
         "data": {
-            "access_token": access_token_jwt,
-            "accessToken": access_token_jwt,
-            "token": access_token_jwt,
             "user": user_payload
         }
     }
@@ -1725,8 +2005,7 @@ async def linkedin_callback(
 
     if code:
         state_param = f"&state={state}" if state else ""
-        
-        # Calculate the exact callback URL that received this request
+
         base_url = str(request.base_url).rstrip("/")
         proto = request.headers.get("x-forwarded-proto")
         if proto:
@@ -1734,10 +2013,9 @@ async def linkedin_callback(
             base_url = f"{proto}://{host}"
         elif request.headers.get("host") and "ngrok" in request.headers.get("host", ""):
             base_url = f"https://{request.headers.get('host')}"
-            
+
         current_redirect_uri = f"{base_url}{request.url.path}"
-        
-        # Attempt direct token exchange & login on backend
+
         try:
             db = get_database()
             mode = "signup" if (state and "signup" in state) else "login"
@@ -1748,11 +2026,18 @@ async def linkedin_callback(
                 account_type="business",
                 mode=mode,
             )
+            # [OLD] redirect_resp = RedirectResponse(
+            # [OLD]     url=f"{frontend_base}/login/user?token={access_token_jwt}&provider=linkedin{state_param}",
+            # [OLD]     status_code=status.HTTP_302_FOUND,
+            # [OLD] )
+            # [OLD] set_refresh_cookie(redirect_resp, refresh_token_jwt)
+            # [OLD] return redirect_resp
+            # [NEW] Don't put the access token in the URL — set both cookies on the redirect.
             redirect_resp = RedirectResponse(
-                url=f"{frontend_base}/login/user?token={access_token_jwt}&provider=linkedin{state_param}",
+                url=f"{frontend_base}/login/user?provider=linkedin{state_param}",
                 status_code=status.HTTP_302_FOUND,
             )
-            set_refresh_cookie(redirect_resp, refresh_token_jwt)
+            set_auth_cookies(redirect_resp, access_token_jwt, refresh_token_jwt)
             return redirect_resp
         except Exception as e:
             logger.warning(f"Direct LinkedIn callback exchange failed, redirecting code to frontend: {e}")
@@ -1761,13 +2046,12 @@ async def linkedin_callback(
     return RedirectResponse(url=f"{frontend_base}/login/user")
 
 
-
 @router.get("/linkedin/status")
 async def linkedin_status(current_user=Depends(get_current_user)):
     db = get_database()
     uid = str(current_user.get("id") or current_user.get("_id"))
     user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
-    
+
     user_doc = await db["users"].find_one({"_id": user_oid}) if ObjectId.is_valid(uid) else None
     biz_doc = await db["businesses"].find_one({
         "$or": [
@@ -1780,7 +2064,7 @@ async def linkedin_status(current_user=Depends(get_current_user)):
     conn = await db["linkedin_connections"].find_one({"user_id": uid})
     if not conn and user_doc and user_doc.get("email"):
         conn = await db["linkedin_connections"].find_one({"email": user_doc["email"]})
-        
+
     author_id = (
         (biz_doc and biz_doc.get("linkedin_author_id")) or
         (user_doc and user_doc.get("linkedin_author_id")) or
@@ -1817,12 +2101,11 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
     db = get_database()
     uid = str(current_user.get("id") or current_user.get("_id"))
     user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
-    
+
     author_id = (req.get("author_id") or req.get("linkedin_author_id") or "").strip()
     access_token = (req.get("access_token") or req.get("linkedin_access_token") or "").strip()
     connected = req.get("connected", bool(author_id and access_token))
-    
-    # 1. Update users
+
     if ObjectId.is_valid(uid):
         user_set = {
             "linkedin_author_id": author_id,
@@ -1835,8 +2118,7 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
             user_set["linkedinId"] = li_id
             user_set["linkedin_id"] = li_id
         await db["users"].update_one({"_id": user_oid}, {"$set": user_set})
-        
-    # 2. Update businesses
+
     biz_query = {
         "$or": [
             {"owner_id": uid},
@@ -1871,8 +2153,7 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
         },
         upsert=True
     )
-    
-    # 3. Update linkedin_connections
+
     if author_id or access_token:
         await db["linkedin_connections"].update_one(
             {"user_id": uid},
@@ -1888,7 +2169,7 @@ async def linkedin_save_credentials(req: dict, current_user=Depends(get_current_
         )
     else:
         await db["linkedin_connections"].delete_one({"user_id": uid})
-        
+
     return {
         "success": True,
         "message": "LinkedIn credentials saved successfully",
@@ -1903,7 +2184,7 @@ async def linkedin_disconnect(current_user=Depends(get_current_user)):
     db = get_database()
     uid = str(current_user.get("id") or current_user.get("_id"))
     user_oid = ObjectId(uid) if ObjectId.is_valid(uid) else uid
-    
+
     if ObjectId.is_valid(uid):
         await db["users"].update_one(
             {"_id": user_oid},

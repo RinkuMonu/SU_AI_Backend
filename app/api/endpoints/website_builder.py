@@ -2,7 +2,6 @@ from typing import Any, Dict
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
-
 from app.schemas.website_builder import (
     CreateSessionRequest,
     SendMessageRequest,
@@ -14,9 +13,10 @@ from app.schemas.website_builder import (
 )
 
 from app.services.website_builder_service import WebsiteBuilderService
+from app.services.credit_service import CreditService
+from app.core.database import get_database
 from app.core.security import get_current_user
 from app.models.user import User
-
 
 router = APIRouter()
 
@@ -323,6 +323,13 @@ async def session_message(
 # REVISE WEBSITE
 # ---------------------------------------------------------
 
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Site revision & retrieval
+# ---------------------------------------------------------------------------
 @router.post("/site/{site_id}/revise")
 async def revise_website(
     site_id: str,
@@ -601,6 +608,7 @@ async def restore_version(
 # FINALIZE WEBSITE
 # ---------------------------------------------------------
 
+
 @router.post("/session/{session_id}/finalize")
 async def finalize_website(
     session_id: str,
@@ -627,6 +635,7 @@ async def finalize_website(
 # ---------------------------------------------------------
 # EXPORT PDF
 # ---------------------------------------------------------
+
 
 @router.post("/session/{session_id}/export/pdf")
 async def export_website_pdf(
@@ -664,6 +673,7 @@ async def export_website_pdf(
 # ---------------------------------------------------------
 # EXPORT ZIP
 # ---------------------------------------------------------
+
 
 @router.post("/session/{session_id}/export/zip")
 async def export_website_zip(
