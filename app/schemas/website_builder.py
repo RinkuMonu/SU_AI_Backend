@@ -1,5 +1,6 @@
-from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict, AliasChoices
+
 
 class ChatMessageSchema(BaseModel):
     id: str
@@ -9,22 +10,27 @@ class ChatMessageSchema(BaseModel):
     options: Optional[List[Any]] = None
     data: Optional[Any] = None
 
+
 class CreateSessionRequest(BaseModel):
-    language: str
+    language: str = "English"
+
 
 class SendMessageRequest(BaseModel):
     message: str
-    data: Optional[Any] = None
+    data: Optional[Dict[str, Any]] = None
+
 
 class ReviseSiteRequest(BaseModel):
     instructions: str
+
 
 class FrontendSessionResponse(BaseModel):
     sessionId: str
     siteId: Optional[str] = None
     language: Optional[str] = None
-    messages: List[Dict[str, Any]]
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
     generatedSiteData: Optional[Any] = None
+
 
 class FrontendMessageResponse(BaseModel):
     message: Optional[str] = None
@@ -34,24 +40,26 @@ class FrontendMessageResponse(BaseModel):
     siteId: Optional[str] = None
     generatedSiteData: Optional[Any] = None
 
+
 class WebsiteBuilderSessionResponse(BaseModel):
     id: str = Field(alias="_id")
     user_id: str
     language: Optional[str] = None
-    current_step: int
-    messages: List[Dict[str, Any]]
-    collected_data: Dict[str, Any]
+    current_step: int = 1
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    collected_data: Dict[str, Any] = Field(default_factory=dict)
     recommendations: List[Dict[str, Any]] = Field(default_factory=list)
-    status: str
-    selected_template: Optional[str] = None
+    status: str = "active"
+    selected_template: Optional[Any] = None
     website_project_id: Optional[str] = None
-    
-    model_config = {
-        "populate_by_name": True
-    }
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
-# Structured Website Schemas (Phase 1)
+# ---------------------------------------------------------
+# STRUCTURED WEBSITE SCHEMAS
+# ---------------------------------------------------------
+
 class WebsiteThemeSchema(BaseModel):
     primary_color: Optional[str] = None
     secondary_color: Optional[str] = None
@@ -61,32 +69,69 @@ class WebsiteThemeSchema(BaseModel):
     heading_font: Optional[str] = None
     border_radius: Optional[str] = None
 
+    model_config = ConfigDict(extra="allow")
+
+
 class WebsiteSectionSchema(BaseModel):
-    id: str
+    id: Optional[str] = None
     type: str
-    order: int
-    content: Optional[Dict[str, Any]] = {}
-    styles: Optional[Dict[str, Any]] = {}
-    media: Optional[Dict[str, Any]] = {}
+    order: Optional[int] = 0
+    content: Dict[str, Any] = Field(default_factory=dict)
+    styles: Dict[str, Any] = Field(default_factory=dict)
+    media: Dict[str, Any] = Field(default_factory=dict)
+
+    model_config = ConfigDict(extra="allow")
+
 
 class WebsitePageSchema(BaseModel):
-    id: str
+    id: Optional[str] = None
     name: str
-    sections: List[WebsiteSectionSchema] = []
+    sections: List[WebsiteSectionSchema] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
 
 class WebsiteStateSchema(BaseModel):
     version: int = 1
     theme: Optional[WebsiteThemeSchema] = None
-    pages: List[WebsitePageSchema] = []
+    pages: List[WebsitePageSchema] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="allow")
+
+
+# ---------------------------------------------------------
+# WEBSITE EDIT REQUEST / RESPONSE
+# ---------------------------------------------------------
 
 class EditWebsiteRequest(BaseModel):
+
     page_id: Optional[str] = "home"
-    user_instruction: str
-    current_state: WebsiteStateSchema
+
+    user_instruction: str = Field(
+        validation_alias=AliasChoices(
+            "user_instruction",
+            "instruction"
+        )
+    )
+
+    current_state: Dict[str, Any]
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        extra="allow"
+    )
+
 
 class EditWebsiteResponse(BaseModel):
+
     action: str
+
     target: Optional[str] = None
+
     changes: Optional[Dict[str, Any]] = None
+
     message: str
-    updated_state: WebsiteStateSchema
+
+    updated_state: Dict[str, Any]
+
+    model_config = ConfigDict(extra="allow")
