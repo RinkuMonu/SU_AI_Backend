@@ -1,1010 +1,1434 @@
-from bson import ObjectId
-from datetime import datetime, timezone
 import json
+import re
 import uuid
+import logging
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from bson import ObjectId
 from fastapi import HTTPException
 
 from app.core.database import get_database
 from app.models.website_builder import WebsiteProject, WebsiteBuilderSession
-from app.schemas.website_builder import FrontendMessageResponse, FrontendSessionResponse
 from app.services.business_service import BusinessService
 from app.services.brand_service import get_brand_kit
-from app.services.product_service import get_products
 from app.ai.factory import AIProviderFactory
 
+logger = logging.getLogger(__name__)
+
+
 class WebsiteBuilderService:
+
+    # ---------------------------------------------------------
+    # BUSINESS CATEGORY DETECTION
+    # ---------------------------------------------------------
+
+    CATEGORY_KEYWORDS = {
+        "Indian Sweet Shop": [
+            "sweet shop", "indian sweet", "mithai", "mithai shop",
+            "sweets", "ladoo", "laddu", "barfi", "jalebi",
+            "gulab jamun", "rasgulla", "kaju katli"
+        ],
+        "Flower Shop": [
+            "flower shop", "florist", "flowers", "bouquets",
+            "roses", "tulips", "floral arrangements"
+        ],
+        "Gym & Fitness": [
+            "gym", "fitness center", "fitness centre",
+            "workout", "personal training", "fitness studio"
+        ],
+        "Restaurant": [
+            "restaurant", "cafe", "food shop", "eatery",
+            "diner", "bakery", "pizza", "burger"
+        ],
+        "Clothing Store": [
+            "clothing store", "fashion store", "boutique",
+            "clothes", "apparel", "garments", "saree", "lehenga"
+        ],
+        "Beauty Salon": [
+            "salon", "beauty parlour", "beauty parlor",
+            "hair salon", "spa", "makeup studio"
+        ],
+        "Jewellery Store": [
+            "jewellery", "jewelry", "gold shop", "diamond store"
+        ],
+        "Real Estate": [
+            "real estate", "property dealer", "property business",
+            "realty", "construction"
+        ],
+        "Technology Business": [
+            "software company", "IT company", "technology company",
+            "web development", "digital agency", "software agency"
+        ],
+    }
+
     @staticmethod
-    def resolve_curated_image(category: str = "", prompt: str = "", index: int = 0, is_hero: bool = False) -> str:
+    def detect_business_category(message: str) -> Optional[str]:
+        text = message.lower().strip()
+
+        for category, keywords in WebsiteBuilderService.CATEGORY_KEYWORDS.items():
+            if any(keyword in text for keyword in keywords):
+                return category
+
+        return None
+
+    @staticmethod
+    def extract_business_details(message: str, existing: dict) -> dict:
+        """
+        Deterministic extraction for common business details.
+        Never treats the entire website request as the business name.
+        """
+
+        result = {}
+
+        category = WebsiteBuilderService.detect_business_category(message)
+
+        if category and not existing.get("Business Category"):
+            result["Business Category"] = category
+
+        text = message.strip()
+
+        # Extract products/services from explicit phrases.
+        patterns = [
+            r"(?:i sell|we sell|selling|products are|we offer|i offer)\s+(.+)",
+            r"(?:services include|we provide|i provide)\s+(.+)"
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                result["Products/Services"] = match.group(1).strip(" .")
+                break
+
+        # Extract shop name only when user explicitly provides it.
+        name_patterns = [
+            r"(?:my business name is|business name is|shop name is|store name is)\s+(.+)",
+            r"(?:my shop is called|my store is called|called)\s+(.+)"
+        ]
+
+        for pattern in name_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                result["Business Name"] = match.group(1).strip(" .")
+                break
+
+        return result
+
+    @staticmethod
+    def normalize_text(value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value).strip()
+
+    # ---------------------------------------------------------
+    # IMAGE RESOLUTION
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def resolve_curated_image(
+        category: str = "",
+        prompt: str = "",
+        index: int = 0,
+        is_hero: bool = False
+    ) -> str:
+
         text = f"{category} {prompt}".lower()
-        
-        GALLERIES = [
+
+        galleries = {
+            "Indian Sweet Shop": [
+                "https://images.unsplash.com/photo-1605197161470-5d4cc2c4c9d7?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1576618148400-f54bed99fcfd?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1606491956689-2ea866880c84?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Flower Shop": [
+                "https://images.unsplash.com/photo-1490750967868-88aa4486c946?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1520763185298-1b434c919102?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1494972308805-463bc619d34e?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1525310072745-f49212b5ac6d?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Gym & Fitness": [
+                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1534258936925-c58bed479fcb?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Restaurant": [
+                "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Clothing Store": [
+                "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=900&q=85",
+            ],
+        }
+
+        category_name = next(
             (
-                ["coffee", "cafe", "latte", "cappuccino", "espresso", "barista", "bakery", "bistro", "tea", "roast", "brew"],
-                "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1554118811-1e0d58224f24?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1447933601403-0c6688de566e?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1511920170033-f8396924c348?auto=format&fit=crop&w=800&q=80"
-                ]
+                key for key in galleries
+                if key.lower() in text
             ),
-            (
-                ["fashion", "cloth", "wear", "apparel", "boutique", "dress", "lehenga", "saree", "suit", "shirt", "outfit", "style"],
-                "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1490481651871-ab68de25d43d?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1469334031218-e382a71b716b?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1558769132-cb1aea458c5e?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["restaurant", "food", "dining", "pizza", "burger", "meal", "chef", "culinary", "kitchen", "snack"],
-                "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1550547660-d9450f859349?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["tech", "software", "app", "digital", "developer", "it", "code", "ai", "platform", "agency"],
-                "https://images.unsplash.com/photo-1519389950473-47ba0277781c?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["salon", "beauty", "spa", "makeup", "hair", "skincare", "cosmetic", "massage"],
-                "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1570172619644-dfd03ed5d881?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1512290900672-1f41334e2c99?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["gym", "fitness", "workout", "crossfit", "yoga", "trainer", "training", "exercise", "sport"],
-                "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1517838277536-f5f99be501cd?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1506126613408-eca07ce68773?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["real estate", "property", "home", "house", "interior", "architect", "villa", "apartment", "realty"],
-                "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1600607687939-ce8a6c25118c?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1600566753376-12c8ab7fb75b?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["jewelry", "jewellery", "gold", "diamond", "ring", "necklace", "luxury", "watch"],
-                "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=800&q=80"
-                ]
-            ),
-            (
-                ["health", "clinic", "doctor", "medical", "hospital", "dental", "dentist", "care", "wellness"],
-                "https://images.unsplash.com/photo-1538108149393-fbbd81895907?auto=format&fit=crop&w=1920&q=80",
-                [
-                    "https://images.unsplash.com/photo-1579684385127-1ef15d508118?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=800&q=80",
-                    "https://images.unsplash.com/photo-1505751172876-fa1923c5c528?auto=format&fit=crop&w=800&q=80"
-                ]
-            )
-        ]
-        
-        default_hero = "https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1920&q=80"
-        default_items = [
-            "https://images.unsplash.com/photo-1497215728101-856f4ea42174?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1556761175-5973dc0f32e7?auto=format&fit=crop&w=800&q=80",
-            "https://images.unsplash.com/photo-1521737711867-e3b97375f902?auto=format&fit=crop&w=800&q=80"
-        ]
-        
-        for keywords, hero_img, item_imgs in GALLERIES:
-            if any(k in text for k in keywords):
-                if is_hero:
-                    return hero_img
-                return item_imgs[index % len(item_imgs)]
-                
-        if is_hero:
-            return default_hero
-        return default_items[index % len(default_items)]
+            None
+        )
+
+        if category_name:
+            images = galleries[category_name]
+            return images[index % len(images)]
+
+        # Unknown categories should not receive unrelated office images.
+        # Use a neutral abstract background rather than pretending it
+        # is a verified industry-specific photograph.
+        return (
+            "https://images.unsplash.com/photo-1497366754035-f200968a6e72"
+            "?auto=format&fit=crop&w=1200&q=80"
+        )
+
+    # ---------------------------------------------------------
+    # BRAND COLORS
+    # ---------------------------------------------------------
 
     @staticmethod
-    def resolve_palette(text: str = "", category: str = "", brand_guidelines: dict = None) -> dict:
-        if brand_guidelines and isinstance(brand_guidelines, dict):
-            p = brand_guidelines.get("primary_color")
-            s = brand_guidelines.get("secondary_color")
-            if p and str(p).startswith("#"):
-                return {
-                    "primary": str(p),
-                    "secondary": str(s) if s and str(s).startswith("#") else str(p),
-                    "accent": "#F59E0B",
-                    "font": brand_guidelines.get("font") or "outfit"
-                }
+    def resolve_palette(
+        text: str = "",
+        category: str = "",
+        brand_guidelines: dict = None
+    ) -> dict:
 
-        combined = f"{text} {category}".lower()
+        brand = brand_guidelines or {}
 
-        COLOR_KEYWORDS = [
-            (["green", "emerald", "forest", "nature", "organic", "plant", "botanical"], "#059669", "#047857", "#10B981"),
-            (["blue", "navy", "ocean", "royal", "sky"], "#1D4ED8", "#1E40AF", "#3B82F6"),
-            (["red", "crimson", "ruby", "scarlet"], "#DC2626", "#B91C1C", "#EF4444"),
-            (["purple", "violet", "lavender", "indigo"], "#7C3AED", "#6D28D9", "#8B5CF6"),
-            (["pink", "rose", "blush", "pastel"], "#E11D48", "#BE123C", "#FB7185"),
-            (["orange", "amber", "sunset", "peach"], "#EA580C", "#C2410C", "#F97316"),
-            (["yellow", "gold", "golden"], "#D97706", "#B45309", "#FBBF24"),
-            (["dark", "black", "charcoal", "luxury", "minimalist"], "#0F172A", "#1E293B", "#94A3B8"),
-            (["brown", "coffee", "roast", "mocha", "terracotta"], "#78350F", "#92400E", "#D97706"),
-            (["teal", "cyan", "turquoise"], "#0D9488", "#0F766E", "#14B8A6")
-        ]
-        for keywords, prim, sec, acc in COLOR_KEYWORDS:
-            if any(k in combined for k in keywords):
-                return {"primary": prim, "secondary": sec, "accent": acc, "font": "outfit"}
+        primary = brand.get("primary_color")
+        secondary = brand.get("secondary_color")
+        accent = brand.get("accent_color")
 
-        if any(w in combined for w in ["coffee", "cafe", "espresso", "latte", "tea", "roast", "brew", "bistro"]):
-            return {"primary": "#78350F", "secondary": "#92400E", "accent": "#D97706", "font": "outfit"}
-        elif any(w in combined for w in ["fashion", "cloth", "wear", "apparel", "boutique", "dress", "lehenga", "saree"]):
-            return {"primary": "#0F172A", "secondary": "#334155", "accent": "#BE185D", "font": "outfit"}
-        elif any(w in combined for w in ["restaurant", "food", "dining", "pizza", "burger", "meal", "chef"]):
-            return {"primary": "#DC2626", "secondary": "#B91C1C", "accent": "#F59E0B", "font": "outfit"}
-        elif any(w in combined for w in ["tech", "software", "app", "digital", "developer", "it", "code", "ai"]):
-            return {"primary": "#2563EB", "secondary": "#1D4ED8", "accent": "#06B6D4", "font": "outfit"}
-        elif any(w in combined for w in ["salon", "beauty", "spa", "makeup", "hair", "skincare", "cosmetic"]):
-            return {"primary": "#DB2777", "secondary": "#BE185D", "accent": "#F472B6", "font": "outfit"}
-        elif any(w in combined for w in ["gym", "fitness", "workout", "crossfit", "yoga", "trainer"]):
-            return {"primary": "#EA580C", "secondary": "#C2410C", "accent": "#10B981", "font": "outfit"}
-        elif any(w in combined for w in ["real estate", "property", "home", "house", "interior", "architect"]):
-            return {"primary": "#0D9488", "secondary": "#0F766E", "accent": "#0284C7", "font": "outfit"}
-        elif any(w in combined for w in ["jewelry", "jewellery", "gold", "diamond", "ring", "luxury"]):
-            return {"primary": "#B45309", "secondary": "#78350F", "accent": "#FBBF24", "font": "outfit"}
-        elif any(w in combined for w in ["health", "clinic", "doctor", "medical", "hospital", "dental"]):
-            return {"primary": "#0284C7", "secondary": "#0369A1", "accent": "#10B981", "font": "outfit"}
-            
-        return {"primary": "#4F46E5", "secondary": "#4338CA", "accent": "#F59E0B", "font": "outfit"}
+        if primary and str(primary).startswith("#"):
+            return {
+                "primary": primary,
+                "secondary": secondary or primary,
+                "accent": accent or "#F59E0B",
+                "font": brand.get("font") or "outfit"
+            }
 
-    @staticmethod
-    def resolve_brand_logo(b_name: str, primary_color: str, brand_guidelines: dict = None) -> str:
-        if brand_guidelines and isinstance(brand_guidelines, dict) and brand_guidelines.get("logo_url"):
-            return brand_guidelines["logo_url"]
-            
-        initial = (b_name[0] if b_name else "B").upper()
-        clean_name = b_name[:20].strip()
-        import urllib.parse
-        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 50" width="240" height="50">
-  <defs>
-    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="{primary_color}" />
-      <stop offset="100%" stop-color="{primary_color}" stop-opacity="0.85" />
-    </linearGradient>
-  </defs>
-  <rect x="2" y="5" width="40" height="40" rx="12" fill="url(#g)"/>
-  <text x="22" y="32" font-family="'Outfit', sans-serif" font-size="22" font-weight="900" fill="#ffffff" text-anchor="middle">{initial}</text>
-  <text x="52" y="32" font-family="'Outfit', sans-serif" font-size="20" font-weight="800" fill="{primary_color}">{clean_name}</text>
-</svg>"""
-        return f"data:image/svg+xml;utf8,{urllib.parse.quote(svg)}"
+        category = category.lower()
+
+        palettes = {
+            "indian sweet shop": ("#9A3412", "#7C2D12", "#F59E0B"),
+            "flower shop": ("#BE185D", "#166534", "#F9A8D4"),
+            "gym & fitness": ("#EA580C", "#111827", "#10B981"),
+            "restaurant": ("#991B1B", "#451A03", "#F59E0B"),
+            "clothing store": ("#1E293B", "#334155", "#DB2777"),
+            "beauty salon": ("#BE185D", "#831843", "#F9A8D4"),
+            "jewellery store": ("#92400E", "#451A03", "#FBBF24"),
+            "real estate": ("#0F766E", "#134E4A", "#38BDF8"),
+            "technology business": ("#1D4ED8", "#111827", "#06B6D4"),
+        }
+
+        primary, secondary, accent = palettes.get(
+            category,
+            ("#4F46E5", "#312E81", "#F59E0B")
+        )
+
+        return {
+            "primary": primary,
+            "secondary": secondary,
+            "accent": accent,
+            "font": "outfit"
+        }
+
+    # ---------------------------------------------------------
+    # DATABASE
+    # ---------------------------------------------------------
 
     @staticmethod
     async def get_session_collection():
-        db = get_database()
-        return db["website_builder_sessions"]
+        return get_database()["website_builder_sessions"]
 
     @staticmethod
     async def get_project_collection():
-        db = get_database()
-        return db["website_projects"]
+        return get_database()["website_projects"]
 
     @staticmethod
     async def get_website(project_id: str, user_id: str):
-        collection = await WebsiteBuilderService.get_project_collection()
         if not ObjectId.is_valid(project_id):
             return None
-        doc = await collection.find_one({"_id": ObjectId(project_id), "user_id": user_id})
+
+        collection = await WebsiteBuilderService.get_project_collection()
+
+        doc = await collection.find_one({
+            "_id": ObjectId(project_id),
+            "user_id": user_id
+        })
+
         if doc:
             return WebsiteProject(**doc)
+
         return None
 
     @staticmethod
     async def save_session(session: WebsiteBuilderSession):
         collection = await WebsiteBuilderService.get_session_collection()
-        update_data = session.model_dump(by_alias=True, exclude={"id", "created_at"})
+
+        update_data = session.model_dump(
+            by_alias=True,
+            exclude={"id", "created_at"}
+        )
+
         update_data["updated_at"] = datetime.now(timezone.utc)
-        await collection.update_one({"_id": ObjectId(session.id)}, {"$set": update_data})
+
+        await collection.update_one(
+            {"_id": ObjectId(session.id)},
+            {"$set": update_data}
+        )
 
     @staticmethod
-    async def create_session(user_id: str) -> WebsiteBuilderSession:
+    async def create_session(user_id: str):
         collection = await WebsiteBuilderService.get_session_collection()
-        await collection.update_many({"user_id": user_id, "status": "active"}, {"$set": {"status": "archived"}})
+
+        await collection.update_many(
+            {"user_id": user_id, "status": "active"},
+            {"$set": {"status": "archived"}}
+        )
 
         session = WebsiteBuilderSession(
             user_id=user_id,
-            messages=[
-                {
-                    "id": str(uuid.uuid4()),
-                    "role": "ai",
-                    "content": "Hi! I can build your custom website. Tell me what kind of website you want to create (e.g. online clothing website, coffee shop, real estate)!",
-                    "type": "text"
-                }
-            ]
+            current_step=1,
+            collected_data={
+                "onboarding_step": "business_details"
+            },
+            messages=[{
+                "id": str(uuid.uuid4()),
+                "role": "ai",
+                "content": (
+                    "Hi! What type of business do you run, "
+                    "and what products or services do you offer?"
+                ),
+                "type": "text"
+            }]
         )
+
         doc = session.model_dump(by_alias=True, exclude={"id"})
         result = await collection.insert_one(doc)
+
         session.id = str(result.inserted_id)
+
         return session
 
     @staticmethod
-    async def get_session(session_id: str, user_id: str) -> WebsiteBuilderSession | None:
-        collection = await WebsiteBuilderService.get_session_collection()
+    async def get_session(session_id: str, user_id: str):
         if not ObjectId.is_valid(session_id):
             return None
-        doc = await collection.find_one({"_id": ObjectId(session_id), "user_id": user_id})
-        if doc:
-            return WebsiteBuilderSession(**doc)
-        return None
+
+        collection = await WebsiteBuilderService.get_session_collection()
+
+        doc = await collection.find_one({
+            "_id": ObjectId(session_id),
+            "user_id": user_id
+        })
+
+        return WebsiteBuilderSession(**doc) if doc else None
+
+    # ---------------------------------------------------------
+    # BRAND KIT
+    # ---------------------------------------------------------
 
     @staticmethod
-    async def load_existing_user_data(user_id: str, session: WebsiteBuilderSession):
-        business = await BusinessService.get_business_by_owner(user_id)
-        if business:
-            session.collected_data["Business Name"] = business.business_name
-            session.collected_data["Business Category"] = business.business_category
-            session.collected_data["business_id"] = str(business.id)
-            
-            db = get_database()
-            brand = await get_brand_kit(db, str(business.id))
-            if brand:
-                if isinstance(brand, dict):
-                    brand.pop("id", None)
-                    brand.pop("_id", None)
-                    session.collected_data["Brand Guidelines"] = brand
-                else:
-                    session.collected_data["Brand Guidelines"] = brand.model_dump(by_alias=True, exclude={"id"})
-                
-            products = await get_products(db, str(business.id))
-            if products:
-                prod_list = []
-                for p in products:
-                    if isinstance(p, dict):
-                        p.pop("id", None)
-                        p.pop("_id", None)
-                        prod_list.append(p)
-                    else:
-                        prod_list.append(p.model_dump(by_alias=True, exclude={"id"}))
-                session.collected_data["Products"] = prod_list
-            
-        await WebsiteBuilderService.save_session(session)
+    async def get_saved_brand(user_id: str, session: WebsiteBuilderSession):
+        """
+        Retrieve the existing business and its saved Brand Kit.
+        The Brand Kit logo is never fabricated here.
+        """
+
+        business_id = session.collected_data.get("business_id")
+
+        if not business_id:
+            try:
+                business = await BusinessService.get_business_by_owner(user_id)
+
+                if business:
+                    business_id = str(business.id)
+                    session.collected_data["business_id"] = business_id
+
+                    if not session.collected_data.get("Business Name"):
+                        session.collected_data["Business Name"] = business.business_name
+
+                    if not session.collected_data.get("Business Category"):
+                        session.collected_data["Business Category"] = business.business_category
+
+            except Exception:
+                logger.exception("Could not retrieve business profile")
+
+        if not business_id:
+            return None
+
+        try:
+            brand = await get_brand_kit(get_database(), str(business_id))
+
+            if not brand:
+                return None
+
+            if isinstance(brand, dict):
+                brand_data = dict(brand)
+            else:
+                brand_data = brand.model_dump(
+                    by_alias=True,
+                    exclude={"id"}
+                )
+
+            brand_data.pop("_id", None)
+            brand_data.pop("id", None)
+
+            session.collected_data["Brand Guidelines"] = brand_data
+
+            if brand_data.get("logo_url"):
+                session.collected_data["Logo"] = brand_data["logo_url"]
+                session.collected_data["logo_status"] = "available"
+
+            return brand_data
+
+        except Exception:
+            logger.exception("Brand Kit lookup failed")
+            return None
+
+    # ---------------------------------------------------------
+    # CHAT MESSAGE HELPERS
+    # ---------------------------------------------------------
 
     @staticmethod
-    async def process_chat(session_id: str, user_id: str, message: str, language: str = None, data: dict = None):
-        session = await WebsiteBuilderService.get_session(session_id, user_id)
-        if not session:
-            raise Exception("Session not found")
-            
+    def add_ai_message(
+        session,
+        content: str,
+        message_type: str = "text",
+        options: list = None,
+        data: dict = None
+    ):
+        message = {
+            "id": str(uuid.uuid4()),
+            "role": "ai",
+            "content": content,
+            "type": message_type
+        }
+
+        if options:
+            message["options"] = options
+
+        if data:
+            message["data"] = data
+
+        session.messages.append(message)
+
+    @staticmethod
+    def add_user_message(session, content: str):
         session.messages.append({
             "id": str(uuid.uuid4()),
             "role": "user",
-            "content": message
+            "content": content
         })
-        
-        lower_msg = message.lower()
-        if ("website" in lower_msg and any(x in lower_msg for x in ["build", "generate", "create", "make"])) or any(x in lower_msg for x in ["build my website", "built my website", "generate my website", "create my website", "make my website"]):
-            if session.collected_data.get("Business Name"):
-                return await WebsiteBuilderService.generate_website(session)
-            
-        if session.current_step == 7 and any(x in lower_msg for x in ["yes", "ready", "sure", "ok", "okay", "build", "built", "generate"]):
-            return await WebsiteBuilderService.generate_website(session)
-            
-        if any(x in lower_msg for x in ["you decide", "recommend", "i don't know", "anything is fine"]) and not data:
-            return await WebsiteBuilderService.generate_recommendations(session)
 
-        ai = AIProviderFactory.get_provider(preferred="openai")
-        
-        # 1. Fetch Business Profile if not checked yet
-        if not session.collected_data.get("profile_checked"):
-            try:
-                from app.core.database import get_database
-                db = get_database()
-                business_profile = await db.business.find_one({"owner_id": user_id})
-                if business_profile:
-                    session.collected_data["Business Name"] = business_profile.get("name")
-                    session.collected_data["Business Category"] = business_profile.get("category")
-                    session.collected_data["Location"] = business_profile.get("location")
-                    session.collected_data["Description"] = business_profile.get("description")
-                    session.collected_data["Website"] = business_profile.get("website")
-                    session.collected_data["Target Audience"] = business_profile.get("target_customer")
-                    session.collected_data["Email"] = business_profile.get("contact_email")
-                    session.collected_data["Phone"] = business_profile.get("contact_phone")
-                    session.collected_data["Instagram"] = business_profile.get("instagram")
-                    session.collected_data["profile_found"] = True
-            except:
-                pass
-            session.collected_data["profile_checked"] = True
-
-        # 2. Extract fields
-        extract_system = "Extract fields into JSON."
-        extract_prompt = f"""Extract from: '{message}'.
-Data: {json.dumps(session.collected_data, default=str)}
-Keys: 'Language', 'Business Name', 'Primary Color', 'Theme', 'Style', 'Business Category', 'Description', 'Location', 'Website', 'Website Goal', 'Website Type', 'Target Audience', 'Google Maps', 'Phone', 'Email', 'Contact', 'Business Hours', 'Social Media'. Return JSON with NEW keys."""
-        
-        try:
-            extracted = await ai.generate_json(extract_prompt, system_prompt=extract_system)
-            if extracted and not extracted.get("error"):
-                for k, v in extracted.items():
-                    if v and str(v).strip() not in ["None", "null", ""]:
-                        session.collected_data[k] = str(v).strip()
-        except:
-            pass
-
-        b_name = session.collected_data.get("Business Name")
-        if not b_name or str(b_name).strip() in ["None", "null", "Your Brand", "the business", "A", "An", "The"]:
-            b_cat = session.collected_data.get("Business Category")
-            if b_cat and str(b_cat).strip() not in ["None", "null", "A", "An", "The"]:
-                session.collected_data["Business Name"] = str(b_cat).strip().title()
-            else:
-                clean_msg = message.replace("website", "").replace("build", "").replace("create", "").replace("my", "").replace("want", "").replace("for", "").strip().title()
-                if clean_msg and clean_msg not in ["A", "An", "The"]:
-                    session.collected_data["Business Name"] = clean_msg
-                    session.collected_data["Business Category"] = clean_msg
-
-        if session.collected_data.get("Language"):
-            session.language = session.collected_data.get("Language")
-            
-
-        # Logo Interception Flow
-        import urllib.parse
-        if data and data.get("action") == "upload_logo" and data.get("base64"):
-            session.collected_data["Logo"] = data.get("base64")
-            session.collected_data["logo_status"] = "finalized"
-            session.collected_data["logo_source"] = "uploaded"
-            reply_msg = "✅ Your logo has been uploaded. Is this logo okay, or would you like to modify it?"
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-                "data": {"logo_url": data.get("base64")},
-                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
-
-        elif data and data.get("action") == "create_logo":
-            b_name = session.collected_data.get("Business Name", "Your Business")
-            urls = []
-            for style in ["modern", "elegant", "minimal"]:
-                prompt_encoded = urllib.parse.quote(f"{style} logo for {b_name} high quality")
-                urls.append(f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}")
-            
-            session.collected_data["generated_logos"] = urls
-            reply_msg = "Here are 3 logo options based on your business. Which one would you like to use?"
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-                "data": {"images": urls},
-                "options": [{"label": "Logo 1", "action": "select_logo_1"}, {"label": "Logo 2", "action": "select_logo_2"}, {"label": "Logo 3", "action": "select_logo_3"}]
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
-
-        elif data and data.get("action") in ["select_logo_1", "select_logo_2", "select_logo_3"]:
-            idx = int(data.get("action")[-1]) - 1
-            selected = session.collected_data.get("generated_logos", [])[idx]
-            session.collected_data["Logo"] = selected
-            session.collected_data["logo_source"] = "generated"
-            reply_msg = "Great! You've selected this logo. Would you like to modify it?"
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-                "data": {"logo_url": selected},
-                "options": [{"label": "Keep this logo", "action": "keep_logo"}, {"label": "Modify this logo", "action": "modify_logo"}]
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
-
-        elif data and data.get("action") == "use_existing_logo":
-            session.collected_data["Logo"] = session.collected_data.get("Existing Logo")
-            session.collected_data["logo_source"] = "existing"
-            session.collected_data["logo_status"] = "finalized"
-            reply_msg = "Perfect! I'll use this logo on your website."
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-                "data": {"logo_url": session.collected_data.get("Logo")},
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
-
-        elif data and data.get("action") == "keep_logo":
-            session.collected_data["logo_status"] = "finalized"
-            reply_msg = "Perfect! I'll use this logo on your website."
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-                "data": {"logo_url": session.collected_data.get("Logo")},
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
-
-        elif data and data.get("action") == "modify_logo":
-            reply_msg = "What would you like to change in the logo? (e.g., 'Make it blue', 'Change the font')"
-            session.collected_data["logo_status"] = "modifying"
-            msg_obj = {
-                "id": str(uuid.uuid4()),
-                "role": "ai",
-                "content": reply_msg,
-                "type": "text",
-            }
-            session.messages.append(msg_obj)
-            await WebsiteBuilderService.save_session(session)
-            return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
-
-        if session.collected_data.get("logo_status") == "modifying":
-            try:
-                prompt_encoded = urllib.parse.quote(f"{message} logo for {session.collected_data.get('Business Name', 'business')} high quality")
-                new_url = f"https://image.pollinations.ai/prompt/{prompt_encoded}?width=512&height=512&nologo=true&seed={uuid.uuid4().hex[:5]}"
-                session.collected_data["Logo"] = new_url
-                reply_msg = "Here's the modified version. Is this okay?"
-                msg_obj = {
-                    "id": str(uuid.uuid4()),
-                    "role": "ai",
-                    "content": reply_msg,
-                    "type": "text",
-                    "data": {"logo_url": new_url},
-                    "options": [{"label": "Yes, keep this logo", "action": "keep_logo"}, {"label": "Modify again", "action": "modify_logo"}]
-                }
-                session.messages.append(msg_obj)
-                await WebsiteBuilderService.save_session(session)
-                return type('obj', (object,), {'message': reply_msg, 'quick_actions': msg_obj["options"], 'session': session})
-            except:
-                pass
-        # 3. Consultant Response
-        consultant_system = """You are an AI Website Builder Consultant. 
-Keep your response EXTREMELY short, punchy, and direct (max 1 or 2 short sentences). 
-Ask EXACTLY ONE missing question based on the collected data. 
-If all essential data is collected, ask if they want to 'Recommend templates' or 'Build My Website'. Do NOT write long paragraphs."""
-
-        consultant_prompt = f"""Data: {json.dumps(session.collected_data, default=str)}
-User Message: '{message}'
-Language: {session.language or 'English'}
-Respond very briefly."""
-
-        try:
-            chat_result = await ai.generate_text(consultant_prompt, system_prompt=consultant_system)
-            reply_msg = chat_result.get("text", "Got it! What else would you like to add?")
-        except:
-            reply_msg = "Could you tell me more about your business?"
-
-        # 4. Quick Actions
-        actions = []
-        lower_reply = reply_msg.lower()
-        if "language" in lower_reply and not session.language:
-            actions = [{"label": "English", "action": "lang_en"}, {"label": "Hindi", "action": "lang_hi"}, {"label": "Hinglish", "action": "lang_hin"}]
-        elif "existing website" in lower_reply:
-            actions = [{"label": "Yes", "action": "has_website"}, {"label": "No", "action": "no_website"}]
-        elif "google maps" in lower_reply:
-            actions = [{"label": "Yes", "action": "yes_maps"}, {"label": "No", "action": "no_maps"}]
-        elif "recommend" in lower_reply and "build" in lower_reply:
-            actions = [{"label": "Recommend Templates", "action": "recommend"}, {"label": "Build My Website", "action": "generate"}]
-        elif session.collected_data.get("profile_found") and "correct" in lower_reply:
-            actions = [{"label": "Yes, continue", "action": "yes_continue"}, {"label": "Edit information", "action": "edit_info"}]
-            session.collected_data["profile_found"] = False
-
-        if any(x in lower_msg for x in ["you decide", "recommend"]) and ("template" in lower_msg or "recommend" in lower_msg):
-            return await WebsiteBuilderService.generate_recommendations(session)
-
-        msg_obj = {
-            "id": str(uuid.uuid4()),
-            "role": "ai",
-            "content": reply_msg,
-            "type": "confirmation" if actions else "text",
-        }
-        if actions:
-            msg_obj["options"] = actions
-            
-        session.messages.append(msg_obj)
-        await WebsiteBuilderService.save_session(session)
-        
-        return type('obj', (object,), {'message': reply_msg, 'quick_actions': actions, 'session': session})
+    # ---------------------------------------------------------
+    # ONBOARDING FLOW
+    # ---------------------------------------------------------
 
     @staticmethod
-    async def generate_recommendations(session: WebsiteBuilderSession):
-        ai = AIProviderFactory.get_provider(preferred="openai")
-        prompt = f"Generate exactly THREE website design recommendations for a business with data: {session.collected_data}. Return JSON with 'recommendations' array containing: id, name, description, reason, palette, style."
-        result = await ai.generate_json(prompt, system_prompt="You are an expert web designer AI.")
-        
-        recs = result.get("recommendations", [])
-        if len(recs) != 3:
-            recs = [
-                {"id": "rec1", "name": "Modern Fashion", "description": "Sleek and stylish layout", "reason": "Fits your online brand", "palette": "Purple/Black", "style": "Modern"},
-                {"id": "rec2", "name": "Clean Minimal", "description": "Minimalist grid showcase", "reason": "Focus on products", "palette": "Blue/White", "style": "Minimal"},
-                {"id": "rec3", "name": "Vibrant Store", "description": "Energetic and bold", "reason": "Attracts customer engagement", "palette": "Pink/Gold", "style": "Bold"}
-            ]
-        
-        session.recommendations = recs
-        session.current_step = 5
-        reply_msg = "Here are 3 website style recommendations tailored for your prompt. Please select one to proceed!"
-        
-        msg_obj = {
-            "id": str(uuid.uuid4()),
-            "role": "ai",
-            "content": reply_msg,
-            "type": "recommendation",
-            "options": recs
-        }
-        session.messages.append(msg_obj)
-        await WebsiteBuilderService.save_session(session)
-        return type('obj', (object,), {'message': reply_msg, 'quick_actions': [], 'session': session})
+    async def process_chat(
+        session_id: str,
+        user_id: str,
+        message: str,
+        language: str = None,
+        data: dict = None
+    ):
 
-    @staticmethod
-    async def select_template(session_id: str, user_id: str, template_id: str) -> WebsiteBuilderSession:
-        session = await WebsiteBuilderService.get_session(session_id, user_id)
-        if not session:
-            raise Exception("Session not found")
-            
-        session.selected_template = template_id
-        session.current_step = 7
-        session.messages.append({
-            "id": str(uuid.uuid4()),
-            "role": "ai",
-            "content": f"You selected the {template_id} template! Click 'Build My Website' to generate your site.",
-            "type": "summary",
-            "data": {
-                "business": session.collected_data.get("Business Name", "Your Business"),
-                "theme": template_id,
-                "language": session.language
-            },
-            "options": [{"label": "Build My Website", "action": "generate"}]
-        })
-        await WebsiteBuilderService.save_session(session)
-        return session
-        
-    @staticmethod
-    async def generate_website(session: WebsiteBuilderSession):
-        session.messages.append({
-            "id": str(uuid.uuid4()),
-            "role": "ai",
-            "content": "Generating your custom website based on your chatbot prompt...",
-            "type": "generation_status",
-            "data": { "progress": ["Business Information", "Brand Style", "Website Structure"] }
-        })
-        await WebsiteBuilderService.save_session(session)
-        
-        user_prompts = [m.get("content") for m in session.messages if m.get("role") == "user" and m.get("content")]
-        full_user_intent = " | ".join(user_prompts) if user_prompts else "Website"
-        
-        b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category")
-        if not b_name or str(b_name).strip().upper() in ["A", "AN", "THE", "MYBUSINESS", "NONE", "NULL", ""]:
-            clean_intent = full_user_intent.replace("build", "").replace("website", "").replace("create", "").replace("want", "").replace("for", "").strip()
-            if clean_intent and len(clean_intent) > 2 and clean_intent.upper() not in ["A", "AN", "THE"]:
-                b_name = clean_intent.title()
-            elif session.collected_data.get("Business Category"):
-                b_name = f"{session.collected_data['Business Category'].title()} Studio"
-            else:
-                b_name = "My Business"
-
-        b_cat = session.collected_data.get("Business Category", full_user_intent)
-        if str(b_cat).strip().upper() in ["A", "AN", "THE", ""]:
-            b_cat = b_name
-
-        brand_guidelines = session.collected_data.get("Brand Guidelines") or {}
-        theme_data = WebsiteBuilderService.resolve_palette(full_user_intent, b_cat, brand_guidelines)
-        logo_url = session.collected_data.get("Logo") or WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
-
-        # Dynamic topic-aligned schema example with rich multi-sections
-        schema_example = json.dumps({
-            "theme": theme_data,
-            "logo": logo_url,
-            "pages": [
-                {
-                    "name": "Home",
-                    "sections": [
-                        {
-                            "type": "hero", 
-                            "title": f"Welcome to {b_name}", 
-                            "subtitle": f"Experience handcrafted excellence and premium quality tailored for your lifestyle in {b_cat}.", 
-                            "cta": f"Explore {b_cat}", 
-                            "image_prompt": f"high quality beautiful {b_cat} background banner", 
-                            "image_url": ""
-                        },
-                        {
-                            "type": "features", 
-                            "title": f"Featured {b_cat} Collections", 
-                            "subtitle": f"Our most popular selections crafted with care",
-                            "items": [
-                                {"title": f"Signature {b_cat} Classic", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "price": "$29.00", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
-                                {"title": "Artisanal Specialty", "description": f"Customized features and tailored packages designed for {b_cat}.", "price": "$39.00", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
-                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "price": "$49.00", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
-                            ]
-                        },
-                        {
-                            "type": "features",
-                            "title": f"Why Choose {b_name}",
-                            "subtitle": "Unmatched standards that set us apart",
-                            "items": [
-                                {"title": "Ethically Sourced & Crafted", "description": "We believe in sustainable, transparent practices in everything we produce.", "image_prompt": f"quality craftsmanship banner for {b_cat}"},
-                                {"title": "Dedicated Specialists", "description": f"Decades of expertise poured into every single {b_cat} detail.", "image_prompt": f"expert team at work in {b_cat}"},
-                                {"title": "Customer Satisfaction", "description": "Guaranteed quality and personalized support for every client.", "image_prompt": f"happy satisfied clients and 5 star service"}
-                            ]
-                        },
-                        {
-                            "type": "features",
-                            "title": "Customer Favorites & Reviews",
-                            "subtitle": "Loved by thousands in our community",
-                            "items": [
-                                {"title": "Top Rated Selection", "description": "Outstanding quality! Exceeded our expectations in every single way.", "price": "5.0 ★ Rating", "image_prompt": f"top customer choice {b_cat}"},
-                                {"title": "Seasonal Special", "description": "A must-try favorite recommended by our loyal regulars.", "price": "$34.00", "image_prompt": f"popular trending {b_cat}"}
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "name": "About",
-                    "sections": [
-                        {
-                            "type": "features", 
-                            "title": f"About {b_name}", 
-                            "subtitle": f"Our mission and story in {b_cat}",
-                            "items": [
-                                {"title": "Our Heritage", "description": f"How {b_name} strives to deliver unmatched excellence in {b_cat}.", "image_prompt": f"professional team working on {b_cat}"},
-                                {"title": "Our Quality Commitment", "description": f"Rigorous standards and dedication to perfection in every {b_cat} project.", "image_prompt": f"quality guarantee badge for {b_cat}"}
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "name": "Products",
-                    "sections": [
-                        {
-                            "type": "features", 
-                            "title": f"Our Complete {b_cat} Catalog", 
-                            "subtitle": f"Browse our full collection of products & packages",
-                            "items": [
-                                {"title": f"Flagship {b_cat} Tier", "description": f"Best-in-class products and gear for {b_cat}.", "price": "$59.00", "image_prompt": f"featured product showcase {b_cat}"},
-                                {"title": f"Custom Packages", "description": f"Tailored options engineered specifically for your {b_cat} requirements.", "price": "$89.00", "image_prompt": f"custom designed {b_cat} item"},
-                                {"title": f"Everyday Essentials", "description": f"Top trending items highly recommended in {b_cat}.", "price": "$24.00", "image_prompt": f"popular essential collection {b_cat}"}
-                            ]
-                        }
-                    ]
-                },
-                {
-                    "name": "Contact",
-                    "sections": [
-                        {
-                            "type": "features", 
-                            "title": "Get In Touch", 
-                            "subtitle": "We'd love to hear from you",
-                            "items": [
-                                {"title": "Email Us", "description": f"contact@{b_name.lower().replace(' ', '')}.com", "image_prompt": "modern contact support desk email"},
-                                {"title": "Phone Helpline", "description": "+1 (800) 555-0199", "image_prompt": "phone hotline customer support"},
-                                {"title": "Showroom Location", "description": "742 Innovation Parkway, Suite 100", "image_prompt": f"modern showroom for {b_cat}"}
-                            ]
-                        }
-                    ]
-                }
-            ]
-        })
-        ai = AIProviderFactory.get_provider(preferred="openai")
-        prompt = (
-            f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
-
-User Prompt / Intent: '{full_user_intent}'
-Business Name: '{b_name}'
-Business Topic / Category: '{b_cat}'
-Language: {session.language or 'English'}.
-
-CRITICAL REQUIREMENTS:
-1. Heavily prioritize and implement ALL specific instructions, custom content, themes, and image concepts mentioned in the 'User Prompt / Intent'.
-2. EVERYTHING (titles, descriptions, section headlines, prices, image_prompts) MUST be tailored to '{b_cat}', business name '{b_name}', AND the user's specific prompt.
-3. Every item MUST include a detailed English 'image_prompt' that describes crisp visual photography relevant to '{b_cat}'.
-4. Include rich content sections on Home: Hero, Featured Collections with prices, Why Choose Us, and Customer Favorites.
-5. In 'theme', provide matching hex codes: {{"primary": "{theme_data['primary']}", "secondary": "{theme_data['secondary']}", "font": "outfit"}}.
-6. Return ONLY valid JSON matching this structure: {schema_example}."""
+        session = await WebsiteBuilderService.get_session(
+            session_id,
+            user_id
         )
-        
+
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        data = data or {}
+        action = data.get("action")
+
+        # -----------------------------------------------------
+        # TEMPLATE SELECTION
+        # -----------------------------------------------------
+
+        if action == "select_template":
+            template_id = data.get("templateId") or data.get("template_id")
+
+            if not template_id:
+                raise HTTPException(400, "Template ID is required")
+
+            session.selected_template = str(template_id)
+
+            session.collected_data["selected_template_id"] = str(template_id)
+            session.collected_data["selected_template_name"] = (
+                data.get("templateName")
+                or data.get("template_name")
+                or str(template_id)
+            )
+
+            session.current_step = 5
+            session.collected_data["onboarding_step"] = "industry_details"
+
+            WebsiteBuilderService.add_user_message(
+                session,
+                data.get("templateName", str(template_id))
+            )
+
+            await WebsiteBuilderService.ask_industry_question(session)
+            await WebsiteBuilderService.save_session(session)
+
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": [],
+                "session": session
+            })
+
+        # -----------------------------------------------------
+        # GENERATION ACTION
+        # -----------------------------------------------------
+
+        if action == "generate":
+            WebsiteBuilderService.add_user_message(session, message)
+
+            return await WebsiteBuilderService.generate_website(
+                session,
+                user_id
+            )
+
+        # -----------------------------------------------------
+        # NORMAL MESSAGE
+        # -----------------------------------------------------
+
+        WebsiteBuilderService.add_user_message(session, message)
+
+        extracted = WebsiteBuilderService.extract_business_details(
+            message,
+            session.collected_data
+        )
+
+        for key, value in extracted.items():
+            if value:
+                session.collected_data[key] = value
+
+        if language:
+            session.language = language
+
+        step = session.collected_data.get(
+            "onboarding_step",
+            "business_details"
+        )
+
+        # -----------------------------------------------------
+        # STEP 1: BUSINESS CATEGORY
+        # -----------------------------------------------------
+
+        if step == "business_details":
+
+            sub_step = session.collected_data.get("sub_step", "category")
+
+            # If we already asked for products/services in a previous turn:
+            if sub_step == "products_services":
+                candidate = message.strip()
+                clean_prod = re.sub(
+                    r"^(i sell|we sell|selling|i offer|we offer|services are|products are|we do|i do|everything related to|everything related)\s+",
+                    "",
+                    candidate,
+                    flags=re.I
+                ).strip(" .")
+                products = clean_prod if clean_prod else candidate
+
+                session.collected_data["Products/Services"] = products
+                session.collected_data["onboarding_step"] = "business_name"
+                session.current_step = 2
+
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Great! What is the name of your business or shop?"
+                )
+
+            else:
+                category = (
+                    session.collected_data.get("Business Category")
+                    or WebsiteBuilderService.detect_business_category(message)
+                )
+
+                if not category:
+                    await WebsiteBuilderService.reply(
+                        session,
+                        "Please tell me what type of business you run. "
+                        "For example, a sweet shop, flower shop, gym or restaurant."
+                    )
+
+                else:
+                    session.collected_data["Business Category"] = category
+                    products = extracted.get("Products/Services")
+
+                    if not products:
+                        # Need to ask for products/services
+                        session.collected_data["sub_step"] = "products_services"
+                        await WebsiteBuilderService.reply(
+                            session,
+                            f"Got it! You run a {category}. "
+                            "What products or services do you offer?"
+                        )
+                    else:
+                        session.collected_data["Products/Services"] = products
+                        session.collected_data["onboarding_step"] = "business_name"
+                        session.current_step = 2
+
+                        await WebsiteBuilderService.reply(
+                            session,
+                            "Great! What is the name of your business or shop?"
+                        )
+
+        # -----------------------------------------------------
+        # STEP 2: BUSINESS NAME
+        # -----------------------------------------------------
+
+        elif step == "business_name":
+
+            name = extracted.get("Business Name")
+
+            if not name:
+                candidate = message.strip()
+                cleaned = re.sub(
+                    r"^(my business name is|business name is|shop name is|store name is|it is called|it's called|it is|it's|called|name is)\s+",
+                    "",
+                    candidate,
+                    flags=re.I
+                ).strip(" .'")
+
+                if (
+                    len(cleaned) >= 2
+                    and len(cleaned) <= 80
+                    and cleaned.lower() not in [
+                        "i need", "i want", "website", "shop", "business", "no", "yes", "ok"
+                    ]
+                ):
+                    name = cleaned
+
+            if not name:
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Please enter the name you want to display on your website."
+                )
+            else:
+                session.collected_data["Business Name"] = name
+                session.collected_data["onboarding_step"] = "design_choice"
+                session.current_step = 3
+
+                await WebsiteBuilderService.reply(
+                    session,
+                    f"Nice to meet you, {name}! Would you like me to "
+                    "recommend three designs or build directly?",
+                    options=[
+                        {"label": "✨ Recommend Designs", "action": "recommend"},
+                        {"label": "⚡ Build Directly", "action": "build_directly"}
+                    ]
+                )
+
+        # -----------------------------------------------------
+        # STEP 3: DESIGN CHOICE
+        # -----------------------------------------------------
+
+        elif step == "design_choice":
+
+            if action == "recommend" or "recommend" in message.lower():
+                return await WebsiteBuilderService.generate_recommendations(session)
+
+            session.collected_data["selected_template_name"] = "Apex Modern Pro"
+            session.collected_data["selected_template_id"] = "apex-modern-pro"
+            session.selected_template = "apex-modern-pro"
+
+            session.collected_data["onboarding_step"] = "industry_details"
+            session.current_step = 5
+
+            await WebsiteBuilderService.ask_industry_question(session)
+
+        # -----------------------------------------------------
+        # STEP 5: INDUSTRY DETAILS
+        # -----------------------------------------------------
+
+        elif step == "industry_details":
+
+            session.collected_data["industry_details"] = message.strip()
+
+            session.collected_data["onboarding_step"] = "logo_check"
+            session.current_step = 6
+
+            await WebsiteBuilderService.check_logo_and_continue(
+                user_id,
+                session,
+                action=action,
+                message=message
+            )
+
+        # -----------------------------------------------------
+        # STEP 6: LOGO CHECK
+        # -----------------------------------------------------
+
+        elif step == "logo_check":
+
+            if action == "open_brand_kit":
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Please create and save your logo in Brand Kit. "
+                    "Return here once it is ready."
+                )
+
+            else:
+                await WebsiteBuilderService.check_logo_and_continue(
+                    user_id,
+                    session
+                )
+
+        # -----------------------------------------------------
+        # STEP 7: CONFIRMATION
+        # -----------------------------------------------------
+
+        elif step == "confirmation":
+
+            if action == "generate" or message.lower().strip() in [
+                "yes", "confirm", "build", "generate",
+                "confirm & generate website"
+            ]:
+                return await WebsiteBuilderService.generate_website(
+                    session,
+                    user_id
+                )
+
+            if action == "edit_details":
+                session.collected_data["onboarding_step"] = "industry_details"
+
+                await WebsiteBuilderService.ask_industry_question(session)
+
+            else:
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Would you like to generate the website or edit your details?",
+                    options=[
+                        {"label": "🚀 Confirm & Generate Website", "action": "generate"},
+                        {"label": "Edit Details", "action": "edit_details"}
+                    ]
+                )
+
+        # -----------------------------------------------------
+        # GENERATED WEBSITE EDITING
+        # -----------------------------------------------------
+
+        elif step == "generated":
+
+            await WebsiteBuilderService.reply(
+                session,
+                "Your website is ready. You can ask me to change its "
+                "images, text, colors, layout or sections."
+            )
+
+        await WebsiteBuilderService.save_session(session)
+
+        return type("Result", (), {
+            "message": session.messages[-1]["content"],
+            "quick_actions": session.messages[-1].get("options", []),
+            "session": session
+        })
+
+    @staticmethod
+    async def reply(session, message, options=None, data=None):
+        WebsiteBuilderService.add_ai_message(
+            session,
+            message,
+            options=options,
+            data=data
+        )
+
+    # ---------------------------------------------------------
+    # INDUSTRY QUESTIONS
+    # ---------------------------------------------------------
+
+    @staticmethod
+    async def ask_industry_question(session):
+
+        category = session.collected_data.get(
+            "Business Category",
+            ""
+        ).lower()
+
+        questions = {
+            "indian sweet shop": (
+                "What makes your sweet shop special? "
+                "For example, traditional recipes, fresh mithai, "
+                "gift boxes or festival collections?"
+            ),
+            "flower shop": (
+                "Do you offer home delivery, event decoration, "
+                "custom bouquets or all of these?"
+            ),
+            "gym & fitness": (
+                "What facilities or programs do you offer? "
+                "For example, strength training, cardio, yoga "
+                "or personal training?"
+            ),
+            "restaurant": (
+                "What type of cuisine do you serve, and "
+                "do you offer dine-in, takeaway or delivery?"
+            ),
+            "clothing store": (
+                "What clothing collections do you sell, "
+                "and do you offer online ordering?"
+            ),
+            "beauty salon": (
+                "Which services do you provide? "
+                "For example, hair styling, skincare, makeup or spa?"
+            ),
+        }
+
+        question = questions.get(
+            category,
+            "What are the most important products, services or "
+            "features you want customers to see on your website?"
+        )
+
+        await WebsiteBuilderService.reply(session, question)
+
+    # ---------------------------------------------------------
+    # BRAND KIT VALIDATION
+    # ---------------------------------------------------------
+
+    @staticmethod
+    async def check_logo_and_continue(user_id, session, action=None, message=""):
+
+        brand = await WebsiteBuilderService.get_saved_brand(
+            user_id,
+            session
+        )
+
+        logo = (
+            session.collected_data.get("Logo")
+            or (brand or {}).get("logo_url")
+        )
+
+        if not logo:
+            action_name = (action or "").lower()
+            if action_name in ["skip_logo", "use_text_logo"] or any(
+                w in (message or "").lower() for w in ["skip", "without logo", "text logo", "later", "no logo"]
+            ):
+                logo = ""
+                session.collected_data["Logo"] = ""
+                session.collected_data["logo_status"] = "skipped"
+            else:
+                session.collected_data["logo_status"] = "required"
+                session.collected_data["onboarding_step"] = "logo_check"
+
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Your website needs your business logo. "
+                    "You can create one in Brand Kit, or proceed with a text logo for now.",
+                    options=[
+                        {
+                            "label": "Create Logo in Brand Kit",
+                            "action": "open_brand_kit"
+                        },
+                        {
+                            "label": "Proceed with Text Logo (Skip)",
+                            "action": "skip_logo"
+                        }
+                    ],
+                    data={
+                        "brand_kit_required": True,
+                        "redirect": "/brand-kit"
+                    }
+                )
+                return
+
+        session.collected_data["Logo"] = logo
+        session.collected_data["logo_status"] = "available"
+
+        session.collected_data["onboarding_step"] = "confirmation"
+        session.current_step = 7
+
+        summary = (
+            "Here is your website information:\n\n"
+            f"Business: {session.collected_data.get('Business Name')}\n"
+            f"Category: {session.collected_data.get('Business Category')}\n"
+            f"Products/Services: {session.collected_data.get('Products/Services', 'Not specified')}\n"
+            f"Design: {session.collected_data.get('selected_template_name')}\n"
+            f"Additional details: {session.collected_data.get('industry_details', 'Not specified')}\n\n"
+            "Would you like me to generate your website now?"
+        )
+
+        await WebsiteBuilderService.reply(
+            session,
+            summary,
+            options=[
+                {
+                    "label": "🚀 Confirm & Generate Website",
+                    "action": "generate"
+                },
+                {
+                    "label": "Edit Details",
+                    "action": "edit_details"
+                }
+            ]
+        )
+
+    # ---------------------------------------------------------
+    # TEMPLATE RECOMMENDATIONS
+    # ---------------------------------------------------------
+
+    @staticmethod
+    async def generate_recommendations(session):
+
+        category = session.collected_data.get(
+            "Business Category",
+            "Business"
+        )
+
+        templates = {
+            "Indian Sweet Shop": [
+                ("Royal Mithai", "Traditional Indian sweets with a premium royal design."),
+                ("Sweet Heritage", "Warm traditional design with rich product galleries."),
+                ("Modern Mithai", "Clean modern storefront for Indian sweets.")
+            ],
+            "Flower Shop": [
+                ("Floral Elegance", "Elegant floral photography and soft colors."),
+                ("Bloom & Blossom", "Modern bouquet-focused storefront."),
+                ("Botanical Garden", "Natural botanical layout with green accents.")
+            ],
+            "Gym & Fitness": [
+                ("Iron Forge Fitness", "Bold fitness-focused design."),
+                ("Pulse Athletics", "Modern athletic website with strong CTAs."),
+                ("Zenith Wellness", "Premium wellness and fitness layout.")
+            ],
+            "Restaurant": [
+                ("Culinary Premium", "Elegant restaurant design."),
+                ("Modern Bistro", "Modern food-focused layout."),
+                ("Taste & Tradition", "Warm hospitality design.")
+            ],
+            "Clothing Store": [
+                ("Style Avenue", "Premium fashion storefront."),
+                ("Minimal Wardrobe", "Minimal product-led layout."),
+                ("Urban Collection", "Bold modern fashion design.")
+            ]
+        }
+
+        selected = templates.get(
+            category,
+            [
+                ("Modern Professional", "Clean professional layout."),
+                ("Minimal Business", "Simple and elegant layout."),
+                ("Premium Showcase", "Premium business presentation.")
+            ]
+        )
+
+        recommendations = []
+
+        for index, (name, description) in enumerate(selected):
+            recommendations.append({
+                "id": f"{category.lower().replace(' ', '-')}-{index + 1}",
+                "name": name,
+                "description": description,
+                "reason": f"Designed for {category}",
+                "style": name
+            })
+
+        session.recommendations = recommendations
+        session.collected_data["onboarding_step"] = "template_selection"
+        session.current_step = 4
+
+        await WebsiteBuilderService.reply(
+            session,
+            f"Here are three designs created for your {category}. "
+            "Select one to continue.",
+            options=recommendations
+        )
+
+        await WebsiteBuilderService.save_session(session)
+
+        return type("Result", (), {
+            "message": session.messages[-1]["content"],
+            "quick_actions": recommendations,
+            "session": session
+        })
+
+    # ---------------------------------------------------------
+    # WEBSITE GENERATION
+    # ---------------------------------------------------------
+
+    @staticmethod
+    async def generate_website(session, user_id=None):
+
+        collected = session.collected_data
+
+        business_name = collected.get("Business Name")
+        category = collected.get("Business Category")
+
+        if not business_name or not category:
+            raise HTTPException(
+                400,
+                "Business name and category are required."
+            )
+
+        if not collected.get("Logo"):
+            if not user_id:
+                user_id = session.user_id
+
+            await WebsiteBuilderService.check_logo_and_continue(
+                user_id,
+                session,
+                action=action,
+                message=message
+            )
+
+            await WebsiteBuilderService.save_session(session)
+
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": session.messages[-1].get("options", []),
+                "session": session
+            })
+
+        WebsiteBuilderService.add_ai_message(
+            session,
+            "Creating your website. Preparing your layout, content and images...",
+            message_type="generation_status"
+        )
+
+        await WebsiteBuilderService.save_session(session)
+
+        brand = collected.get("Brand Guidelines") or {}
+
+        theme = WebsiteBuilderService.resolve_palette(
+            category=category,
+            brand_guidelines=brand
+        )
+
+        logo = collected["Logo"]
+
+        offerings = collected.get("Products/Services", "")
+        details = collected.get("industry_details", "")
+
+        ai = AIProviderFactory.get_provider(preferred="openai")
+
+        prompt = f"""
+Create a complete professional website for this business.
+
+BUSINESS NAME: {business_name}
+BUSINESS CATEGORY: {category}
+PRODUCTS/SERVICES: {offerings}
+ADDITIONAL DETAILS: {details}
+SELECTED TEMPLATE: {collected.get('selected_template_name')}
+
+Return ONLY valid JSON with this structure:
+
+{{
+  "business_name": "{business_name}",
+  "logo": "{logo}",
+  "theme": {{
+    "primary": "{theme['primary']}",
+    "secondary": "{theme['secondary']}",
+    "accent": "{theme['accent']}",
+    "font": "outfit"
+  }},
+  "pages": [
+    {{
+      "name": "Home",
+      "sections": [
+        {{
+          "type": "navbar",
+          "title": "{business_name}",
+          "logo": "{logo}",
+          "navigation": ["Home", "About", "Products", "Contact"]
+        }},
+        {{
+          "type": "hero",
+          "title": "Business-specific headline",
+          "subtitle": "Business-specific description",
+          "cta": "Explore Now",
+          "image_prompt": "Relevant professional photograph for {category}",
+          "image_url": ""
+        }},
+        {{
+          "type": "features",
+          "title": "Our Products and Services",
+          "items": [
+            {{
+              "title": "Real product or service",
+              "description": "Relevant description",
+              "image_prompt": "Photograph of this exact product or service",
+              "image_url": ""
+            }}
+          ]
+        }},
+        {{
+          "type": "about",
+          "title": "About {business_name}",
+          "description": "Business introduction"
+        }},
+        {{
+          "type": "gallery",
+          "title": "Our Gallery",
+          "items": []
+        }},
+        {{
+          "type": "contact",
+          "title": "Contact Us"
+        }},
+        {{
+          "type": "footer",
+          "title": "{business_name}",
+          "logo": "{logo}"
+        }}
+      ]
+    }}
+  ]
+}}
+
+RULES:
+
+1. Every section must match the business category.
+2. Generate relevant products and services.
+3. Use professional image prompts.
+4. Never use unrelated office or corporate images.
+5. Do not invent phone numbers, addresses, prices, ratings,
+   testimonials or customer counts.
+6. Do not invent business contact details.
+7. Preserve the selected template's design direction.
+8. Include navbar, hero, content sections and footer.
+9. Return valid JSON only.
+"""
+
         try:
             result = await ai.generate_json(
                 prompt,
-                system_prompt=f"You are an expert AI website generator for {b_cat}. Return JSON strictly matching the requested structure. Be creative, attractive, and fast.",
-                temperature=0.2,
+                system_prompt=(
+                    "You are a professional website designer. "
+                    "Generate complete, industry-specific website JSON. "
+                    "Never invent factual business information."
+                ),
+                temperature=0.3,
                 max_tokens=8192
             )
-        except Exception as e:
-            import logging
-            logging.error(f"AI generation failed: {e}")
-            result = {"error": str(e)}
-        
-        if not result or result.get("error") or not result.get("pages"):
-             result = json.loads(schema_example)
-        
-        # Merge validated theme
-        g_theme = result.get("theme", {})
-        if isinstance(g_theme, dict):
-            p_col = g_theme.get("primary")
-            s_col = g_theme.get("secondary")
-            if p_col and str(p_col).startswith("#"):
-                theme_data["primary"] = str(p_col)
-            if s_col and str(s_col).startswith("#"):
-                theme_data["secondary"] = str(s_col)
 
-        logo_url = WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
-        result["theme"] = theme_data
-        result["logo"] = logo_url
-        result["business_name"] = b_name
+        except Exception:
+            logger.exception("Website generation failed")
+            raise HTTPException(
+                502,
+                "Website generation failed. Please try again."
+            )
 
-        raw_pages = result.get("pages", [])
-        if not isinstance(raw_pages, list) or len(raw_pages) == 0:
-             raw_pages = json.loads(schema_example)["pages"]
-             
-        for page in raw_pages:
-            for s_idx, section in enumerate(page.get("sections", [])):
-                if section.get("type") == "hero":
-                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
-                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
-                            category=b_cat,
-                            prompt=section.get("image_prompt", "") or section.get("title", ""),
-                            index=s_idx,
-                            is_hero=True
+        if not isinstance(result, dict) or not result.get("pages"):
+            raise HTTPException(
+                502,
+                "The AI returned an invalid website structure."
+            )
+
+        pages = result["pages"]
+
+        for page in pages:
+            for section_index, section in enumerate(
+                page.get("sections", [])
+            ):
+
+                if not isinstance(section, dict):
+                    continue
+
+                section_type = section.get("type", "")
+
+                if section_type == "navbar":
+                    section["logo"] = logo
+
+                if section_type == "footer":
+                    section["logo"] = logo
+
+                if section_type == "hero":
+                    section["image_url"] = (
+                        WebsiteBuilderService.resolve_curated_image(
+                            category,
+                            section.get("image_prompt", category),
+                            section_index,
+                            True
                         )
-                for i_idx, item in enumerate(section.get("items", [])):
-                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
-                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
-                            category=b_cat,
-                            prompt=item.get("image_prompt", "") or item.get("title", ""),
-                            index=i_idx + s_idx,
-                            is_hero=False
+                    )
+
+                for item_index, item in enumerate(
+                    section.get("items", [])
+                ):
+                    if isinstance(item, dict) and item.get("image_prompt"):
+                        item["image_url"] = (
+                            WebsiteBuilderService.resolve_curated_image(
+                                category,
+                                item["image_prompt"],
+                                item_index,
+                                False
+                            )
                         )
+
+        result["business_name"] = business_name
+        result["logo"] = logo
+        result["theme"] = theme
 
         project = WebsiteProject(
             user_id=session.user_id,
-            business_id=session.collected_data.get("business_id"),
-            business_name=b_name,
+            business_id=collected.get("business_id"),
+            business_name=business_name,
             session_id=str(session.id),
-            template_id=str(session.selected_template) if session.selected_template is not None else "default",
+            template_id=str(session.selected_template or "default"),
             language=session.language or "English",
-            pages=raw_pages,
-            theme=theme_data,
-            status="published",
+            pages=pages,
+            theme=theme,
+            status="draft",
             website_data=result
         )
-        
+
         collection = await WebsiteBuilderService.get_project_collection()
-        doc = project.model_dump(by_alias=True, exclude={"id"})
-        doc["logo"] = logo_url
-        doc["theme"] = theme_data
-        doc["business_name"] = b_name
-        res = await collection.insert_one(doc)
-        project.id = str(res.inserted_id)
-        
+
+        doc = project.model_dump(
+            by_alias=True,
+            exclude={"id"}
+        )
+
+        doc["logo"] = logo
+
+        inserted = await collection.insert_one(doc)
+
+        project.id = str(inserted.inserted_id)
+
         session.website_project_id = project.id
         session.current_step = 8
-        session.messages.append({
-            "id": str(uuid.uuid4()),
-            "role": "ai",
-            "content": f"Website for '{b_name}' generated successfully! You can preview it on the right sidebar or click 'Preview Website'.",
-            "type": "text"
-        })
+
+        collected["onboarding_step"] = "generated"
+
+        await WebsiteBuilderService.reply(
+            session,
+            (
+                f"Your website for {business_name} has been generated! "
+                "You can now preview and edit it."
+            ),
+            data={
+                "siteId": project.id,
+                "generatedSiteData": result
+            }
+        )
+
         await WebsiteBuilderService.save_session(session)
-        return type('obj', (object,), {'message': "Generated", 'quick_actions': [], 'session': session, 'site_id': project.id, 'generated_site_data': doc})
+
+        return type("Result", (), {
+            "message": "Website generated successfully.",
+            "quick_actions": [],
+            "session": session,
+            "site_id": project.id,
+            "generated_site_data": doc
+        })
+
+    # ---------------------------------------------------------
+    # WEBSITE REVISION
+    # ---------------------------------------------------------
 
     @staticmethod
-    async def revise_website(project_id: str, user_id: str, instructions: str) -> WebsiteProject:
-        site = await WebsiteBuilderService.get_website(project_id, user_id)
+    async def revise_website(
+        project_id: str,
+        user_id: str,
+        instructions: str
+    ):
+
+        site = await WebsiteBuilderService.get_website(
+            project_id,
+            user_id
+        )
+
         if not site:
-            raise HTTPException(status_code=404, detail="Website not found")
-            
+            raise HTTPException(404, "Website not found")
+
         ai = AIProviderFactory.get_provider(preferred="openai")
-        prompt = f"Here is a website JSON: {json.dumps(site.pages)}\n\nThe user wants these revisions: '{instructions}'. Modify the JSON to apply the revisions. CRITICAL: Return ONLY valid JSON for the 'pages' array in the exact same schema. Do not add markdown fences."
-        result = await ai.generate_text(prompt, system_prompt="You are an expert web designer. Return ONLY the JSON array representing the revised pages.")
-        
-        raw_text = result.get("text", "[]").strip()
-        import re
-        raw_text = re.sub(r'<think>.*?</think>', '', raw_text, flags=re.DOTALL).strip()
-        
-        if "```" in raw_text:
-            parts = raw_text.split("```")
-            for part in parts:
-                cleaned = part.strip()
-                if cleaned.startswith("json"):
-                    cleaned = cleaned[4:].strip()
-                if cleaned.startswith("[") or cleaned.startswith("{"):
-                    raw_text = cleaned
-                    break
-                    
-        revised_pages = None
-        try:
-            import json_repair
-            revised_pages = json_repair.loads(raw_text)
-        except Exception:
-            pass
 
-        if revised_pages is None:
-            first_bracket = raw_text.find("[")
-            last_bracket = raw_text.rfind("]")
-            if first_bracket != -1 and last_bracket != -1 and last_bracket > first_bracket:
-                candidate = raw_text[first_bracket:last_bracket+1]
-                try:
-                    import json_repair
-                    revised_pages = json_repair.loads(candidate)
-                except Exception:
-                    try:
-                        revised_pages = json.loads(candidate)
-                    except Exception:
-                        pass
+        prompt = f"""
+Modify this existing website.
 
-        if revised_pages is None:
-            try:
-                revised_pages = json.loads(raw_text)
-            except Exception:
-                pass
+Business: {site.business_name}
 
-        if isinstance(revised_pages, dict) and "pages" in revised_pages:
-            revised_pages = revised_pages["pages"]
-        elif isinstance(revised_pages, dict):
-            revised_pages = [revised_pages]
-        elif not isinstance(revised_pages, list):
-            revised_pages = []
+Instructions:
+{instructions}
 
-        if not revised_pages:
-            raise Exception("Failed to parse AI revision")
-            
-        for page in revised_pages:
-            if not isinstance(page, dict):
-                continue
-            for s_idx, section in enumerate(page.get("sections", [])):
-                if not isinstance(section, dict):
-                    continue
-                if section.get("type") == "hero":
-                    if not section.get("image_url") or "image.pollinations.ai" in section.get("image_url", ""):
-                        section["image_url"] = WebsiteBuilderService.resolve_curated_image(
-                            category=site.business_name or "business",
-                            prompt=section.get("image_prompt", "") or section.get("title", ""),
-                            index=s_idx,
-                            is_hero=True
-                        )
-                for i_idx, item in enumerate(section.get("items", [])):
-                    if not isinstance(item, dict):
-                        continue
-                    if not item.get("image_url") or "image.pollinations.ai" in item.get("image_url", ""):
-                        item["image_url"] = WebsiteBuilderService.resolve_curated_image(
-                            category=site.business_name or "business",
-                            prompt=item.get("image_prompt", "") or item.get("title", ""),
-                            index=i_idx + s_idx,
-                            is_hero=False
-                        )
-                        
-        site.pages = revised_pages
+Existing pages:
+{json.dumps(site.pages, default=str)}
+
+Rules:
+- Preserve the business category.
+- Preserve all unrelated sections.
+- Modify only what the user requests.
+- Never introduce unrelated images.
+- Never invent business information.
+- Return the complete updated pages array as JSON.
+"""
+
+        result = await ai.generate_json(
+            prompt,
+            system_prompt=(
+                "You are an expert website editor. "
+                "Make minimal and safe changes."
+            ),
+            temperature=0.2,
+            max_tokens=8192
+        )
+
+        pages = result.get("pages") if isinstance(result, dict) else None
+
+        if not pages:
+            raise HTTPException(
+                502,
+                "The AI could not produce a valid website revision."
+            )
+
         collection = await WebsiteBuilderService.get_project_collection()
-        await collection.update_one({"_id": ObjectId(project_id)}, {"$set": {"pages": revised_pages}})
-        
+
+        await collection.update_one(
+            {
+                "_id": ObjectId(project_id),
+                "user_id": user_id
+            },
+            {
+                "$set": {
+                    "pages": pages,
+                    "website_data.pages": pages,
+                    "updated_at": datetime.now(timezone.utc)
+                },
+                "$inc": {"version": 1}
+            }
+        )
+
+        site.pages = pages
+
         return site
 
+    # ---------------------------------------------------------
+    # DIRECT EDIT
+    # ---------------------------------------------------------
+
     @staticmethod
-    async def apply_website_edit(user_id: str, session_id: str, instruction: str, current_state: dict):
-        """
-        Executes the AI logic for Phase 2: Natural Language to Structured JSON Edit.
-        """
-        from app.ai.factory import AIProviderFactory
-        import json
-        import re
+    async def apply_website_edit(
+        user_id: str,
+        session_id: str,
+        instruction: str,
+        current_state: dict
+    ):
 
-        # Grab Business Profile
-        # db = get_database()
-        # In a full implementation we'd inject the business context, brand kit, etc.
-        
-        system_prompt = """You are an AI Website Editor for SevenUnique AI.
-Your job is to modify an existing website based on the user's natural-language instructions.
-You are NOT generating a completely new website unless explicitly requested.
-You must preserve all existing website content and structure unless the user asks you to change it.
-Identify the exact page, section, component, property or style that the user wants to modify.
-Make the smallest safe change necessary.
+        session = await WebsiteBuilderService.get_session(
+            session_id,
+            user_id
+        )
 
-Allowed actions:
-update_theme, update_text, update_style, add_section, remove_section, replace_image, add_logo, update_navigation.
+        if not session:
+            return {
+                "action": "error",
+                "message": "Website session not found."
+            }
 
-Return structured JSON ONLY matching this exact format:
-{
-  "action": "...",
-  "target": "...",
-  "changes": {},
-  "message": "Human-readable confirmation message."
-}"""
+        category = session.collected_data.get(
+            "Business Category",
+            ""
+        )
 
-        prompt = f"""User Instruction: {instruction}
-Current Website State:
-{json.dumps(current_state, indent=2)[:2000]} # Truncated for token limit in stub
+        # Detect explicit category conflicts.
+        category_conflicts = {
+            "flower": ["gym", "workout", "fitness equipment"],
+            "gym": ["bouquet", "flowers", "floral arrangement"],
+            "indian sweet shop": ["gym equipment", "fitness training"]
+        }
 
-Return ONLY valid JSON with the modification."""
+        lower_category = category.lower()
+        lower_instruction = instruction.lower()
 
-        ai_provider = AIProviderFactory.get_provider(preferred="openai")
+        for business, conflicting_terms in category_conflicts.items():
+            if business in lower_category:
+                if any(term in lower_instruction for term in conflicting_terms):
+                    return {
+                        "action": "clarification_required",
+                        "message": (
+                            f"Your website is for a {category}. "
+                            "This request may conflict with your business category. "
+                            "Would you like to change the business theme?"
+                        ),
+                        "updated_state": current_state
+                    }
+
+        ai = AIProviderFactory.get_provider(preferred="openai")
+
+        prompt = f"""
+Edit the existing website.
+
+Business category: {category}
+Business name: {session.collected_data.get('Business Name')}
+
+User instruction:
+{instruction}
+
+Current website:
+{json.dumps(current_state, default=str)}
+
+Return JSON:
+{{
+  "action": "update_text",
+  "message": "Description of the change",
+  "updated_state": {{}}
+}}
+
+Rules:
+- Preserve unrelated content.
+- Make only requested changes.
+- Keep all images business-relevant.
+- Never regenerate the entire site unless explicitly requested.
+"""
+
         try:
-            res = await ai_provider.generate_text(
-                prompt=prompt,
-                system_prompt=system_prompt,
-                max_tokens=2048
+            result = await ai.generate_json(
+                prompt,
+                system_prompt="You are a precise website editor.",
+                temperature=0.2,
+                max_tokens=8192
             )
-            raw = res.get("text", "{}").strip()
-            raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-            
-            if "`" in raw:
-                parts = raw.split("`")
-                for part in parts:
-                    cleaned = part.strip()
-                    if cleaned.startswith("json"):
-                        cleaned = cleaned[4:].strip()
-                    if cleaned.startswith("{"):
-                        raw = cleaned
-                        break
-                        
-            first_brace = raw.find("{")
-            last_brace = raw.rfind("}")
-            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-                raw = raw[first_brace:last_brace + 1]
-                
-            try:
-                import json_repair
-                data = json_repair.loads(raw)
-            except Exception:
-                data = json.loads(raw)
-            return data
-            
-        except Exception as e:
-            return {"action": "error", "message": f"AI Edit Failed: {str(e)}"}
 
-    @staticmethod
-    async def generate_pdf_snapshot(website_id: str) -> str:
-        """
-        Phase 4: Generates a PDF snapshot of the finalized website.
-        In a production environment, this would spin up Pyppeteer/Playwright
-        to render the JSON state to HTML and capture a PDF.
-        """
-        # Mock PDF generation
-        pdf_filename = f"website_{website_id}_snapshot.pdf"
-        # ... logic to render and save to S3 or local ...
-        return f"/downloads/pdfs/{pdf_filename}"
+            if not isinstance(result, dict):
+                raise ValueError("Invalid AI response")
 
-    @staticmethod
-    async def generate_zip_archive(website_state: dict, website_id: str) -> str:
-        """
-        Phase 4: Generates a downloadable ZIP of the website.
-        Packages the structured JSON into an HTML/React boilerplate.
-        """
-        import zipfile
-        import io
-        
-        # Mock ZIP generation
-        zip_filename = f"website_{website_id}_source.zip"
-        # In production:
-        # 1. Iterate over website_state['pages']
-        # 2. Convert each section JSON to HTML templates
-        # 3. Create style.css from website_state['theme']
-        # 4. Write to zip archive
-        return f"/downloads/archives/{zip_filename}"
+            updated = result.get("updated_state")
+
+            if not isinstance(updated, dict):
+                raise ValueError("Missing updated_state")
+
+            # Persist the changed state to the actual website project.
+            if session.website_project_id:
+                collection = await WebsiteBuilderService.get_project_collection()
+
+                await collection.update_one(
+                    {
+                        "_id": ObjectId(session.website_project_id),
+                        "user_id": user_id
+                    },
+                    {
+                        "$set": {
+                            "website_data": updated,
+                            "pages": updated.get("pages", []),
+                            "theme": updated.get("theme", {}),
+                            "updated_at": datetime.now(timezone.utc)
+                        },
+                        "$inc": {"version": 1}
+                    }
+                )
+
+            return result
+
+        except Exception as exc:
+            logger.exception("Website edit failed")
+
+            return {
+                "action": "error",
+                "message": (
+                    "I couldn't apply that change. "
+                    "Your existing website has not been changed."
+                ),
+                "updated_state": current_state
+            }
