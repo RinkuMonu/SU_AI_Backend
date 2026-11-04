@@ -103,6 +103,29 @@ async def get_session_and_site(session_id: str, user_id: str):
             user_id
         )
 
+    # Self-healing: if session.website_project_id is missing OR points to a project with empty pages,
+    # find the most recent project for this session/user that has valid pages!
+    if not site or not getattr(site, "pages", None) or len(site.pages) == 0:
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        valid_proj = await p_coll.find_one({
+            "user_id": user_id,
+            "session_id": session_id,
+            "pages.0": {"$exists": True}
+        }, sort=[("_id", -1)])
+        if not valid_proj:
+            valid_proj = await p_coll.find_one({
+                "user_id": user_id,
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+
+        if valid_proj:
+            site = WebsiteProject(**valid_proj)
+            session.website_project_id = str(valid_proj["_id"])
+            if session.current_step < 8:
+                session.current_step = 8
+            session.collected_data["onboarding_step"] = "generated"
+            await WebsiteBuilderService.save_session(session)
+
     return session, site
 
 
@@ -424,6 +447,24 @@ async def get_site(
         site_id,
         str(current_user.id)
     )
+
+    # Self-healing: if this site project doc has empty pages, check for the valid project for this user/session
+    if not getattr(site, "pages", None) or len(site.pages) == 0:
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        valid_proj = None
+        if getattr(site, "session_id", None):
+            valid_proj = await p_coll.find_one({
+                "user_id": str(current_user.id),
+                "session_id": site.session_id,
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+        if not valid_proj:
+            valid_proj = await p_coll.find_one({
+                "user_id": str(current_user.id),
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+        if valid_proj:
+            site = WebsiteProject(**valid_proj)
 
     payload = format_site_payload(site)
 

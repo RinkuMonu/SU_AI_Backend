@@ -2094,6 +2094,7 @@ class WebsiteBuilderService:
 
         business_name = collected.get("Business Name")
         category = collected.get("Business Category")
+        lang = getattr(session, "language", "en") or "en"
 
         if not business_name or not category:
             raise HTTPException(
