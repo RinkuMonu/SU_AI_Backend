@@ -680,6 +680,167 @@ class WebsiteBuilderService:
         }
 
     # ---------------------------------------------------------
+    # RICH HOMEPAGE SECTION GENERATORS
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def get_default_stats_section(category: str = "") -> dict:
+        cat_lower = (category or "").lower()
+        if any(w in cat_lower for w in ["server", "cloud", "host", "datacenter"]):
+            items = [
+                {"label": "Uptime Guarantee", "value": "99.99%", "description": "Enterprise grade reliability"},
+                {"label": "Active Deployments", "value": "5,000+", "description": "High-performance servers"},
+                {"label": "Network Speed", "value": "10 Gbps", "description": "Ultra-low latency connectivity"},
+                {"label": "Support Availability", "value": "24/7/365", "description": "Dedicated technical team"}
+            ]
+        elif any(w in cat_lower for w in ["flower", "florist", "bouquet", "bloom"]):
+            items = [
+                {"label": "Fresh Daily Blooms", "value": "100%", "description": "Handpicked fresh morning blossoms"},
+                {"label": "Arrangements Delivered", "value": "15,000+", "description": "Crafted with love & elegance"},
+                {"label": "Express Delivery", "value": "Same-Day", "description": "Guaranteed on-time arrival"},
+                {"label": "Customer Satisfaction", "value": "4.9 ★", "description": "Top-rated florist in town"}
+            ]
+        elif any(w in cat_lower for w in ["sweet", "mithai", "bakery", "cake", "confectionery"]):
+            items = [
+                {"label": "Pure Ingredients", "value": "100%", "description": "Authentic preparation & pure ghee"},
+                {"label": "Signature Varieties", "value": "60+", "description": "Traditional & contemporary delicacies"},
+                {"label": "Happy Foodies", "value": "25,000+", "description": "Celebrations made sweeter"},
+                {"label": "Daily Preparation", "value": "Fresh Batch", "description": "Crafted daily without preservatives"}
+            ]
+        elif any(w in cat_lower for w in ["medical", "clinic", "pharma", "doctor", "health"]):
+            items = [
+                {"label": "Certified Medicines", "value": "100%", "description": "Genuine & verified healthcare products"},
+                {"label": "Trusted Experience", "value": "15+ Years", "description": "Dedicated patient wellness"},
+                {"label": "Support & Consultation", "value": "24/7", "description": "Always ready to assist you"},
+                {"label": "Families Served", "value": "20,000+", "description": "Your neighborhood health partner"}
+            ]
+        elif any(w in cat_lower for w in ["farm", "resort", "hotel", "villa"]):
+            items = [
+                {"label": "Private Estate", "value": "10+ Acres", "description": "Lush green natural sanctuary"},
+                {"label": "Successful Events", "value": "650+", "description": "Weddings, parties & retreats"},
+                {"label": "Hospitality Rating", "value": "5 ★", "description": "Premium luxury & tranquility"},
+                {"label": "Private Bookings", "value": "100%", "description": "Exclusive access & complete privacy"}
+            ]
+        elif any(w in cat_lower for w in ["stationery", "book", "office", "paper"]):
+            items = [
+                {"label": "Quality Supplies", "value": "10,000+", "description": "School, art & office essentials"},
+                {"label": "Genuine Brands", "value": "100%", "description": "Authentic tools for creators & learners"},
+                {"label": "Institutions Supplied", "value": "200+", "description": "Reliable bulk procurement"},
+                {"label": "Customer Rating", "value": "4.9 ★", "description": "Top rated community stationer"}
+            ]
+        else:
+            items = [
+                {"label": "Quality Guarantee", "value": "100%", "description": "Uncompromised standards in every detail"},
+                {"label": "Satisfied Clients", "value": "10,000+", "description": "Delivering happiness consistently"},
+                {"label": "Speed of Service", "value": "Prompt", "description": "Reliable & fast response times"},
+                {"label": "Verified Rating", "value": "4.9 ★", "description": "Top-rated by our valued customers"}
+            ]
+
+        return {
+            "type": "stats",
+            "title": "Key Highlights & Trust",
+            "subtitle": f"Why thousands rely on our {category or 'business'} every single day",
+            "items": items
+        }
+
+    @staticmethod
+    def get_default_testimonials_section(business_name: str, category: str = "") -> dict:
+        cat_lower = (category or "").lower()
+        if any(w in cat_lower for w in ["server", "cloud", "host"]):
+            items = [
+                {"name": "Vikram Malhotra", "role": "CTO, CloudScale", "rating": 5, "quote": f"{business_name} delivered incredible stability with zero downtime. Deployment was instant and network speeds exceeded all expectations."},
+                {"name": "Sneha Sen", "role": "Lead Architect", "rating": 5, "quote": "Rock-solid infrastructure and responsive 24/7 technical support. Truly enterprise grade service."},
+                {"name": "Rohan Mehra", "role": "Startup Founder", "rating": 5, "quote": f"Migrating to {business_name} reduced our latency dramatically. Highly recommended for production workloads."}
+            ]
+        elif any(w in cat_lower for w in ["flower", "florist"]):
+            items = [
+                {"name": "Pooja Sharma", "role": "Verified Customer", "rating": 5, "quote": f"The floral arrangement from {business_name} was breathtaking! Fresh blooms that stayed vibrant for over a week."},
+                {"name": "Amit Verma", "role": "Anniversary Order", "rating": 5, "quote": "Flawless same-day delivery and gorgeous presentation. My wife absolutely loved the bouquet!"},
+                {"name": "Kavita Rao", "role": "Event Coordinator", "rating": 5, "quote": f"{business_name} handled our venue floral decor with such artistry and elegance. Truly spectacular."}
+            ]
+        elif any(w in cat_lower for w in ["sweet", "mithai", "bakery"]):
+            items = [
+                {"name": "Rajesh Gupta", "role": "Regular Patron", "rating": 5, "quote": f"Authentic taste, rich aroma of pure ghee, and heavenly sweets. {business_name} is our family's favorite for every celebration."},
+                {"name": "Neha Kapoor", "role": "Festival Shopper", "rating": 5, "quote": "Ordered custom gift boxes for Diwali and every guest called to compliment the extraordinary flavors."},
+                {"name": "Manish Joshi", "role": "Sweet Lover", "rating": 5, "quote": f"Freshness you can taste in every single bite. The craftsmanship at {business_name} is truly unmatched."}
+            ]
+        elif any(w in cat_lower for w in ["medical", "clinic", "pharma"]):
+            items = [
+                {"name": "Suresh Singhal", "role": "Local Resident", "rating": 5, "quote": f"{business_name} is our most trusted pharmacy. They always have genuine medicines in stock and provide caring assistance."},
+                {"name": "Dr. Sunita Nair", "role": "Healthcare Professional", "rating": 5, "quote": "Reliable, hygienic, and extremely helpful staff. Emergency prescriptions are fulfilled promptly without delay."},
+                {"name": "Arjun Saxena", "role": "Caregiver", "rating": 5, "quote": f"Doorstep delivery and patient guidance from {business_name} have been an absolute blessing for our family."}
+            ]
+        else:
+            items = [
+                {"name": "Priya Sharma", "role": "Verified Client", "rating": 5, "quote": f"The experience with {business_name} has been phenomenal. Top quality, attentive staff, and outstanding professionalism."},
+                {"name": "Rahul Verma", "role": "Repeat Customer", "rating": 5, "quote": "Super impressed by their consistency and attention to detail. Would recommend to anyone without hesitation."},
+                {"name": "Ananya Patel", "role": "Community Member", "rating": 5, "quote": f"Fast, friendly, and dependable every time. {business_name} sets the gold standard in {category or 'service'}."}
+            ]
+
+        return {
+            "type": "testimonials",
+            "title": "What Our Customers Say",
+            "subtitle": f"Genuine praise from people who experience {business_name} firsthand",
+            "items": items
+        }
+
+    @staticmethod
+    def get_default_faq_section(business_name: str, category: str = "") -> dict:
+        cat_lower = (category or "").lower()
+        if any(w in cat_lower for w in ["server", "cloud", "host"]):
+            items = [
+                {"question": "How quickly are dedicated and cloud servers deployed?", "answer": "Most standard server instances are provisioned instantly within 5 to 15 minutes following order confirmation."},
+                {"question": "Is DDoS protection and firewall security included?", "answer": "Yes, automated enterprise multi-layer DDoS mitigation and advanced firewall filtering are standard on all servers."},
+                {"question": "Do I receive full root and IPMI / KVM access?", "answer": "Absolutely. You get 100% root/administrator access and out-of-band management console control."},
+                {"question": "What level of customer and technical support is provided?", "answer": "Our dedicated system engineers provide round-the-clock 24/7/365 assistance via ticket and priority chat."}
+            ]
+        elif any(w in cat_lower for w in ["flower", "florist"]):
+            items = [
+                {"question": "How fresh are your flowers and arrangements?", "answer": "We hand-select fresh morning blossoms directly from verified growers every single day to ensure lasting vibrancy."},
+                {"question": "Can I place custom orders for specific bouquets or events?", "answer": f"Yes! {business_name} specializes in custom designed bouquets, festive hampers, and full event floral styling."},
+                {"question": "Do you provide same-day flower delivery?", "answer": "Yes, we offer express same-day doorstep delivery for orders placed before our afternoon cutoff."},
+                {"question": "How can I keep my flowers fresh for longer?", "answer": "Trim stems slightly at an angle, change the vase water every two days, and keep flowers away from direct sunlight."}
+            ]
+        elif any(w in cat_lower for w in ["sweet", "mithai", "bakery"]):
+            items = [
+                {"question": "Are your sweets prepared fresh daily?", "answer": "Yes, all our sweets and delicacies are freshly prepared every morning using pure ingredients and traditional recipes."},
+                {"question": "Do you accept bulk orders for weddings and festivals?", "answer": f"Yes, {business_name} provides personalized bulk gift boxes and event catering for weddings, corporate gifts, and festivals."},
+                {"question": "What is the typical shelf life of your offerings?", "answer": "Dry and roasted varieties typically last 2 to 3 weeks, while milk-based sweets are best enjoyed within 3 to 5 days."},
+                {"question": "Do you offer sugar-free or dietary-conscious options?", "answer": "Yes, we craft special sugar-free and dry-fruit-only selections to cater to health-conscious patrons."}
+            ]
+        elif any(w in cat_lower for w in ["medical", "clinic", "pharma"]):
+            items = [
+                {"question": "Are all medications and health supplies verified and genuine?", "answer": "100%. We source strictly from authorized pharmaceutical distributors with verified batch certificates."},
+                {"question": "Do you offer prescription fulfillment and consultations?", "answer": "Yes, our qualified pharmacists review your prescription carefully and guide you on dosage and instructions."},
+                {"question": "Do you provide home delivery for essential medicines?", "answer": "Yes, we offer prompt doorstep delivery across our local coverage area for your convenience."},
+                {"question": "What are your operating hours for urgent needs?", "answer": f"{business_name} operates extended daily hours and provides on-call emergency healthcare assistance."}
+            ]
+        else:
+            items = [
+                {"question": f"How can I inquire about products or services at {business_name}?", "answer": "You can reach us directly through our Contact form, visit our location, or call our customer service desk."},
+                {"question": "Do you provide customized solutions tailored to specific needs?", "answer": "Yes! We work closely with each client to provide personalized recommendations and custom packages."},
+                {"question": "What is your commitment to quality and satisfaction?", "answer": "We back every offering with a 100% satisfaction guarantee, ensuring uncompromised standards."},
+                {"question": "What are your standard turnaround or delivery times?", "answer": "We prioritize fast, efficient fulfillment and will keep you updated every step of the way."}
+            ]
+
+        return {
+            "type": "faq",
+            "title": "Frequently Asked Questions",
+            "subtitle": f"Helpful answers to common questions about {business_name}",
+            "items": items
+        }
+
+    @staticmethod
+    def get_default_cta_section(business_name: str, category: str = "") -> dict:
+        return {
+            "type": "cta",
+            "title": f"Ready to Experience the Best in {category or 'Our Services'}?",
+            "subtitle": f"Connect with {business_name} today. We are here to deliver exceptional quality, personalized care, and lasting satisfaction.",
+            "cta": "Get in Touch",
+            "secondary_cta": "Explore Offerings"
+        }
+
+    # ---------------------------------------------------------
     # DATABASE
     # ---------------------------------------------------------
 
@@ -1986,7 +2147,16 @@ SELECTED TEMPLATE: {collected.get('selected_template_name')}
 
 REQUIREMENTS:
 1. Multi-Page Architecture: Generate 4 distinct pages in the "pages" array:
-   - "Home": Featuring a prominent Navbar, Hero Section, Signature Highlights/Offerings (Features), About preview, Contact inquiry preview, and Footer.
+   - "Home": A rich, comprehensive storefront featuring:
+     1. Navbar: Business name and navigation links.
+     2. Hero Section: Punchy headline, compelling subtitle, badge pill, primary CTA, secondary CTA, and hero image prompt.
+     3. Key Metrics / Stats Bar: 4 numerical business highlights (e.g. "100% Quality Guaranteed", "5,000+ Happy Customers", "Fast Turnaround", "4.9/5 Rating").
+     4. Signature Highlights (Features): 3 to 4 core offerings/strengths with title, description, and image prompt.
+     5. Brand Story & Craftsmanship (About preview): Engaging narrative detailing background, quality standards, and customer commitment.
+     6. Customer Testimonials: 3 realistic customer reviews with 5-star ratings, quotes, reviewer name, and role/location.
+     7. Frequently Asked Questions (FAQ): 4 high-value questions and answers addressing customer needs, orders, and quality guarantees.
+     8. Call to Action (CTA) Banner: Bold closing banner inviting direct inquiries or orders.
+     9. Footer: Business name and logo.
    - "About": Featuring Navbar, Full Brand Story / Mission, Core Values / Why Choose Us, and Footer.
    - "{service_tab_name}": Featuring Navbar, Comprehensive Offerings / Catalog (4 to 6 items with title, detailed description, realistic starting price/estimate, and image_prompt), Visual Showcase / Gallery (4 items), and Footer.
    - "Contact": Featuring Navbar, Full Contact Information, Opening Hours, Inquiry / Message Form, and Footer.
@@ -2043,8 +2213,19 @@ Return ONLY valid JSON with this exact structure:
           "image_url": ""
         }},
         {{
+          "type": "stats",
+          "title": "Key Highlights",
+          "subtitle": "Trusted performance and verified quality",
+          "items": [
+            {{ "label": "Satisfaction Rate", "value": "100%", "description": "Guaranteed quality in every order" }},
+            {{ "label": "Happy Clients", "value": "5,000+", "description": "Delivering happiness consistently" }},
+            {{ "label": "Turnaround Time", "value": "Prompt", "description": "Quick & dependable service" }},
+            {{ "label": "Verified Rating", "value": "4.9 ★", "description": "Top-rated by customers" }}
+          ]
+        }},
+        {{
           "type": "features",
-          "title": "Featured Highlights",
+          "title": "Signature Highlights",
           "subtitle": "Discover our signature {offerings or category}",
           "items": [
             {{
@@ -2070,14 +2251,38 @@ Return ONLY valid JSON with this exact structure:
         {{
           "type": "about",
           "title": "Welcome to {business_name}",
+          "subtitle": "Devoted to Excellence & Craftsmanship",
           "description": "Engaging introduction to our business and dedication.",
           "image_prompt": "Warm professional photograph of {category} space",
           "image_url": ""
         }},
         {{
-          "type": "contact",
-          "title": "Get in Touch",
-          "subtitle": "We are here to serve you. Reach out today."
+          "type": "testimonials",
+          "title": "What Our Customers Say",
+          "subtitle": "Real experiences from valued clients",
+          "items": [
+            {{ "name": "Priya Sharma", "role": "Verified Customer", "rating": 5, "quote": "Exceptional quality and attentive service. Exceeded all our expectations!" }},
+            {{ "name": "Rahul Verma", "role": "Regular Client", "rating": 5, "quote": "Remarkable attention to detail and authenticity. Our first choice every time." }},
+            {{ "name": "Ananya Patel", "role": "Community Member", "rating": 5, "quote": "Fast, courteous, and dependable service with genuine care." }}
+          ]
+        }},
+        {{
+          "type": "faq",
+          "title": "Frequently Asked Questions",
+          "subtitle": "Common inquiries about our {category} offerings",
+          "items": [
+            {{ "question": "How do I place an inquiry or order?", "answer": "You can reach out directly via our Contact page or call our desk." }},
+            {{ "question": "Do you provide custom requests?", "answer": "Yes, we specialize in tailored requests suited to your needs." }},
+            {{ "question": "What is your quality guarantee?", "answer": "Every offering is backed by our strict quality standards." }},
+            {{ "question": "What are your delivery options?", "answer": "We offer reliable, prompt turnaround for all orders." }}
+          ]
+        }},
+        {{
+          "type": "cta",
+          "title": "Ready to Experience {business_name}?",
+          "subtitle": "Reach out to us today for personalized solutions and inquiries.",
+          "cta": "Get in Touch",
+          "secondary_cta": "Explore Offerings"
         }},
         {{
           "type": "footer",
@@ -2236,6 +2441,42 @@ Return ONLY valid JSON with this exact structure:
 
         pages = result["pages"]
         navigation_tabs = ["Home", "About", service_tab_name, "Contact"]
+
+        # Ensure Home Page is rich and fully populated with all core storefront sections
+        home_page = next((p for p in pages if p.get("name", "").lower() == "home"), None)
+        if home_page:
+            h_sections = home_page.get("sections", [])
+            sec_types = [s.get("type", "").lower() for s in h_sections if isinstance(s, dict)]
+
+            # 1. Stats bar right after hero
+            if "stats" not in sec_types:
+                stats_sec = WebsiteBuilderService.get_default_stats_section(category)
+                hero_idx = next((i for i, s in enumerate(h_sections) if s.get("type") == "hero"), -1)
+                if hero_idx != -1:
+                    h_sections.insert(hero_idx + 1, stats_sec)
+                else:
+                    h_sections.insert(1, stats_sec)
+
+            # 2. Testimonials section
+            sec_types = [s.get("type", "").lower() for s in h_sections if isinstance(s, dict)]
+            if "testimonials" not in sec_types:
+                test_sec = WebsiteBuilderService.get_default_testimonials_section(business_name, category)
+                footer_idx = next((i for i, s in enumerate(h_sections) if s.get("type") == "footer"), len(h_sections))
+                h_sections.insert(footer_idx, test_sec)
+
+            # 3. FAQ section
+            sec_types = [s.get("type", "").lower() for s in h_sections if isinstance(s, dict)]
+            if "faq" not in sec_types:
+                faq_sec = WebsiteBuilderService.get_default_faq_section(business_name, category)
+                footer_idx = next((i for i, s in enumerate(h_sections) if s.get("type") == "footer"), len(h_sections))
+                h_sections.insert(footer_idx, faq_sec)
+
+            # 4. CTA conversion banner
+            sec_types = [s.get("type", "").lower() for s in h_sections if isinstance(s, dict)]
+            if "cta" not in sec_types:
+                cta_sec = WebsiteBuilderService.get_default_cta_section(business_name, category)
+                footer_idx = next((i for i, s in enumerate(h_sections) if s.get("type") == "footer"), len(h_sections))
+                h_sections.insert(footer_idx, cta_sec)
 
         for page in pages:
             for section_index, section in enumerate(
@@ -2717,6 +2958,76 @@ Rules:
                 "updated_state": current_state
             }
 
+        # -----------------------------------------------------
+        # HOMEPAGE CONTENT EXPANSION PROCESSOR
+        # -----------------------------------------------------
+        is_content_expand_request = any(
+            w in lower_instruction for w in [
+                "more content", "add content", "homepage content", "content on homepage",
+                "aur content", "zyada content", "content add", "expand content", "richer homepage",
+                "content on home", "more section", "more sections"
+            ]
+        )
+
+        if is_content_expand_request and current_state.get("pages"):
+            home_p = next((p for p in current_state["pages"] if p.get("name", "").lower() == "home"), None)
+            if home_p:
+                h_secs = home_p.get("sections", [])
+                sec_types = [s.get("type", "").lower() for s in h_secs if isinstance(s, dict)]
+
+                if "stats" not in sec_types:
+                    stats_sec = WebsiteBuilderService.get_default_stats_section(category)
+                    hero_idx = next((i for i, s in enumerate(h_secs) if s.get("type") == "hero"), -1)
+                    if hero_idx != -1:
+                        h_secs.insert(hero_idx + 1, stats_sec)
+                    else:
+                        h_secs.insert(1, stats_sec)
+
+                sec_types = [s.get("type", "").lower() for s in h_secs if isinstance(s, dict)]
+                if "testimonials" not in sec_types:
+                    test_sec = WebsiteBuilderService.get_default_testimonials_section(b_name, category)
+                    footer_idx = next((i for i, s in enumerate(h_secs) if s.get("type") == "footer"), len(h_secs))
+                    h_secs.insert(footer_idx, test_sec)
+
+                sec_types = [s.get("type", "").lower() for s in h_secs if isinstance(s, dict)]
+                if "faq" not in sec_types:
+                    faq_sec = WebsiteBuilderService.get_default_faq_section(b_name, category)
+                    footer_idx = next((i for i, s in enumerate(h_secs) if s.get("type") == "footer"), len(h_secs))
+                    h_secs.insert(footer_idx, faq_sec)
+
+                sec_types = [s.get("type", "").lower() for s in h_secs if isinstance(s, dict)]
+                if "cta" not in sec_types:
+                    cta_sec = WebsiteBuilderService.get_default_cta_section(b_name, category)
+                    footer_idx = next((i for i, s in enumerate(h_secs) if s.get("type") == "footer"), len(h_secs))
+                    h_secs.insert(footer_idx, cta_sec)
+
+                if lang == "hi":
+                    resp_text = f"मैंने {b_name} के होमपेज पर महत्वपूर्ण स्टैट्स, कस्टमर रिव्यू, सामान्य प्रश्न (FAQ) और कॉल-टू-एक्शन बैनर जोड़कर अधिक कंटेंट जोड़ दिया है!"
+                elif lang == "hinglish":
+                    resp_text = f"Maine {b_name} ke homepage par key stats counters, customer reviews, FAQs aur CTA banner add karke rich content update kar diya hai!"
+                else:
+                    resp_text = f"I have enriched the Homepage for {b_name} with key business metrics, customer reviews, frequently asked questions, and a high-converting call-to-action banner!"
+
+                if session.website_project_id:
+                    p_coll = await WebsiteBuilderService.get_project_collection()
+                    await p_coll.update_one(
+                        {"_id": ObjectId(session.website_project_id), "user_id": user_id},
+                        {
+                            "$set": {
+                                "pages": current_state["pages"],
+                                "website_data.pages": current_state["pages"],
+                                "updated_at": datetime.now(timezone.utc)
+                            },
+                            "$inc": {"version": 1}
+                        }
+                    )
+
+                return {
+                    "action": "update_text",
+                    "message": resp_text,
+                    "updated_state": current_state
+                }
+
         # Detect explicit category conflicts.
         category_conflicts = {
             "flower": ["gym", "workout", "fitness equipment"],
@@ -2769,6 +3080,15 @@ Rules:
   - Navbar tabs MUST include navigation links corresponding to pages (e.g. Home, About, Services/Products, Contact).
 - If requested to modify or add hero section or images:
   - Include captivating headline, subtitle, CTAs, and category-matched image prompts.
+- If requested to add or modify homepage or content:
+  - Ensure the "Home" page is rich, engaging, and comprehensive with:
+    1. Hero Section (headline, subtitle, CTAs, badge, category image)
+    2. Key Metrics / Stats Bar (4 numerical highlights like "100% Satisfaction", "5,000+ Happy Clients", "Fast Turnaround", "4.9/5 Rating")
+    3. Signature Highlights / Features (3-4 cards with descriptions & images)
+    4. Brand Story / Why Choose Us Preview (rich narrative & core values)
+    5. Customer Testimonials (3 realistic reviews with 5-star ratings and client quotes)
+    6. Frequently Asked Questions (FAQ with 4 common questions & answers)
+    7. Call to Action Banner (high-converting inquiry banner)
 - If requested to add or modify pages:
   - Ensure the "pages" array has complete pages (Home, About, Services/Products, Contact) with proper sections.
 - Keep all images authentic and relevant to {category}.
@@ -2829,6 +3149,17 @@ Rules:
                                 itm_prompt = itm.get("image_prompt") or itm.get("title") or category
                                 itm["image_url"] = WebsiteBuilderService.resolve_curated_image(
                                     category, itm_prompt, itm_idx, False
+                                )
+
+            # If user explicitly asked for hero image change, ensure the hero image is updated to match category
+            is_hero_image_req = any(w in lower_instruction for w in ["hero image", "header image", "cover image"])
+            if is_hero_image_req and "pages" in updated and isinstance(updated["pages"], list):
+                for page in updated["pages"]:
+                    if isinstance(page, dict):
+                        for s in page.get("sections", []):
+                            if isinstance(s, dict) and s.get("type") == "hero":
+                                s["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                                    category, f"{b_name} {category} storefront", 2, True
                                 )
 
             # If user explicitly asked for logo, provide a warm natural response
