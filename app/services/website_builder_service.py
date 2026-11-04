@@ -2190,12 +2190,25 @@ Return ONLY valid JSON with this exact structure:
 
         collected["onboarding_step"] = "generated"
 
+        style_options = [
+            {"label": "🎨 Change Theme Color", "action": "open_theme_modal", "tab": "colors"},
+            {"label": "🔤 Change Font Theme", "action": "open_theme_modal", "tab": "fonts"},
+            {"label": "🔘 Change Button Colors", "action": "open_theme_modal", "tab": "buttons"}
+        ]
+
         await WebsiteBuilderService.reply(
             session,
             (
                 f"Your website for {business_name} has been generated! "
-                "You can now preview and edit it."
+                "You can now preview and edit it below, or customize your theme color, font, and button styling."
+            ) if lang == "en" else (
+                f"Aapki dukaan '{business_name}' ki website generate ho chuki hai! "
+                "Aap live preview dekh sakte hain, ya theme color, font, aur button colors badal sakte hain."
+            ) if lang == "hinglish" else (
+                f"आपकी दुकान '{business_name}' की वेबसाइट तैयार हो चुकी है! "
+                "आप लाइव प्रिव्यू देख सकते हैं, या थीम रंग, फ़ॉन्ट, और बटन रंग बदल सकते हैं।"
             ),
+            options=style_options,
             data={
                 "siteId": project.id,
                 "generatedSiteData": result
@@ -2206,7 +2219,7 @@ Return ONLY valid JSON with this exact structure:
 
         return type("Result", (), {
             "message": "Website generated successfully.",
-            "quick_actions": [],
+            "quick_actions": style_options,
             "session": session,
             "site_id": project.id,
             "generated_site_data": doc
@@ -2356,6 +2369,168 @@ Rules:
             current_state["logo"] = new_logo
 
         logo = new_logo or session.collected_data.get('Logo') or current_state.get('logo', '')
+
+        # -----------------------------------------------------
+        # THEME COLOR, FONT THEME & BUTTON COLOR PROCESSOR
+        # -----------------------------------------------------
+        is_button_edit = any(w in lower_instruction for w in ["button", "btn", "बटन", "cta", "button color", "button style"])
+        is_font_edit = any(w in lower_instruction for w in ["font", "typeface", "typography", "text style", "फ़ॉन्ट", "फॉन्ट"])
+        is_theme_color_edit = any(w in lower_instruction for w in ["theme color", "palette", "background", "rang", "रंग", "theme ka color", "website color", "primary color"])
+
+        COLOR_MAP = {
+            "emerald": ("#059669", "#047857"),
+            "green": ("#059669", "#047857"),
+            "blue": ("#0284C7", "#0369A1"),
+            "ocean": ("#0284C7", "#0369A1"),
+            "indigo": ("#4F46E5", "#4338CA"),
+            "navy": ("#1E40AF", "#1E3A8A"),
+            "red": ("#DC2626", "#B91C1C"),
+            "crimson": ("#E11D48", "#BE123C"),
+            "rose": ("#E11D48", "#BE123C"),
+            "orange": ("#EA580C", "#C2410C"),
+            "sunset": ("#EA580C", "#C2410C"),
+            "coral": ("#F97316", "#EA580C"),
+            "amber": ("#D97706", "#B45309"),
+            "gold": ("#D97706", "#B45309"),
+            "yellow": ("#EAB308", "#CA8A04"),
+            "purple": ("#7C3AED", "#6D28D9"),
+            "violet": ("#7C3AED", "#6D28D9"),
+            "pink": ("#EC4899", "#DB2777"),
+            "teal": ("#0D9488", "#0F766E"),
+            "cyan": ("#06B6D4", "#0891B2"),
+            "black": ("#18181B", "#09090B"),
+            "dark": ("#18181B", "#09090B"),
+            "slate": ("#1E293B", "#0F172A")
+        }
+
+        FONT_MAP = {
+            "poppins": "Poppins",
+            "inter": "Inter",
+            "outfit": "Outfit",
+            "playfair display": "Playfair Display",
+            "playfair": "Playfair Display",
+            "montserrat": "Montserrat",
+            "roboto": "Roboto",
+            "plus jakarta sans": "Plus Jakarta Sans",
+            "plus jakarta": "Plus Jakarta Sans",
+            "jakarta": "Plus Jakarta Sans",
+            "cinzel": "Cinzel",
+            "lato": "Lato",
+            "serif": "Playfair Display",
+            "sans": "Inter"
+        }
+
+        # Check if direct style modification can be deterministically applied
+        theme_modified = False
+        style_desc = []
+        if "theme" not in current_state or not isinstance(current_state["theme"], dict):
+            current_state["theme"] = {}
+        target_theme = current_state["theme"]
+
+        # 1. Font Theme Change
+        if is_font_edit:
+            matched_font = None
+            for fk, fval in FONT_MAP.items():
+                if fk in lower_instruction:
+                    matched_font = fval
+                    break
+            if matched_font:
+                target_theme["font"] = matched_font
+                target_theme["font_family"] = matched_font
+                theme_modified = True
+                style_desc.append(f"font theme '{matched_font}'")
+
+        # 2. Button Colors & Radius Change
+        if is_button_edit:
+            # Check button hex or named color
+            btn_hex = re.search(r"#(?:[0-9a-fA-F]{3}){1,2}\b", instruction)
+            if btn_hex:
+                target_theme["button_color"] = btn_hex.group(0)
+                theme_modified = True
+                style_desc.append(f"button color {btn_hex.group(0)}")
+            else:
+                for ck, (prim, _) in COLOR_MAP.items():
+                    if ck in lower_instruction:
+                        target_theme["button_color"] = prim
+                        theme_modified = True
+                        style_desc.append(f"button color {ck}")
+                        break
+
+            # Check button text color
+            if any(w in lower_instruction for w in ["white text", "text white", "safed text"]):
+                target_theme["button_text_color"] = "#ffffff"
+                theme_modified = True
+            elif any(w in lower_instruction for w in ["dark text", "black text", "text dark", "text black"]):
+                target_theme["button_text_color"] = "#111827"
+                theme_modified = True
+
+            # Check button corner radius
+            if any(w in lower_instruction for w in ["pill", "capsule", "oval", "rounded-full"]):
+                target_theme["button_radius"] = "9999px"
+                theme_modified = True
+                style_desc.append("pill-shaped buttons")
+            elif any(w in lower_instruction for w in ["square", "sharp"]):
+                target_theme["button_radius"] = "0px"
+                theme_modified = True
+                style_desc.append("square buttons")
+            elif any(w in lower_instruction for w in ["rounded", "soft"]):
+                target_theme["button_radius"] = "12px"
+                theme_modified = True
+
+        # 3. Overall Theme Color Change
+        if (is_theme_color_edit or any(ck in lower_instruction for ck in COLOR_MAP.keys())) and not is_button_edit:
+            col_hex = re.search(r"#(?:[0-9a-fA-F]{3}){1,2}\b", instruction)
+            if col_hex:
+                target_theme["primary"] = col_hex.group(0)
+                target_theme["secondary"] = col_hex.group(0)
+                theme_modified = True
+                style_desc.append(f"theme color {col_hex.group(0)}")
+            else:
+                for ck, (prim, sec) in COLOR_MAP.items():
+                    if ck in lower_instruction:
+                        target_theme["primary"] = prim
+                        target_theme["secondary"] = sec
+                        if not target_theme.get("button_color"):
+                            target_theme["button_color"] = prim
+                        theme_modified = True
+                        style_desc.append(f"theme color {ck}")
+                        break
+
+        # If deterministically handled theme update without conflicting structural requests
+        is_pure_style_request = (theme_modified or is_logo_request) and not any(
+            w in lower_instruction for w in ["add page", "remove", "delete", "write", "change text", "rename", "new section"]
+        )
+
+        if is_pure_style_request:
+            desc_str = ", ".join(style_desc) if style_desc else "theme styling"
+            if lang == "hi":
+                resp_text = f"मैंने आपकी वेबसाइट के {desc_str} को अपडेट कर दिया है! लाइव प्रिव्यू में नया स्टाइल तुरंत लागू हो गया है।"
+            elif lang == "hinglish":
+                resp_text = f"Maine aapki website ka {desc_str} update kar diya hai! Naya styling live preview me update ho chuka hai."
+            else:
+                resp_text = f"I have updated the {desc_str} for your website! The live preview has been updated with your new styling."
+
+            if session.website_project_id:
+                p_coll = await WebsiteBuilderService.get_project_collection()
+                await p_coll.update_one(
+                    {"_id": ObjectId(session.website_project_id), "user_id": user_id},
+                    {
+                        "$set": {
+                            "theme": target_theme,
+                            "website_data.theme": target_theme,
+                            "logo": current_state.get("logo"),
+                            "website_data.logo": current_state.get("logo"),
+                            "updated_at": datetime.now(timezone.utc)
+                        },
+                        "$inc": {"version": 1}
+                    }
+                )
+
+            return {
+                "action": "update_theme",
+                "message": resp_text,
+                "updated_state": current_state
+            }
 
         # Detect explicit category conflicts.
         category_conflicts = {
