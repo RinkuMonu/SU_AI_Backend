@@ -424,6 +424,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     #     message="OTP verified successfully. Logged in."
     # )
     # [NEW] No access_token in body — returned via cookie.
+    try:
+        from app.services.msg91_email_service import Msg91EmailService
+        asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_resp.model_dump(), request=None))
+    except Exception as em_err:
+        logger.warning(f"Could not dispatch login notification email: {em_err}")
+
     return {
         "success": True,
         "message": "OTP verified successfully. Logged in.",
@@ -593,6 +599,12 @@ async def login(request: Request, response: Response):
     user_dict["can_access_dashboard"] = onb_state["can_access_dashboard"]
     user_dict["next_step"] = onb_state["next_step"]
 
+    try:
+        from app.services.msg91_email_service import Msg91EmailService
+        asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_dict, request=request))
+    except Exception as em_err:
+        logger.warning(f"Could not dispatch login notification email: {em_err}")
+
     # [OLD] return {
     #     "success": True,
     #     "access_token": access_token,
@@ -713,6 +725,38 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
                         {"$set": {"name": full_name, "fullName": full_name}}
                     )
 
+    # Sync business profile data for business accounts or default temporary names
+    biz = None
+    if doc.get("role") in ["businessman", "business"] or full_name == "User" or full_name.startswith("User ") or not doc.get("businessName"):
+        biz = await db["businesses"].find_one({
+            "$or": [
+                {"ownerId": uid},
+                {"ownerId": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"owner_id": uid},
+                {"owner_id": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"userId": uid},
+                {"userId": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"user_id": uid},
+                {"user_id": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+            ]
+        })
+        if biz:
+            biz_name = biz.get("name") or biz.get("businessName") or biz.get("business_name") or biz.get("company_name") or biz.get("owner_name")
+            if biz_name and str(biz_name).strip() and not str(biz_name).strip().startswith("User "):
+                b_name_clean = str(biz_name).strip()
+                if full_name == "User" or full_name.startswith("User "):
+                    full_name = b_name_clean
+                if ObjectId.is_valid(uid):
+                    await db["users"].update_one(
+                        {"_id": ObjectId(uid)},
+                        {"$set": {
+                            "name": full_name,
+                            "fullName": full_name,
+                            "businessName": b_name_clean,
+                            "business_name": b_name_clean
+                        }}
+                    )
+
     user_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
     phone_verified = doc.get("phone_verified", True if not user_phone else False)
     if not user_phone or doc.get("role") in ["businessman", "influencer", "admin"]:
@@ -750,7 +794,8 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "image": user_image,
         "avatar": user_image,
         "preferredLanguage": doc.get("preferredLanguage"),
-        "businessName": doc.get("businessName") or doc.get("business_name"),
+        "businessName": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("businessName") or doc.get("business_name")),
+        "business_name": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("business_name") or doc.get("businessName")),
         "onboardingCompleted": doc.get("onboardingCompleted", False),
         "onboarding_step": doc.get("onboarding_step", 1),
     }
