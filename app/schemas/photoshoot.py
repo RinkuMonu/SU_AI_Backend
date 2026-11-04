@@ -72,6 +72,8 @@ class ProductEnhanceRequest(BaseModel):
 class EnhancedImageItem(BaseModel):
     image_id: str
     source_image_id: str
+    source_image_url: Optional[str] = None
+    original_url: Optional[str] = None
     style: str
     url: str
     is_selected: bool = False
@@ -88,6 +90,9 @@ class ProductEnhanceResponse(BaseModel):
     session_id: str
     total_variations: int
     enhanced_images: List[EnhancedImageItem]
+    original_images: Optional[List[Dict[str, Any]]] = None
+    source_image_url: Optional[str] = None
+    original_url: Optional[str] = None
     message: str = "Product image enhancement variations generated."
 
 

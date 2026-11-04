@@ -35,6 +35,12 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
     canonical_name = doc.get("name") or doc.get("fullName") or "User"
     doc["name"] = canonical_name
     doc["fullName"] = canonical_name
+    parts = canonical_name.split() if canonical_name != "User" else []
+    doc["firstName"] = doc.get("firstName") or (parts[0] if parts else "")
+    doc["lastName"] = doc.get("lastName") or (" ".join(parts[1:]) if len(parts) > 1 else "")
+    parts = canonical_name.split() if canonical_name != "User" else []
+    doc["firstName"] = doc.get("firstName") or (parts[0] if parts else "")
+    doc["lastName"] = doc.get("lastName") or (" ".join(parts[1:]) if len(parts) > 1 else "")
 
     canonical_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
     doc["phone_number"] = canonical_phone
@@ -62,31 +68,42 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
     }
 
 @router.patch("/me")
+@router.put("/me")
 async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_current_user)):
     db = get_database()
     user_id = str(current_user.get("id") or current_user.get("_id"))
     update_data = req.model_dump(exclude_unset=True)
 
     if update_data:
-        # Reconstruct name if firstName or lastName provided
-        first = update_data.get("firstName")
-        last = update_data.get("lastName")
-        if first is not None or last is not None:
-            user_doc = None
-            try:
+        user_doc = None
+        try:
+            if ObjectId.is_valid(user_id):
                 user_doc = await db["users"].find_one({"_id": ObjectId(user_id)})
                 if not user_doc:
                     user_doc = await db["pending_users"].find_one({"_id": ObjectId(user_id)})
-            except Exception:
-                pass
-            cur_first = first if first is not None else (user_doc.get("firstName") if user_doc else "")
-            cur_last = last if last is not None else (user_doc.get("lastName") if user_doc else "")
-            full = f"{cur_first or ''} {cur_last or ''}".strip()
+        except Exception:
+            pass
+
+        first = update_data.get("firstName")
+        last = update_data.get("lastName")
+        name_val = update_data.get("name") or update_data.get("fullName")
+
+        if first is not None or last is not None:
+            cur_first = str(first if first is not None else (user_doc.get("firstName") if user_doc else "")).strip()
+            cur_last = str(last if last is not None else (user_doc.get("lastName") if user_doc else "")).strip()
+            full = f"{cur_first} {cur_last}".strip()
             if full:
                 update_data["name"] = full
-        elif "name" in update_data or "fullName" in update_data:
-            update_data["name"] = update_data.get("name") or update_data.get("fullName")
-        update_data.pop("fullName", None)
+                update_data["fullName"] = full
+                update_data["firstName"] = cur_first
+                update_data["lastName"] = cur_last
+        elif name_val and str(name_val).strip():
+            clean_name = str(name_val).strip()
+            update_data["name"] = clean_name
+            update_data["fullName"] = clean_name
+            parts = clean_name.split()
+            update_data["firstName"] = parts[0] if parts else ""
+            update_data["lastName"] = " ".join(parts[1:]) if len(parts) > 1 else ""
 
         # Reconcile phone & contactNumber to canonical phone_number
         if "phone" in update_data or "contactNumber" in update_data or "phone_number" in update_data:
@@ -139,6 +156,12 @@ async def update_me(req: UserUpdate, current_user: CurrentUser = Depends(get_cur
     canonical_name = doc.get("name") or doc.get("fullName") or "User"
     doc["name"] = canonical_name
     doc["fullName"] = canonical_name
+    parts = canonical_name.split() if canonical_name != "User" else []
+    doc["firstName"] = doc.get("firstName") or (parts[0] if parts else "")
+    doc["lastName"] = doc.get("lastName") or (" ".join(parts[1:]) if len(parts) > 1 else "")
+    parts = canonical_name.split() if canonical_name != "User" else []
+    doc["firstName"] = doc.get("firstName") or (parts[0] if parts else "")
+    doc["lastName"] = doc.get("lastName") or (" ".join(parts[1:]) if len(parts) > 1 else "")
 
     canonical_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
     doc["phone_number"] = canonical_phone

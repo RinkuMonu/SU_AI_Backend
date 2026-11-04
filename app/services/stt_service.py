@@ -29,6 +29,9 @@ SUPPORTED_MIME_PREFIXES: Set[str] = {
     "audio/aac",
     "audio/x-aac",
     "audio/opus",
+    "video/webm",
+    "video/mp4",
+    "application/octet-stream",
 }
 
 VALID_LANGUAGE_CODES: Set[str] = {
@@ -73,6 +76,10 @@ class STTService:
 
         # 1. Match from declared MIME type
         if raw_mime in SUPPORTED_MIME_PREFIXES:
+            if raw_mime in ["video/webm", "application/octet-stream"]:
+                return "audio/webm"
+            if raw_mime == "video/mp4":
+                return "audio/mp4"
             return raw_mime
 
         # 2. Match from file extension fallback
