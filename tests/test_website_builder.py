@@ -66,6 +66,17 @@ async def test_chat_english():
         assert "messages" in data
 
 @pytest.mark.asyncio
+async def test_message_for_missing_session_returns_404():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post(
+            "/api/v1/website-builder/session/1793705377169/message",
+            json={"message": "Hello"},
+        )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Session not found"
+
+@pytest.mark.asyncio
 async def test_recommendations_and_generate():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         res1 = await ac.post("/api/v1/website-builder/session", json={"language": "English"})
