@@ -232,6 +232,19 @@ class WebsiteBuilderService:
                 f'<path d="M22 32 Q50 26 50 72 Q50 26 78 32 V74 Q50 68 50 74 Q50 68 22 74 Z" fill="#ffffff" />'
                 f'<line x1="50" y1="30" x2="50" y2="72" stroke="{color}" stroke-width="3" />'
             )
+        elif any(w in cat_lower for w in ["server", "cloud", "host", "hosting", "data center", "datacenter", "vps"]):
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<rect x="22" y="24" width="56" height="14" rx="4" fill="#ffffff" />'
+                f'<circle cx="30" cy="31" r="2.5" fill="{color}" />'
+                f'<circle cx="38" cy="31" r="2.5" fill="{color}" />'
+                f'<rect x="22" y="43" width="56" height="14" rx="4" fill="#ffffff" />'
+                f'<circle cx="30" cy="50" r="2.5" fill="{color}" />'
+                f'<circle cx="38" cy="50" r="2.5" fill="{color}" />'
+                f'<rect x="22" y="62" width="56" height="14" rx="4" fill="#ffffff" />'
+                f'<circle cx="30" cy="69" r="2.5" fill="{color}" />'
+                f'<circle cx="38" cy="69" r="2.5" fill="{color}" />'
+            )
         elif any(w in cat_lower for w in ["farm", "resort", "nature", "villa"]):
             icon_svg = (
                 f'<rect width="100" height="100" rx="24" fill="{color}" />'
@@ -255,6 +268,11 @@ class WebsiteBuilderService:
     # ---------------------------------------------------------
 
     CATEGORY_KEYWORDS = {
+        "Servers & Cloud Hosting": [
+            "सर्वर", "क्लाउड", "होस्टिंग", "डेटा सेंटर", "servers", "server", "cloud servers", "dedicated servers",
+            "cloud hosting", "web hosting", "vps", "data center", "datacenter", "bare metal", "hosting services",
+            "server hosting", "linux servers", "windows servers", "cloud storage", "domain hosting"
+        ],
         "Farm House & Resort": [
             "फार्म हाउस", "फार्महाउस", "रिसॉर्ट", "farm house", "farmhouse", "farm stay", "resort", "agro tourism",
             "dairy farm", "poultry farm", "agriculture", "homestay", "villa", "cottage"
@@ -262,7 +280,7 @@ class WebsiteBuilderService:
         "Stationery & Books": [
             "स्टेशनरी", "किताब", "किताबें", "बुक्स", "stationery", "stationery shop", "stationery store", "books",
             "book shop", "bookstore", "office supplies", "photocopy", "printing",
-            "gift shop", "novelty shop", "paper craft"
+            "gift shop", "novelty shop", "paper craft", "notebook", "pens", "pencils", "art supplies"
         ],
         "Korean Sweet Shop": [
             "कोरियन", "कोरियन मिठाई", "korean sweet", "korean sweets", "korean sweet shop", "bingsu",
@@ -302,9 +320,10 @@ class WebsiteBuilderService:
             "किराना", "राशन", "जनरल स्टोर", "grocery", "kirana", "supermarket", "general store", "provisions", "mart", "departmental store"
         ],
         "Medical & Clinic": [
-            "मेडिकल", "दवा", "दवाई", "दवाइयों", "औषधि", "क्लीनिक", "डॉक्टर", "अस्पताल", "फार्मेसी",
+            "मेडिकल", "दवा", "दवाई", "दवाइयों", "औषधि", "क्लीनिक", "डॉक्टर", "अस्पताल", "फार्मेसी", "इलाज",
             "medical", "medicals", "medical shop", "medical store", "pharmacy", "chemist", "chemist shop",
-            "clinic", "dental clinic", "doctor", "hospital", "physiotherapy", "pathology", "diagnostic center"
+            "clinic", "dental clinic", "doctor", "hospital", "physiotherapy", "pathology", "diagnostic center",
+            "treatment", "medicine", "medicines", "healthcare"
         ],
         "Automotive & Garage": [
             "गैराज", "मैकेनिक", "सर्विसिंग", "car repair", "garage", "mechanic", "auto repair", "bike repair", "car wash", "tyres", "auto garage"
@@ -351,8 +370,8 @@ class WebsiteBuilderService:
 
         # 2. Dynamic natural language patterns for ANY business in English, Hinglish, or Hindi
         patterns = [
-            r"(?:i have|i run|i ran|we have|we run|owner of|managing)\s+(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,35}?)(?:\s+shop|\s+store|\s+business|\s+center|\s+centre|\s+clinic)?$",
-            r"(?:i have|i run|i ran|we have|we run)\s+(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,35})",
+            r"(?:i have|i run|i ran|we have|we run|owner of|managing|dealing in|start|starting|make|making|create|creating)\s+(?:an?|the|my)?\s*(?:business of|shop of|store of|work of|service of)?\s*([a-zA-Z\u0900-\u097F\s]{2,35}?)(?:\s+shop|\s+store|\s+business|\s+center|\s+centre|\s+clinic|\s+services|\s+solutions)?$",
+            r"(?:i have|i run|i ran|we have|we run)\s+(?:an?|the)?\s*(?:business of|shop of|store of)?\s*([a-zA-Z\u0900-\u097F\s]{2,35})",
             r"(?:mera|meri|humara|humari|मेरी|मेरा|हमारा|हमारी)\s+(?:ek\s+|एक\s+)?([a-zA-Z\u0900-\u097F\s]{2,35}?)(?:\s+hai|\s+ka business|\s+ki dukaan|\s+dukaan|\s+की\s+दुकान|\s+का\s+बिजनेस|\s+है)",
             r"(?:website for|website chahiye|वेबसाइट चाहिए)\s+(?:an?|my|meri|मेरी)?\s*([a-zA-Z\u0900-\u097F\s]{2,35})",
             r"^(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,30})$"
@@ -362,6 +381,7 @@ class WebsiteBuilderService:
             "hi", "hii", "hello", "hey", "yes", "no", "ok", "okay", "thanks", "website",
             "build", "build website", "build the website", "told you already",
             "already told", "help me", "please", "kripya", "generate", "shuru",
+            "build directly", "direct", "direct website", "recommend", "recommend designs",
             "नमस्ते", "हाँ", "नहीं", "वेबसाइट"
         }
 
@@ -374,8 +394,26 @@ class WebsiteBuilderService:
                 candidate = match.group(1).strip(" .")
                 cand_lower = candidate.lower()
                 if cand_lower not in stopwords and not WebsiteBuilderService.is_greeting(cand_lower) and len(cand_lower) >= 2 and len(cand_lower) <= 35:
-                    cleaned = re.sub(r"^(a|an|the|my|meri|mera|एक|मेरी|मेरा)\s+", "", cand_lower).strip()
+                    cleaned = re.sub(
+                        r"^(a|an|the|my|meri|mera|humara|humari|our|ek|एक|मेरी|मेरा|हमारे|हमारी)\s+",
+                        "",
+                        cand_lower
+                    ).strip()
+                    cleaned = re.sub(
+                        r"^(business of|shop of|store of|work of|service of|services of|trading of|dealing in|company of|agency of)\s+",
+                        "",
+                        cleaned
+                    ).strip()
+                    cleaned = re.sub(
+                        r"\s+(ka business|ki dukaan|dukaan|shop|store|center|centre|services|का बिजनेस|की दुकान|दुकान)$",
+                        "",
+                        cleaned
+                    ).strip()
                     if cleaned and cleaned not in stopwords and not WebsiteBuilderService.is_greeting(cleaned):
+                        for category, keywords in WebsiteBuilderService.CATEGORY_KEYWORDS.items():
+                            for kw in keywords:
+                                if kw == cleaned or re.search(r"\b" + re.escape(kw) + r"\b", cleaned):
+                                    return category
                         return cleaned.title()
 
         return None
@@ -392,9 +430,11 @@ class WebsiteBuilderService:
         # Check if user is clarifying or correcting their category
         is_correction = any(
             w in msg_lower for w in [
-                "no", "not", "nahi", "actually", "ran a", "run a", "have a",
-                "sweet shop", "farm house", "stationery", "korean", "instead",
-                "medical", "shop", "dukaan", "store", "clinic"
+                "no", "not", "nahi", "actually", "wrong", "galat", "badal do", "instead", "nahi balki", "i meant"
+            ]
+        ) or any(
+            msg_lower.startswith(p) for p in [
+                "i run a", "i have a", "we run a", "meri dukaan", "mera business", "humara business"
             ]
         )
 
@@ -421,8 +461,8 @@ class WebsiteBuilderService:
 
         # Extract shop name only when user explicitly provides it
         name_patterns = [
-            r"(?:my business name is|business name is|shop name is|store name is|mera naam|dukaan ka naam|naam hai)\s+(.+)",
-            r"(?:my shop is called|my store is called|called)\s+(.+)"
+            r"(?:my business name is|business name is|shop name is|store name is|dukaan ka naam hai|dukaan ka naam|business ka naam|naam hai)\s+(.+?)(?:\s+hai|\s+he|\.|$)",
+            r"(?:my shop is called|my store is called|my business is called|called)\s+(.+?)(?:\s+hai|\s+he|\.|$)"
         ]
 
         for pattern in name_patterns:
@@ -454,6 +494,13 @@ class WebsiteBuilderService:
         text = f"{category} {prompt}".lower()
 
         galleries = {
+            "Servers & Cloud Hosting": [
+                "https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1544197150-b99a580bb7a8?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1562774053-701939374585?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1587560699334-cc4ff634909a?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1520869562399-e772f042f422?auto=format&fit=crop&w=900&q=85",
+            ],
             "Farm House & Resort": [
                 "https://images.unsplash.com/photo-1500076656116-558758c991c1?auto=format&fit=crop&w=1200&q=85",
                 "https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=900&q=85",
@@ -590,6 +637,9 @@ class WebsiteBuilderService:
         category_lower = category.lower()
 
         palettes = {
+            "servers & cloud hosting": ("#0284C7", "#0F172A", "#38BDF8"),
+            "servers": ("#0284C7", "#0F172A", "#38BDF8"),
+            "cloud": ("#0284C7", "#0F172A", "#38BDF8"),
             "farm house & resort": ("#15803D", "#14532D", "#F59E0B"),
             "farm house": ("#15803D", "#14532D", "#F59E0B"),
             "farmhouse": ("#15803D", "#14532D", "#F59E0B"),
@@ -857,12 +907,13 @@ class WebsiteBuilderService:
             "build the website", "build website", "build", "generate website",
             "generate", "bana do", "website bana do", "make website",
             "website banao", "create website", "shuru karo", "banao",
-            "direct banao", "confirm & generate website",
+            "direct banao", "confirm & generate website", "build_directly", "build directly",
+            "direct website banao", "direct bana do", "सीधे वेबसाइट बनाएं",
             "वेबसाइट बना दो", "वेबसाइट बनाएं", "वेबसाइट बनाओ", "बना दो", "बनाएं",
             "सीधे वेबसाइट बनाएं", "शुरू करें", "तैयार है"
         ]
         is_build_intent = (
-            action == "generate"
+            action in ["generate", "build_directly"]
             or lower_msg in build_phrases
             or any(lower_msg.startswith(p) for p in [
                 "build the website", "website bana do", "bana do", "website banao",
@@ -890,6 +941,26 @@ class WebsiteBuilderService:
                 session.selected_template = "modern-showcase-1"
 
             return await WebsiteBuilderService.generate_website(session, user_id)
+
+        if is_build_intent and not b_name:
+            WebsiteBuilderService.add_user_message(session, message)
+            session.collected_data["wants_fast_build"] = True
+            session.collected_data["onboarding_step"] = "business_name"
+            session.current_step = 2
+            ask_name_msg = (
+                "Almost ready to build! What is the name of your business or shop?"
+                if lang == "en" else
+                "Website banane ke liye bas ek cheez chahiye! Aapki dukaan ya business ka kya naam hai?"
+                if lang == "hinglish" else
+                "वेबसाइट बनाने के लिए बस एक जानकारी चाहिए! आपके व्यवसाय या दुकान का क्या नाम है?"
+            )
+            await WebsiteBuilderService.reply(session, ask_name_msg)
+            await WebsiteBuilderService.save_session(session)
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": [],
+                "session": session
+            })
 
         # -----------------------------------------------------
         # TEMPLATE SELECTION (BUTTON ACTION)
@@ -1069,23 +1140,20 @@ class WebsiteBuilderService:
 
             # If products/services were requested in previous turn:
             if sub_step == "products_services":
-                # Check if the user is stating or correcting their business category:
-                cat_in_prod = WebsiteBuilderService.detect_business_category(message)
                 existing_cat = session.collected_data.get("Business Category")
                 is_bad_cat = existing_cat in ["Hii", "Hi", "Hello", "Hey", "", None]
+                lower_m = message.lower().strip()
 
-                if cat_in_prod and (cat_in_prod != existing_cat or is_bad_cat):
-                    session.collected_data["Business Category"] = cat_in_prod
-                    products = extracted.get("Products/Services")
-                    if products:
-                        session.collected_data["Products/Services"] = products
-                        session.collected_data["onboarding_step"] = "business_name"
-                        session.current_step = 2
-                        await WebsiteBuilderService.reply(
-                            session,
-                            WebsiteBuilderService.get_localized_text("ask_name", lang)
-                        )
-                    else:
+                is_explicit_correction = any(w in lower_m for w in [
+                    "no", "not", "nahi", "actually", "galat", "wrong", "badal do", "instead", "nahi balki", "i meant"
+                ]) or any(lower_m.startswith(p) for p in [
+                    "i have a", "i run a", "we run a", "meri dukaan", "mera business", "humara business"
+                ])
+
+                if is_explicit_correction or is_bad_cat:
+                    cat_in_prod = WebsiteBuilderService.detect_business_category(message)
+                    if cat_in_prod and (cat_in_prod != existing_cat or is_bad_cat):
+                        session.collected_data["Business Category"] = cat_in_prod
                         session.collected_data["sub_step"] = "products_services"
                         ask_prod_msg = WebsiteBuilderService.get_localized_text(
                             "got_category_ask_products",
@@ -1093,14 +1161,14 @@ class WebsiteBuilderService:
                             category=cat_in_prod
                         )
                         await WebsiteBuilderService.reply(session, ask_prod_msg)
+                        await WebsiteBuilderService.save_session(session)
+                        return type("Result", (), {
+                            "message": session.messages[-1]["content"],
+                            "quick_actions": [],
+                            "session": session
+                        })
 
-                    await WebsiteBuilderService.save_session(session)
-                    return type("Result", (), {
-                        "message": session.messages[-1]["content"],
-                        "quick_actions": [],
-                        "session": session
-                    })
-
+                # Normal products answer - accept user's products offerings
                 candidate = message.strip()
                 clean_prod = re.sub(
                     r"^(i sell|we sell|selling|i offer|we offer|services are|products are|we do|i do|everything related to|everything related|hamare paas|hum bechte hain)\s+",
@@ -1114,8 +1182,25 @@ class WebsiteBuilderService:
                 session.collected_data["onboarding_step"] = "business_name"
                 session.current_step = 2
 
-                ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+                # If user had already expressed fast build intent, ask specifically for shop name to build
+                if session.collected_data.get("wants_fast_build"):
+                    ask_name_msg = (
+                        "Almost ready to build! What is the name of your business or shop?"
+                        if lang == "en" else
+                        "Website banane ke liye bas ek aakhri cheez! Apni dukaan ya business ka naam bata dijiye:"
+                        if lang == "hinglish" else
+                        "वेबसाइट तैयार करने के लिए बस एक जानकारी चाहिए! अपनी दुकान या व्यवसाय का नाम बताएं:"
+                    )
+                else:
+                    ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+
                 await WebsiteBuilderService.reply(session, ask_name_msg)
+                await WebsiteBuilderService.save_session(session)
+                return type("Result", (), {
+                    "message": session.messages[-1]["content"],
+                    "quick_actions": [],
+                    "session": session
+                })
 
             else:
                 category = (
@@ -1152,31 +1237,36 @@ class WebsiteBuilderService:
 
         elif step == "business_name":
             # Check if user is actually clarifying or correcting their business category
-            cat_in_msg = WebsiteBuilderService.detect_business_category(message)
             msg_lower = message.lower().strip()
-            is_cat_phrase = cat_in_msg and (
-                any(w in msg_lower for w in ["no", "not", "nahi", "actually", "ran a", "run a", "have a", "mera", "meri", "ek", "hai", "instead"])
-                or msg_lower in [k.lower() for k in WebsiteBuilderService.CATEGORY_KEYWORDS.keys()]
-                or any(kw == msg_lower for kws in WebsiteBuilderService.CATEGORY_KEYWORDS.values() for kw in kws)
+            is_cat_phrase = any(
+                msg_lower.startswith(p) for p in [
+                    "no", "not", "nahi", "actually", "i mean", "badal", "wrong", "galat"
+                ]
+            ) or any(
+                msg_lower.startswith(p) for p in [
+                    "i run a", "i have a", "we run a", "meri dukaan", "mera business", "humara business"
+                ]
             )
 
             if is_cat_phrase:
-                session.collected_data["Business Category"] = cat_in_msg
-                ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
-                got_text = (
-                    f"Got it! You run a {cat_in_msg}. "
-                    if lang == "en" else
-                    f"Samajh gaya! Aapka {cat_in_msg} ka business hai. "
-                    if lang == "hinglish" else
-                    f"समझ गया! आपका {cat_in_msg} का व्यवसाय है। "
-                )
-                await WebsiteBuilderService.reply(session, got_text + ask_name_msg)
-                await WebsiteBuilderService.save_session(session)
-                return type("Result", (), {
-                    "message": session.messages[-1]["content"],
-                    "quick_actions": [],
-                    "session": session
-                })
+                cat_in_msg = WebsiteBuilderService.detect_business_category(message)
+                if cat_in_msg:
+                    session.collected_data["Business Category"] = cat_in_msg
+                    ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+                    got_text = (
+                        f"Got it! You run a {cat_in_msg}. "
+                        if lang == "en" else
+                        f"Samajh gaya! Aapka {cat_in_msg} ka business hai. "
+                        if lang == "hinglish" else
+                        f"समझ गया! आपका {cat_in_msg} का व्यवसाय है। "
+                    )
+                    await WebsiteBuilderService.reply(session, got_text + ask_name_msg)
+                    await WebsiteBuilderService.save_session(session)
+                    return type("Result", (), {
+                        "message": session.messages[-1]["content"],
+                        "quick_actions": [],
+                        "session": session
+                    })
 
             name = extracted.get("Business Name")
 
@@ -1188,6 +1278,7 @@ class WebsiteBuilderService:
                     candidate,
                     flags=re.I
                 ).strip(" .'")
+                cleaned = re.sub(r"\s+(hai|he)$", "", cleaned, flags=re.I).strip(" .'")
 
                 stopwords_name = {"i need", "i want", "website", "shop", "business", "no", "yes", "ok", "banao", "chahiye"}
                 if (
@@ -1202,6 +1293,33 @@ class WebsiteBuilderService:
                 await WebsiteBuilderService.reply(session, retry_name_msg)
             else:
                 session.collected_data["Business Name"] = name
+
+                # If current category is generic or bad ("Hii", "Business", etc.), detect from business name!
+                curr_cat = session.collected_data.get("Business Category")
+                if not curr_cat or curr_cat in ["Hii", "Hi", "Hello", "Hey", "Business", "Shop", "None"]:
+                    cat_from_name = WebsiteBuilderService.detect_business_category(name)
+                    if cat_from_name:
+                        session.collected_data["Business Category"] = cat_from_name
+
+                # Check if user had fast-build intent or message says build
+                wants_fast = session.collected_data.get("wants_fast_build") or any(
+                    w in message.lower() for w in ["build", "banao", "generate", "bana do", "direct"]
+                )
+
+                if wants_fast:
+                    b_cat = session.collected_data.get("Business Category", "Business")
+                    if not session.collected_data.get("Logo"):
+                        theme = WebsiteBuilderService.resolve_palette(category=b_cat)
+                        session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                            name, b_cat, theme["primary"]
+                        )
+                        session.collected_data["logo_status"] = "available"
+                    if not session.collected_data.get("selected_template_name"):
+                        session.collected_data["selected_template_name"] = f"{b_cat} Modern Pro"
+                        session.selected_template = f"{b_cat.lower().replace(' ', '-')}-pro"
+
+                    return await WebsiteBuilderService.generate_website(session, user_id)
+
                 session.collected_data["onboarding_step"] = "design_choice"
                 session.current_step = 3
 
@@ -1239,15 +1357,22 @@ class WebsiteBuilderService:
             if wants_recommend:
                 return await WebsiteBuilderService.generate_recommendations(session)
 
-            # Build directly: set default template and proceed
-            cat = session.collected_data.get("Business Category", "Business")
-            session.collected_data["selected_template_name"] = f"{cat} Modern Pro"
-            session.collected_data["selected_template_id"] = f"{cat.lower().replace(' ', '-')}-pro"
-            session.selected_template = f"{cat.lower().replace(' ', '-')}-pro"
+            # Build directly: generate right now without extra loops!
+            b_name = session.collected_data.get("Business Name", "My Business")
+            b_cat = session.collected_data.get("Business Category", "Business")
 
-            session.collected_data["onboarding_step"] = "industry_details"
-            session.current_step = 5
-            await WebsiteBuilderService.ask_industry_question(session)
+            if not session.collected_data.get("Logo"):
+                theme = WebsiteBuilderService.resolve_palette(category=b_cat)
+                session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                    b_name, b_cat, theme["primary"]
+                )
+                session.collected_data["logo_status"] = "available"
+
+            session.collected_data["selected_template_name"] = f"{b_cat} Modern Pro"
+            session.collected_data["selected_template_id"] = f"{b_cat.lower().replace(' ', '-')}-pro"
+            session.selected_template = f"{b_cat.lower().replace(' ', '-')}-pro"
+
+            return await WebsiteBuilderService.generate_website(session, user_id)
 
         # -----------------------------------------------------
         # STEP 4: TEMPLATE SELECTION (TEXT OR CHIP)
@@ -1543,6 +1668,11 @@ class WebsiteBuilderService:
         lang = getattr(session, "language", "en")
 
         questions = {
+            "servers & cloud hosting": {
+                "en": "What server solutions do you specialize in? For example, dedicated bare-metal, VPS, cloud instances, DDoS protection, or 24/7 managed support?",
+                "hinglish": "Aapki main server services kya hain? Jaise dedicated servers, cloud VPS, web hosting, DDoS protection ya 24/7 server management?",
+                "hi": "आप मुख्य रूप से किस प्रकार के सर्वर प्रदान करते हैं? जैसे डेडिकेटेड सर्वर, क्लाउड वीपीएस या वेब होस्टिंग?"
+            },
             "farm house & resort": {
                 "en": "What amenities or experiences do you offer? For example, swimming pool, weekend stays, organic farming, or private party bookings?",
                 "hinglish": "Aapke farm house par kya suvidhayein hain? Jaise pool, weekend stay, organic food ya party booking?",
@@ -1691,6 +1821,11 @@ class WebsiteBuilderService:
         lang = getattr(session, "language", "en")
 
         templates_by_category = {
+            "Servers & Cloud Hosting": [
+                ("CloudForge Enterprise", "High-performance data center & cloud server hosting layout with uptime guarantees."),
+                ("HostMatrix Infrastructure", "Clean, modern server solutions with dedicated hardware showcase and pricing plans."),
+                ("Apex Cloud Network", "Sleek tech infrastructure layout highlighting VPS, scalability, and 24/7 technical support.")
+            ],
             "Farm House & Resort": [
                 ("Nature Retreat", "Rustic luxury design with scenic farm views and booking options."),
                 ("Green Meadows", "Peaceful countryside layout highlighting outdoor amenities and stays."),
