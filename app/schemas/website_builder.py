@@ -132,6 +132,8 @@ class EditWebsiteResponse(BaseModel):
 
     message: str
 
+    options: Optional[List[Dict[str, Any]]] = None
+
     updated_state: Dict[str, Any]
 
     model_config = ConfigDict(extra="allow")
