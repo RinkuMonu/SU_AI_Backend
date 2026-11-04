@@ -46,7 +46,8 @@ class WebsiteBuilderService:
             "dost", "bhai", "naam", "kya", "kaise", "nahi", "haan", "theek", "accha",
             "acha", "yeh", "woh", "wala", "wali", "wale", "kripya", "aap", "tum",
             "lekin", "batao", "bhej", "chalega", "aur", "pe", "mein", "se", "sirf",
-            "korean", "mithai", "shuru", "kaam", "badhiya", "sundar"
+            "korean", "mithai", "shuru", "kaam", "badhiya", "sundar", "rang", "badal",
+            "badlo", "ka", "ki", "ke", "karo"
         }
 
         words = set(re.findall(r"[a-zA-Z]+", text.lower()))
@@ -2510,31 +2511,44 @@ Rules:
         # -----------------------------------------------------
         is_button_edit = any(w in lower_instruction for w in ["button", "btn", "बटन", "cta", "button color", "button style"])
         is_font_edit = any(w in lower_instruction for w in ["font", "typeface", "typography", "text style", "फ़ॉन्ट", "फॉन्ट"])
-        is_theme_color_edit = any(w in lower_instruction for w in ["theme color", "palette", "background", "rang", "रंग", "theme ka color", "website color", "primary color"])
+        is_theme_color_edit = any(w in lower_instruction for w in [
+            "theme color", "palette", "background", "rang", "रंग", "theme ka color",
+            "website color", "primary color", "update colors", "change color", "change colors",
+            "colors", "color change", "color badal", "color badlo", "rang badlo"
+        ])
 
         COLOR_MAP = {
             "emerald": ("#059669", "#047857"),
             "green": ("#059669", "#047857"),
+            "हरा": ("#059669", "#047857"),
             "blue": ("#0284C7", "#0369A1"),
             "ocean": ("#0284C7", "#0369A1"),
+            "नीला": ("#0284C7", "#0369A1"),
             "indigo": ("#4F46E5", "#4338CA"),
             "navy": ("#1E40AF", "#1E3A8A"),
             "red": ("#DC2626", "#B91C1C"),
             "crimson": ("#E11D48", "#BE123C"),
             "rose": ("#E11D48", "#BE123C"),
+            "लाल": ("#DC2626", "#B91C1C"),
             "orange": ("#EA580C", "#C2410C"),
             "sunset": ("#EA580C", "#C2410C"),
             "coral": ("#F97316", "#EA580C"),
+            "संतरी": ("#EA580C", "#C2410C"),
+            "नारंगी": ("#EA580C", "#C2410C"),
             "amber": ("#D97706", "#B45309"),
             "gold": ("#D97706", "#B45309"),
             "yellow": ("#EAB308", "#CA8A04"),
+            "पीला": ("#D97706", "#B45309"),
             "purple": ("#7C3AED", "#6D28D9"),
             "violet": ("#7C3AED", "#6D28D9"),
+            "बैंगनी": ("#7C3AED", "#6D28D9"),
             "pink": ("#EC4899", "#DB2777"),
+            "गुलाबी": ("#EC4899", "#DB2777"),
             "teal": ("#0D9488", "#0F766E"),
             "cyan": ("#06B6D4", "#0891B2"),
             "black": ("#18181B", "#09090B"),
             "dark": ("#18181B", "#09090B"),
+            "काला": ("#18181B", "#09090B"),
             "slate": ("#1E293B", "#0F172A")
         }
 
@@ -2630,6 +2644,42 @@ Rules:
                         theme_modified = True
                         style_desc.append(f"theme color {ck}")
                         break
+
+            # If user asks to change/update colors without specifying a color name, ask them!
+            if not theme_modified and not is_font_edit:
+                ask_msg = (
+                    "Which color would you like for your website? You can choose one of the options below or specify any color:"
+                    if lang == "en" else
+                    "Aap apni website ke liye kaun sa color chahenge? Aap neeche diye gaye options me se chun sakte hain ya koi bhi color bata sakte hain:"
+                    if lang == "hinglish" else
+                    "आप अपनी वेबसाइट के लिए कौन सा रंग चुनना चाहेंगे? आप नीचे दिए गए विकल्पों में से चुन सकते हैं या कोई रंग बता सकते हैं:"
+                )
+                color_options = [
+                    {"label": "🔵 Sapphire Blue", "action": "set_theme_color", "color": "#0284C7", "name": "Sapphire Blue"},
+                    {"label": "🟣 Royal Purple", "action": "set_theme_color", "color": "#7C3AED", "name": "Royal Purple"},
+                    {"label": "🟠 Sunset Orange", "action": "set_theme_color", "color": "#EA580C", "name": "Sunset Orange"},
+                    {"label": "🔴 Crimson Red", "action": "set_theme_color", "color": "#DC2626", "name": "Crimson Red"},
+                    {"label": "🟢 Emerald Green", "action": "set_theme_color", "color": "#059669", "name": "Emerald Green"},
+                    {"label": "⚫ Minimal Dark", "action": "set_theme_color", "color": "#18181B", "name": "Minimal Dark"},
+                    {"label": "🎨 Custom Color Picker", "action": "open_theme_modal", "tab": "colors"}
+                ]
+                return {
+                    "action": "ask_color",
+                    "message": ask_msg,
+                    "options": color_options,
+                    "updated_state": current_state
+                }
+
+        # If primary color changed, harmonize the dynamic logo
+        if target_theme.get("primary") and theme_modified:
+            new_theme_logo = WebsiteBuilderService.generate_dynamic_logo(b_name, category, target_theme["primary"])
+            current_state["logo"] = new_theme_logo
+            session.collected_data["Logo"] = new_theme_logo
+            if current_state.get("pages"):
+                for p in current_state["pages"]:
+                    for s in p.get("sections", []):
+                        if s.get("type") in ["navbar", "footer"]:
+                            s["logo"] = new_theme_logo
 
         # If deterministically handled theme update without conflicting structural requests
         is_pure_style_request = (theme_modified or is_logo_request) and not any(

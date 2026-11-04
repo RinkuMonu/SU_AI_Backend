@@ -466,10 +466,34 @@ async def edit_website(
         )
 
     if not session.website_project_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Generate a website before editing it."
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        recent_proj = await p_coll.find_one(
+            {"$or": [{"session_id": session_id}, {"user_id": user_id}]},
+            sort=[("created_at", -1)]
         )
+        if recent_proj:
+            session.website_project_id = str(recent_proj["_id"])
+            await WebsiteBuilderService.save_session(session)
+        elif request.current_state and (request.current_state.get("pages") or request.current_state.get("sections")):
+            from datetime import datetime, timezone
+            proj_doc = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "business_name": request.current_state.get("business_name", "My Business"),
+                "business_category": request.current_state.get("business_category", "Business"),
+                "website_data": request.current_state,
+                "theme": request.current_state.get("theme", {}),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+            res = await p_coll.insert_one(proj_doc)
+            session.website_project_id = str(res.inserted_id)
+            await WebsiteBuilderService.save_session(session)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Generate a website before editing it."
+            )
 
     edit_result = await WebsiteBuilderService.apply_website_edit(
         user_id=user_id,
@@ -503,6 +527,14 @@ async def edit_website(
                 "message",
                 "Please clarify this change."
             ),
+            updated_state=request.current_state,
+        )
+
+    if action == "ask_color":
+        return EditWebsiteResponse(
+            action=action,
+            message=edit_result.get("message", "Which color would you like for your website?"),
+            options=edit_result.get("options", []),
             updated_state=request.current_state,
         )
 
