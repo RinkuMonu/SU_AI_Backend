@@ -2,8 +2,9 @@ import json
 import re
 import uuid
 import logging
+import urllib.parse
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 from bson import ObjectId
 from fastapi import HTTPException
@@ -20,78 +21,396 @@ logger = logging.getLogger(__name__)
 class WebsiteBuilderService:
 
     # ---------------------------------------------------------
-    # BUSINESS CATEGORY DETECTION
+    # MULTI-LANGUAGE & LOCALIZATION ENGINE
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def detect_language_mode(text: str, current_lang: str = "en") -> str:
+        """
+        Detects user language preference:
+        - 'hi': Pure Hindi (Devanagari script)
+        - 'hinglish': Conversational Hinglish (Hindi written in Latin script)
+        - 'en': English
+        """
+        if not text:
+            return current_lang or "en"
+
+        # Check for Devanagari Unicode block (\u0900-\u097F)
+        if re.search(r"[\u0900-\u097F]", text):
+            return "hi"
+
+        # Hinglish conversational triggers
+        hinglish_markers = {
+            "mera", "meri", "mere", "hai", "hain", "hoon", "hum", "humara", "humari",
+            "bana", "banao", "banado", "kardo", "karo", "karna", "chahiye", "dukaan",
+            "dost", "bhai", "naam", "kya", "kaise", "nahi", "haan", "theek", "accha",
+            "acha", "yeh", "woh", "wala", "wali", "wale", "kripya", "aap", "tum",
+            "lekin", "batao", "bhej", "chalega", "aur", "pe", "mein", "se", "sirf",
+            "korean", "mithai", "shuru", "kaam", "badhiya", "sundar"
+        }
+
+        words = set(re.findall(r"[a-zA-Z]+", text.lower()))
+        if len(words.intersection(hinglish_markers)) >= 1:
+            return "hinglish"
+
+        # Preserve previously selected language if message is short or ambiguous
+        if current_lang in ["hi", "hinglish"] and len(words) <= 3:
+            return current_lang
+
+        return "en"
+
+    @staticmethod
+    def get_localized_text(key: str, lang: str = "en", **kwargs) -> str:
+        lang = lang or "en"
+        MESSAGES = {
+            "initial_greeting": {
+                "en": "Hi! What type of business do you run, and what products or services do you offer?",
+                "hinglish": "Namaste! Aap kis type ka business chalate hain aur kaun se products ya services offer karte hain?",
+                "hi": "नमस्ते! आप किस प्रकार का व्यवसाय चलाते हैं और कौन से उत्पाद या सेवाएँ प्रदान करते हैं?"
+            },
+            "ask_category": {
+                "en": "Please tell me what type of business you run. For example, a farm house, stationery shop, sweet shop, gym, clinic, or restaurant.",
+                "hinglish": "Kripya batayein aap kis type ka business chalate hain? Jaise ki farm house, stationery shop, sweet shop, gym, clinic ya restaurant.",
+                "hi": "कृपया बताएं कि आप किस प्रकार का व्यवसाय चलाते हैं? जैसे कि फार्म हाउस, स्टेशनरी शॉप, मिठाई की दुकान, जिम, क्लीनिक या रेस्टोरेंट।"
+            },
+            "got_category_ask_products": {
+                "en": "Got it! You run a {category}. What products or services do you offer?",
+                "hinglish": "Samajh gaya! Aapka {category} ka business hai. Aap kaun se products ya services offer karte hain?",
+                "hi": "समझ गया! आपका {category} का व्यवसाय है। आप कौन से उत्पाद या सेवाएँ प्रदान करते हैं?"
+            },
+            "ask_name": {
+                "en": "Great! What is the name of your business or shop?",
+                "hinglish": "Bahut badiya! Aapki dukaan ya business ka kya naam hai?",
+                "hi": "बहुत बढ़िया! आपकी दुकान या व्यवसाय का क्या नाम है?"
+            },
+            "ask_name_retry": {
+                "en": "Please enter the name you want to display on your website.",
+                "hinglish": "Kripya apni dukaan ya business ka naam batayein jo website par dikhana hai.",
+                "hi": "कृपया वह नाम दर्ज करें जो आप अपनी वेबसाइट पर प्रदर्शित करना चाहते हैं।"
+            },
+            "nice_to_meet": {
+                "en": "Nice to meet you, {name}! Would you like me to recommend three designs or build directly?",
+                "hinglish": "Aapse milkar accha laga, {name}! Kya aap 3 design options dekhna chahenge ya direct website banayein?",
+                "hi": "आपसे मिलकर खुशी हुई, {name}! क्या आप 3 डिज़ाइन विकल्प देखना चाहेंगे या सीधे वेबसाइट बनाएं?"
+            },
+            "templates_intro": {
+                "en": "Here are three designs created for your {category}. Select one to continue.",
+                "hinglish": "Yeh rahe aapke {category} ke liye 3 sundar designs. Aage badhne ke liye koi ek select karein ya batayein.",
+                "hi": "ये रहे आपके {category} के लिए 3 बेहतरीन डिज़ाइन। आगे बढ़ने के लिए कोई एक चुनें।"
+            },
+            "ask_industry_default": {
+                "en": "What makes your business special, or what are the key highlights you want customers to see on your website?",
+                "hinglish": "Aapke business ki kya khaasiyat hai, ya website par aap kya mukhya highlights dikhana chahenge?",
+                "hi": "आपके व्यवसाय की क्या खासियत है, या वेबसाइट पर आप मुख्य रूप से क्या दिखाना चाहेंगे?"
+            },
+            "ask_logo": {
+                "en": "Do you have an existing logo for {name}, or would you like me to auto-generate a custom logo for you?",
+                "hinglish": "Kya aapke paas {name} ka logo hai, ya hum aapke liye ek stylish AI logo generate kar dein?",
+                "hi": "क्या आपके पास {name} का लोगो है, या हम आपके लिए एक नया आकर्षक लोगो बना दें?"
+            },
+            "summary": {
+                "en": (
+                    "Here is your website information:\n\n"
+                    "• Business: {name}\n"
+                    "• Category: {category}\n"
+                    "• Offerings: {offerings}\n"
+                    "• Design: {design}\n"
+                    "• Logo: {logo_info}\n\n"
+                    "Would you like me to build your website now?"
+                ),
+                "hinglish": (
+                    "Aapki website ki details taiyar hain:\n\n"
+                    "• Business: {name}\n"
+                    "• Category: {category}\n"
+                    "• Offerings: {offerings}\n"
+                    "• Design: {design}\n"
+                    "• Logo: {logo_info}\n\n"
+                    "Kya hum abhi aapki website bana dein?"
+                ),
+                "hi": (
+                    "आपकी वेबसाइट की जानकारी तैयार है:\n\n"
+                    "• व्यवसाय: {name}\n"
+                    "• श्रेणी: {category}\n"
+                    "• उत्पाद/सेवाएँ: {offerings}\n"
+                    "• डिज़ाइन: {design}\n"
+                    "• लोगो: {logo_info}\n\n"
+                    "क्या हम अभी आपकी वेबसाइट बनाएं?"
+                )
+            },
+            "generating": {
+                "en": "Creating your website. Preparing your layout, content, and images...",
+                "hinglish": "Aapki website ban rahi hai. Layout, content aur images taiyar kiye ja rahe hain...",
+                "hi": "आपकी वेबसाइट बनाई जा रही है। लेआउट, सामग्री और तस्वीरें तैयार की जा रही हैं..."
+            },
+            "generated_ready": {
+                "en": "Your website for {name} has been generated! You can now preview and edit it.",
+                "hinglish": "Aapki {name} ki website ban chuki hai! Ab aap ise preview aur edit kar sakte hain.",
+                "hi": "आपकी {name} की वेबसाइट बन चुकी है! अब आप इसका पूर्वावलोकन और संपादन कर सकते हैं।"
+            }
+        }
+        tmpl = MESSAGES.get(key, {}).get(lang) or MESSAGES.get(key, {}).get("en", "")
+        return tmpl.format(**kwargs) if tmpl else ""
+
+    # ---------------------------------------------------------
+    # GREETING & INTENT HELPERS
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def is_greeting(text: str) -> bool:
+        """
+        Detects if user input is simply a conversational greeting.
+        Prevents greetings (e.g. 'hii', 'hellooo', 'namaste') from ever being
+        misidentified as a business category.
+        """
+        if not text:
+            return False
+        clean = text.lower().strip()
+        clean_punct = re.sub(r"[^\w\s]", "", clean)
+        collapsed = re.sub(r"(.)\1+", r"\1", clean_punct)
+        reduced = re.sub(r"([a-z])\1{2,}", r"\1", clean_punct)
+        reduced_two = re.sub(r"([a-z])\1{2,}", r"\1\1", clean_punct)
+        greetings = {
+            "hi", "hii", "hello", "helo", "hey", "hlo", "yo", "sup", "namaste", "pranam",
+            "good morning", "good evening", "good afternoon", "halo", "kese ho", "kaise ho",
+            "kya haal", "ram ram", "radhe radhe", "salaam", "adaab", "ola", "ciao", "hola"
+        }
+        return any(cand in greetings for cand in [clean, clean_punct, collapsed, reduced, reduced_two])
+
+    # ---------------------------------------------------------
+    # DYNAMIC LOGO GENERATOR
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def generate_dynamic_logo(business_name: str, category: str = "", primary_color: str = "#0284C7") -> str:
+        """
+        Generates an authentic, category-specific SVG vector logo (e.g. medical cross for medical/clinic,
+        dumbbell for gym, flower for florist, books for stationery) with the business initials and colors.
+        Returns a self-contained SVG data URI that renders reliably in all browsers.
+        """
+        clean_name = (business_name or "Business").strip()
+        words = clean_name.split()
+        initials = "".join([w[0].upper() for w in words[:2]]) if words else "B"
+        color = primary_color if (primary_color and primary_color.startswith("#")) else "#0284C7"
+        cat_lower = (category or "").lower()
+
+        # Category-tailored vector motifs
+        if any(w in cat_lower for w in ["medical", "clinic", "pharmacy", "chemist", "doctor", "hospital", "dawa", "dawai"]):
+            icon_svg = (
+                f'<circle cx="50" cy="50" r="46" fill="{color}" />'
+                f'<circle cx="50" cy="50" r="41" fill="none" stroke="#ffffff" stroke-width="2.5" opacity="0.4" />'
+                f'<path d="M42 26 H58 V42 H74 V58 H58 V74 H42 V58 H26 V42 H42 Z" fill="#ffffff" />'
+                f'<circle cx="50" cy="50" r="6" fill="{color}" />'
+            )
+        elif any(w in cat_lower for w in ["gym", "fitness", "workout", "crossfit", "yoga"]):
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<rect x="20" y="44" width="60" height="12" rx="6" fill="#ffffff" />'
+                f'<rect x="14" y="32" width="12" height="36" rx="5" fill="#ffffff" />'
+                f'<rect x="74" y="32" width="12" height="36" rx="5" fill="#ffffff" />'
+                f'<rect x="26" y="37" width="6" height="26" rx="3" fill="#ffffff" opacity="0.85" />'
+                f'<rect x="68" y="37" width="6" height="26" rx="3" fill="#ffffff" opacity="0.85" />'
+            )
+        elif any(w in cat_lower for w in ["flower", "florist", "floral", "bloom"]):
+            icon_svg = (
+                f'<circle cx="50" cy="50" r="46" fill="{color}" />'
+                f'<circle cx="50" cy="34" r="14" fill="#ffffff" opacity="0.9" />'
+                f'<circle cx="66" cy="50" r="14" fill="#ffffff" opacity="0.9" />'
+                f'<circle cx="50" cy="66" r="14" fill="#ffffff" opacity="0.9" />'
+                f'<circle cx="34" cy="50" r="14" fill="#ffffff" opacity="0.9" />'
+                f'<circle cx="50" cy="50" r="11" fill="#FBBF24" />'
+            )
+        elif any(w in cat_lower for w in ["sweet", "mithai", "bakery", "cafe", "korean sweet", "dessert"]):
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<path d="M30 40 Q50 20 70 40 Q80 60 70 75 Q50 85 30 75 Q20 60 30 40 Z" fill="#ffffff" opacity="0.95" />'
+                f'<circle cx="50" cy="30" r="6" fill="#EF4444" />'
+                f'<text x="50" y="66" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="{color}" text-anchor="middle">{initials}</text>'
+            )
+        elif any(w in cat_lower for w in ["stationery", "book", "scholar", "pen"]):
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<path d="M22 32 Q50 26 50 72 Q50 26 78 32 V74 Q50 68 50 74 Q50 68 22 74 Z" fill="#ffffff" />'
+                f'<line x1="50" y1="30" x2="50" y2="72" stroke="{color}" stroke-width="3" />'
+            )
+        elif any(w in cat_lower for w in ["farm", "resort", "nature", "villa"]):
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<circle cx="70" cy="30" r="12" fill="#FBBF24" />'
+                f'<path d="M30 75 L50 35 L70 75 Z" fill="#ffffff" opacity="0.9" />'
+                f'<rect x="47" y="65" width="6" height="15" fill="#ffffff" />'
+            )
+        else:
+            icon_svg = (
+                f'<rect width="100" height="100" rx="24" fill="{color}" />'
+                f'<rect x="8" y="8" width="84" height="84" rx="18" fill="none" stroke="#ffffff" stroke-width="3" opacity="0.35" />'
+                f'<text x="50" y="63" font-family="Arial, sans-serif" font-size="34" font-weight="bold" fill="#ffffff" text-anchor="middle">{initials}</text>'
+            )
+
+        svg_data = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">{icon_svg}</svg>'
+        encoded_svg = urllib.parse.quote(svg_data)
+        return f"data:image/svg+xml;utf8,{encoded_svg}"
+
+    # ---------------------------------------------------------
+    # BUSINESS CATEGORY DETECTION & EXTRACTION
     # ---------------------------------------------------------
 
     CATEGORY_KEYWORDS = {
+        "Farm House & Resort": [
+            "फार्म हाउस", "फार्महाउस", "रिसॉर्ट", "farm house", "farmhouse", "farm stay", "resort", "agro tourism",
+            "dairy farm", "poultry farm", "agriculture", "homestay", "villa", "cottage"
+        ],
+        "Stationery & Books": [
+            "स्टेशनरी", "किताब", "किताबें", "बुक्स", "stationery", "stationery shop", "stationery store", "books",
+            "book shop", "bookstore", "office supplies", "photocopy", "printing",
+            "gift shop", "novelty shop", "paper craft"
+        ],
+        "Korean Sweet Shop": [
+            "कोरियन", "कोरियन मिठाई", "korean sweet", "korean sweets", "korean sweet shop", "bingsu",
+            "mochi", "korean bakery", "korean cafe", "asian dessert", "taiyaki",
+            "k-sweet", "korean dessert"
+        ],
         "Indian Sweet Shop": [
-            "sweet shop", "indian sweet", "mithai", "mithai shop",
+            "मिठाई", "स्वीट शॉप", "हलवाई", "लड्डू", "बर्फी", "indian sweet shop", "sweet shop", "indian sweet", "mithai", "mithai shop",
             "sweets", "ladoo", "laddu", "barfi", "jalebi",
             "gulab jamun", "rasgulla", "kaju katli"
         ],
         "Flower Shop": [
-            "flower shop", "florist", "flowers", "bouquets",
-            "roses", "tulips", "floral arrangements"
+            "फूल", "फूलों", "बुके", "flower shop", "florist", "flowers", "bouquets",
+            "roses", "tulips", "floral arrangements", "flower stall"
         ],
         "Gym & Fitness": [
-            "gym", "fitness center", "fitness centre",
-            "workout", "personal training", "fitness studio"
+            "जिम", "फिटनेस", "व्यायाम", "gym", "fitness center", "fitness centre",
+            "workout", "personal training", "fitness studio", "yoga", "pilates",
+            "crossfit", "bodybuilding"
         ],
-        "Restaurant": [
-            "restaurant", "cafe", "food shop", "eatery",
-            "diner", "bakery", "pizza", "burger"
+        "Restaurant & Cafe": [
+            "रेस्टोरेंट", "होटल", "ढाबा", "कैफे", "बेकरी", "restaurant", "cafe", "food shop", "eatery",
+            "diner", "bakery", "pizza", "burger", "dhaba", "fast food", "bistro", "coffee shop"
         ],
-        "Clothing Store": [
-            "clothing store", "fashion store", "boutique",
-            "clothes", "apparel", "garments", "saree", "lehenga"
+        "Clothing & Fashion": [
+            "कपड़े", "साड़ी", "गारमेंट्स", "बुटीक", "clothing store", "fashion store", "boutique",
+            "clothes", "apparel", "garments", "saree", "lehenga", "tailor", "menswear", "womenswear"
         ],
-        "Beauty Salon": [
-            "salon", "beauty parlour", "beauty parlor",
-            "hair salon", "spa", "makeup studio"
+        "Beauty Salon & Spa": [
+            "सैलून", "पार्लर", "ब्यूटी पार्लर", "स्पा", "salon", "beauty parlour", "beauty parlor",
+            "hair salon", "spa", "makeup studio", "barber shop", "nail salon"
         ],
         "Jewellery Store": [
-            "jewellery", "jewelry", "gold shop", "diamond store"
+            "ज्वेलरी", "गहने", "सोने", "चांदी", "jewellery", "jewelry", "gold shop", "diamond store", "silver shop", "jeweller"
+        ],
+        "Grocery & Kirana": [
+            "किराना", "राशन", "जनरल स्टोर", "grocery", "kirana", "supermarket", "general store", "provisions", "mart", "departmental store"
+        ],
+        "Medical & Clinic": [
+            "मेडिकल", "दवा", "दवाई", "दवाइयों", "औषधि", "क्लीनिक", "डॉक्टर", "अस्पताल", "फार्मेसी",
+            "medical", "medicals", "medical shop", "medical store", "pharmacy", "chemist", "chemist shop",
+            "clinic", "dental clinic", "doctor", "hospital", "physiotherapy", "pathology", "diagnostic center"
+        ],
+        "Automotive & Garage": [
+            "गैराज", "मैकेनिक", "सर्विसिंग", "car repair", "garage", "mechanic", "auto repair", "bike repair", "car wash", "tyres", "auto garage"
+        ],
+        "Education & Coaching": [
+            "कोचिंग", "ट्यूशन", "स्कूल", "एकेडमी", "coaching", "tuition", "classes", "institute", "school", "academy", "training institute"
         ],
         "Real Estate": [
-            "real estate", "property dealer", "property business",
-            "realty", "construction"
+            "प्रॉपर्टी", "रियल एस्टेट", "बिल्डर", "real estate", "property dealer", "property business", "realty", "construction", "builder"
         ],
         "Technology Business": [
-            "software company", "IT company", "technology company",
-            "web development", "digital agency", "software agency"
+            "सॉफ्टवेयर", "आईटी", "software company", "it company", "technology company",
+            "web development", "digital agency", "software agency", "tech startup"
         ],
+        "Photography & Studio": [
+            "फोटोग्राफी", "स्टूडियो", "photography", "photo studio", "videography", "photographer", "camera studio"
+        ],
+        "Handicrafts & Gifts": [
+            "हस्तशिल्प", "गिफ्ट", "handicrafts", "gift store", "handmade items", "pottery", "art store"
+        ]
     }
 
     @staticmethod
     def detect_business_category(message: str) -> Optional[str]:
         text = message.lower().strip()
+        if not text:
+            return None
 
+        # Ignore conversational greetings
+        if WebsiteBuilderService.is_greeting(text):
+            return None
+
+        # 1. Match against known category keywords.
+        # Check longer phrases first so "medical shop" matches before "shop"
+        scored_matches = []
         for category, keywords in WebsiteBuilderService.CATEGORY_KEYWORDS.items():
-            if any(keyword in text for keyword in keywords):
-                return category
+            for kw in keywords:
+                if re.search(r"\b" + re.escape(kw) + r"\b", text) or kw in text:
+                    scored_matches.append((len(kw), category))
+
+        if scored_matches:
+            scored_matches.sort(key=lambda x: x[0], reverse=True)
+            return scored_matches[0][1]
+
+        # 2. Dynamic natural language patterns for ANY business in English, Hinglish, or Hindi
+        patterns = [
+            r"(?:i have|i run|i ran|we have|we run|owner of|managing)\s+(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,35}?)(?:\s+shop|\s+store|\s+business|\s+center|\s+centre|\s+clinic)?$",
+            r"(?:i have|i run|i ran|we have|we run)\s+(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,35})",
+            r"(?:mera|meri|humara|humari|मेरी|मेरा|हमारा|हमारी)\s+(?:ek\s+|एक\s+)?([a-zA-Z\u0900-\u097F\s]{2,35}?)(?:\s+hai|\s+ka business|\s+ki dukaan|\s+dukaan|\s+की\s+दुकान|\s+का\s+बिजनेस|\s+है)",
+            r"(?:website for|website chahiye|वेबसाइट चाहिए)\s+(?:an?|my|meri|मेरी)?\s*([a-zA-Z\u0900-\u097F\s]{2,35})",
+            r"^(?:an?|the)?\s*([a-zA-Z\u0900-\u097F\s]{2,30})$"
+        ]
+
+        stopwords = {
+            "hi", "hii", "hello", "hey", "yes", "no", "ok", "okay", "thanks", "website",
+            "build", "build website", "build the website", "told you already",
+            "already told", "help me", "please", "kripya", "generate", "shuru",
+            "नमस्ते", "हाँ", "नहीं", "वेबसाइट"
+        }
+
+        if text in stopwords or WebsiteBuilderService.is_greeting(text):
+            return None
+
+        for pat in patterns:
+            match = re.search(pat, text, re.IGNORECASE)
+            if match:
+                candidate = match.group(1).strip(" .")
+                cand_lower = candidate.lower()
+                if cand_lower not in stopwords and not WebsiteBuilderService.is_greeting(cand_lower) and len(cand_lower) >= 2 and len(cand_lower) <= 35:
+                    cleaned = re.sub(r"^(a|an|the|my|meri|mera|एक|मेरी|मेरा)\s+", "", cand_lower).strip()
+                    if cleaned and cleaned not in stopwords and not WebsiteBuilderService.is_greeting(cleaned):
+                        return cleaned.title()
 
         return None
 
     @staticmethod
     def extract_business_details(message: str, existing: dict) -> dict:
         """
-        Deterministic extraction for common business details.
-        Never treats the entire website request as the business name.
+        Deterministic extraction for business details.
+        Supports seamless category corrections (e.g., 'no i ran a korean sweet shop').
         """
-
         result = {}
+        msg_lower = message.lower().strip()
+
+        # Check if user is clarifying or correcting their category
+        is_correction = any(
+            w in msg_lower for w in [
+                "no", "not", "nahi", "actually", "ran a", "run a", "have a",
+                "sweet shop", "farm house", "stationery", "korean", "instead",
+                "medical", "shop", "dukaan", "store", "clinic"
+            ]
+        )
 
         category = WebsiteBuilderService.detect_business_category(message)
+        existing_cat = existing.get("Business Category")
+        is_bad_existing = existing_cat in ["Hii", "Hi", "Hello", "Hey", "Hlo", "None", "", None]
 
-        if category and not existing.get("Business Category"):
+        if category and (is_correction or not existing_cat or is_bad_existing):
             result["Business Category"] = category
 
         text = message.strip()
 
-        # Extract products/services from explicit phrases.
+        # Extract products/services from explicit phrases
         patterns = [
-            r"(?:i sell|we sell|selling|products are|we offer|i offer)\s+(.+)",
-            r"(?:services include|we provide|i provide)\s+(.+)"
+            r"(?:i sell|we sell|selling|products are|we offer|i offer|services include|we provide|i provide|hum bechte hain|hamare paas)\s+(.+)",
+            r"(?:everything related to|everything related)\s+(.+)"
         ]
 
         for pattern in patterns:
@@ -100,9 +419,9 @@ class WebsiteBuilderService:
                 result["Products/Services"] = match.group(1).strip(" .")
                 break
 
-        # Extract shop name only when user explicitly provides it.
+        # Extract shop name only when user explicitly provides it
         name_patterns = [
-            r"(?:my business name is|business name is|shop name is|store name is)\s+(.+)",
+            r"(?:my business name is|business name is|shop name is|store name is|mera naam|dukaan ka naam|naam hai)\s+(.+)",
             r"(?:my shop is called|my store is called|called)\s+(.+)"
         ]
 
@@ -135,6 +454,42 @@ class WebsiteBuilderService:
         text = f"{category} {prompt}".lower()
 
         galleries = {
+            "Farm House & Resort": [
+                "https://images.unsplash.com/photo-1500076656116-558758c991c1?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1500382017468-9049fed747ef?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1544816155-12df9643f363?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1464226184884-fa280b87c399?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Stationery & Books": [
+                "https://images.unsplash.com/photo-1583485088034-697b5bc54ccd?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1516962215378-7fa2e137ae93?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1456735190827-d1262f71b8a3?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1507842229456-0640f3531dbb?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Korean Sweet Shop": [
+                "https://images.unsplash.com/photo-1509440159596-0249088772ff?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1579372786545-d24232daf58c?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1587314168485-3236d6710814?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1551024709-8f23befc6f87?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Grocery & Kirana": [
+                "https://images.unsplash.com/photo-1542838132-92c53300491e?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1578916171728-46686eac8d58?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1534723452862-4c874018d66d?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Medical & Clinic": [
+                "https://images.unsplash.com/photo-1519494026892-80bbd2d6fd0d?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1584515979956-d9f6e5d09982?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Automotive & Garage": [
+                "https://images.unsplash.com/photo-1486006920555-c77dce18193b?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1517524008697-84bbe3c3fd98?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Education & Coaching": [
+                "https://images.unsplash.com/photo-1523240795612-9a054b0db644?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1509062522246-3755977927d7?auto=format&fit=crop&w=900&q=85",
+            ],
             "Indian Sweet Shop": [
                 "https://images.unsplash.com/photo-1605197161470-5d4cc2c4c9d7?auto=format&fit=crop&w=1200&q=85",
                 "https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=900&q=85",
@@ -146,11 +501,15 @@ class WebsiteBuilderService:
                 "https://images.unsplash.com/photo-1520763185298-1b434c919102?auto=format&fit=crop&w=900&q=85",
                 "https://images.unsplash.com/photo-1494972308805-463bc619d34e?auto=format&fit=crop&w=900&q=85",
                 "https://images.unsplash.com/photo-1525310072745-f49212b5ac6d?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1561181286-d3fee7d55364?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1508610048659-a06b669e3321?auto=format&fit=crop&w=900&q=85",
             ],
             "Gym & Fitness": [
                 "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?auto=format&fit=crop&w=1200&q=85",
                 "https://images.unsplash.com/photo-1517836357463-d25dfeac3438?auto=format&fit=crop&w=900&q=85",
                 "https://images.unsplash.com/photo-1534258936925-c58bed479fcb?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1518611012118-696072aa579a?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?auto=format&fit=crop&w=900&q=85",
                 "https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?auto=format&fit=crop&w=900&q=85",
             ],
             "Restaurant": [
@@ -165,25 +524,41 @@ class WebsiteBuilderService:
                 "https://images.unsplash.com/photo-1445205170230-053b83016050?auto=format&fit=crop&w=900&q=85",
                 "https://images.unsplash.com/photo-1489987707025-afc232f7ea0f?auto=format&fit=crop&w=900&q=85",
             ],
+            "Beauty Salon": [
+                "https://images.unsplash.com/photo-1560066984-138dadb4c035?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1527799820374-dcf8d9d4a388?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Jewellery Store": [
+                "https://images.unsplash.com/photo-1515562141207-7a88fb7ce338?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1535632066927-ab7c9ab60908?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Real Estate": [
+                "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1512917774080-9991f1c4c750?auto=format&fit=crop&w=900&q=85",
+            ],
+            "Technology Business": [
+                "https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1531403009284-440f080d1e12?auto=format&fit=crop&w=900&q=85",
+            ],
         }
 
-        category_name = next(
-            (
-                key for key in galleries
-                if key.lower() in text
-            ),
-            None
-        )
+        category_name = None
+        for key in galleries:
+            if key.lower() in text or any(word in text for word in key.lower().split() if len(word) > 2):
+                category_name = key
+                break
 
         if category_name:
             images = galleries[category_name]
             return images[index % len(images)]
 
-        # Unknown categories should not receive unrelated office images.
-        # Use a neutral abstract background rather than pretending it
-        # is a verified industry-specific photograph.
         return (
-            "https://images.unsplash.com/photo-1497366754035-f200968a6e72"
+            "https://images.unsplash.com/photo-1497366216548-37526070297c"
             "?auto=format&fit=crop&w=1200&q=80"
         )
 
@@ -212,24 +587,39 @@ class WebsiteBuilderService:
                 "font": brand.get("font") or "outfit"
             }
 
-        category = category.lower()
+        category_lower = category.lower()
 
         palettes = {
+            "farm house & resort": ("#15803D", "#14532D", "#F59E0B"),
+            "farm house": ("#15803D", "#14532D", "#F59E0B"),
+            "farmhouse": ("#15803D", "#14532D", "#F59E0B"),
+            "stationery & books": ("#4338CA", "#1E1B4B", "#06B6D4"),
+            "stationery": ("#4338CA", "#1E1B4B", "#06B6D4"),
+            "korean sweet shop": ("#EC4899", "#9D174D", "#FCD34D"),
+            "grocery & kirana": ("#059669", "#065F46", "#F97316"),
+            "medical & clinic": ("#0284C7", "#0369A1", "#10B981"),
+            "automotive & garage": ("#374151", "#111827", "#EF4444"),
+            "education & coaching": ("#2563EB", "#1E40AF", "#F59E0B"),
             "indian sweet shop": ("#9A3412", "#7C2D12", "#F59E0B"),
             "flower shop": ("#BE185D", "#166534", "#F9A8D4"),
             "gym & fitness": ("#EA580C", "#111827", "#10B981"),
             "restaurant": ("#991B1B", "#451A03", "#F59E0B"),
             "clothing store": ("#1E293B", "#334155", "#DB2777"),
+            "clothing & fashion": ("#1E293B", "#334155", "#DB2777"),
             "beauty salon": ("#BE185D", "#831843", "#F9A8D4"),
+            "beauty salon & spa": ("#BE185D", "#831843", "#F9A8D4"),
             "jewellery store": ("#92400E", "#451A03", "#FBBF24"),
             "real estate": ("#0F766E", "#134E4A", "#38BDF8"),
             "technology business": ("#1D4ED8", "#111827", "#06B6D4"),
         }
 
-        primary, secondary, accent = palettes.get(
-            category,
-            ("#4F46E5", "#312E81", "#F59E0B")
-        )
+        matched_pal = None
+        for k, v in palettes.items():
+            if k in category_lower or category_lower in k:
+                matched_pal = v
+                break
+
+        primary, secondary, accent = matched_pal or ("#4F46E5", "#312E81", "#F59E0B")
 
         return {
             "primary": primary,
@@ -383,8 +773,7 @@ class WebsiteBuilderService:
             session.collected_data["Brand Guidelines"] = brand_data
 
             if brand_data.get("logo_url"):
-                session.collected_data["Logo"] = brand_data["logo_url"]
-                session.collected_data["logo_status"] = "available"
+                session.collected_data["saved_brand_logo"] = brand_data["logo_url"]
 
             return brand_data
 
@@ -451,33 +840,73 @@ class WebsiteBuilderService:
         data = data or {}
         action = data.get("action")
 
+        # Detect and remember language mode (English, Hinglish, or Hindi)
+        lang = WebsiteBuilderService.detect_language_mode(
+            message,
+            language or getattr(session, "language", "en")
+        )
+        session.language = lang
+
         # -----------------------------------------------------
-        # TEMPLATE SELECTION
+        # GLOBAL FAST-TRACK BUILD INTENT
+        # -----------------------------------------------------
+        # If the user says "build the website", "bana do", "generate website" at any point,
+        # never get stuck. Auto-generate missing logo/template and immediately build!
+        lower_msg = message.lower().strip()
+        build_phrases = [
+            "build the website", "build website", "build", "generate website",
+            "generate", "bana do", "website bana do", "make website",
+            "website banao", "create website", "shuru karo", "banao",
+            "direct banao", "confirm & generate website",
+            "वेबसाइट बना दो", "वेबसाइट बनाएं", "वेबसाइट बनाओ", "बना दो", "बनाएं",
+            "सीधे वेबसाइट बनाएं", "शुरू करें", "तैयार है"
+        ]
+        is_build_intent = (
+            action == "generate"
+            or lower_msg in build_phrases
+            or any(lower_msg.startswith(p) for p in [
+                "build the website", "website bana do", "bana do", "website banao",
+                "वेबसाइट बना दो", "वेबसाइट बनाएं", "सीधे वेबसाइट बनाएं"
+            ])
+        )
+
+        b_name = session.collected_data.get("Business Name")
+        b_cat = session.collected_data.get("Business Category")
+
+        if is_build_intent and b_name and b_cat:
+            WebsiteBuilderService.add_user_message(session, message)
+
+            # Ensure logo is ready
+            if not session.collected_data.get("Logo"):
+                theme = WebsiteBuilderService.resolve_palette(category=b_cat)
+                session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                    b_name, b_cat, theme["primary"]
+                )
+                session.collected_data["logo_status"] = "available"
+
+            # Ensure template is selected
+            if not session.collected_data.get("selected_template_name"):
+                session.collected_data["selected_template_name"] = "Modern Showcase"
+                session.selected_template = "modern-showcase-1"
+
+            return await WebsiteBuilderService.generate_website(session, user_id)
+
+        # -----------------------------------------------------
+        # TEMPLATE SELECTION (BUTTON ACTION)
         # -----------------------------------------------------
 
         if action == "select_template":
             template_id = data.get("templateId") or data.get("template_id")
+            template_name = data.get("templateName") or data.get("template_name") or str(template_id or "Custom Template")
 
-            if not template_id:
-                raise HTTPException(400, "Template ID is required")
-
-            session.selected_template = str(template_id)
-
-            session.collected_data["selected_template_id"] = str(template_id)
-            session.collected_data["selected_template_name"] = (
-                data.get("templateName")
-                or data.get("template_name")
-                or str(template_id)
-            )
+            session.selected_template = str(template_id or "custom-template")
+            session.collected_data["selected_template_id"] = str(template_id or "custom-template")
+            session.collected_data["selected_template_name"] = template_name
 
             session.current_step = 5
             session.collected_data["onboarding_step"] = "industry_details"
 
-            WebsiteBuilderService.add_user_message(
-                session,
-                data.get("templateName", str(template_id))
-            )
-
+            WebsiteBuilderService.add_user_message(session, template_name)
             await WebsiteBuilderService.ask_industry_question(session)
             await WebsiteBuilderService.save_session(session)
 
@@ -488,19 +917,120 @@ class WebsiteBuilderService:
             })
 
         # -----------------------------------------------------
+        # LOGO SELECTION ACTIONS
+        # -----------------------------------------------------
+
+        if action == "upload_logo":
+            logo_base64 = data.get("base64") or data.get("logo") or data.get("logoUrl")
+            WebsiteBuilderService.add_user_message(session, message or "I uploaded my logo")
+            b_name = session.collected_data.get("Business Name", "Brand")
+
+            if logo_base64:
+                session.collected_data["Logo"] = logo_base64
+                session.collected_data["logo_status"] = "uploaded"
+                session.collected_data["onboarding_step"] = "confirmation"
+                session.current_step = 7
+
+                ack_msg = (
+                    f"Your logo for {b_name} has been uploaded successfully!"
+                    if lang == "en" else
+                    f"Aapki dukaan '{b_name}' ka logo upload ho gaya hai!"
+                    if lang == "hinglish" else
+                    f"आपकी दुकान '{b_name}' का लोगो सफलतापूर्वक अपलोड हो गया है!"
+                )
+                await WebsiteBuilderService.reply(session, ack_msg)
+                await WebsiteBuilderService.show_confirmation_summary(session)
+            else:
+                session.collected_data["onboarding_step"] = "logo_check"
+                session.current_step = 6
+                upload_prompt = (
+                    f"Please select and upload your logo file for {b_name}:"
+                    if lang == "en" else
+                    f"Kripya niche button par click karke '{b_name}' ka logo upload karein:"
+                    if lang == "hinglish" else
+                    f"कृपया नीचे बटन पर क्लिक करके '{b_name}' का लोगो अपलोड करें:"
+                )
+                await WebsiteBuilderService.reply(session, upload_prompt, options=[
+                    {"label": "📁 Upload Logo File", "action": "upload_logo"},
+                    {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"}
+                ])
+
+            await WebsiteBuilderService.save_session(session)
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": session.messages[-1].get("options", []),
+                "session": session
+            })
+
+        if action == "use_saved_logo":
+            WebsiteBuilderService.add_user_message(session, message or "Use Saved Logo")
+            brand = await WebsiteBuilderService.get_saved_brand(user_id, session)
+            saved_logo = (brand or {}).get("logo_url")
+
+            if saved_logo:
+                session.collected_data["Logo"] = saved_logo
+                session.collected_data["logo_status"] = "available"
+            else:
+                b_name = session.collected_data.get("Business Name", "Brand")
+                b_cat = session.collected_data.get("Business Category", "Business")
+                theme = WebsiteBuilderService.resolve_palette(category=b_cat)
+                session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                    b_name, b_cat, theme["primary"]
+                )
+                session.collected_data["logo_status"] = "available"
+
+            session.collected_data["onboarding_step"] = "confirmation"
+            session.current_step = 7
+
+            await WebsiteBuilderService.show_confirmation_summary(session)
+            await WebsiteBuilderService.save_session(session)
+
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": session.messages[-1].get("options", []),
+                "session": session
+            })
+
+        if action in ["generate_logo", "monogram_logo", "skip_logo"]:
+            WebsiteBuilderService.add_user_message(session, message or "Generate AI Logo")
+            b_name = session.collected_data.get("Business Name", "Brand")
+            b_cat = session.collected_data.get("Business Category", "Business")
+            theme = WebsiteBuilderService.resolve_palette(category=b_cat)
+
+            session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                b_name, b_cat, theme["primary"]
+            )
+            session.collected_data["logo_status"] = "available"
+            session.collected_data["onboarding_step"] = "confirmation"
+            session.current_step = 7
+
+            ack_gen = (
+                f"Generated a custom logo for {b_name}!"
+                if lang == "en" else
+                f"Maine aapki dukaan '{b_name}' ke liye ek stylish logo generate kar diya hai!"
+                if lang == "hinglish" else
+                f"मैंने आपकी दुकान '{b_name}' के लिए नया लोगो तैयार कर दिया है!"
+            )
+            await WebsiteBuilderService.reply(session, ack_gen)
+            await WebsiteBuilderService.show_confirmation_summary(session)
+            await WebsiteBuilderService.save_session(session)
+
+            return type("Result", (), {
+                "message": session.messages[-1]["content"],
+                "quick_actions": session.messages[-1].get("options", []),
+                "session": session
+            })
+
+        # -----------------------------------------------------
         # GENERATION ACTION
         # -----------------------------------------------------
 
         if action == "generate":
             WebsiteBuilderService.add_user_message(session, message)
-
-            return await WebsiteBuilderService.generate_website(
-                session,
-                user_id
-            )
+            return await WebsiteBuilderService.generate_website(session, user_id)
 
         # -----------------------------------------------------
-        # NORMAL MESSAGE
+        # NORMAL MESSAGE PROCESSING
         # -----------------------------------------------------
 
         WebsiteBuilderService.add_user_message(session, message)
@@ -514,27 +1044,66 @@ class WebsiteBuilderService:
             if value:
                 session.collected_data[key] = value
 
-        if language:
-            session.language = language
-
         step = session.collected_data.get(
             "onboarding_step",
             "business_details"
         )
 
         # -----------------------------------------------------
-        # STEP 1: BUSINESS CATEGORY
+        # STEP 1: BUSINESS CATEGORY & PRODUCTS
         # -----------------------------------------------------
 
         if step == "business_details":
+            # Check if user message is just a greeting (e.g. "hi", "hii", "hello", "namaste")
+            if WebsiteBuilderService.is_greeting(message):
+                greet_msg = WebsiteBuilderService.get_localized_text("initial_greeting", lang)
+                await WebsiteBuilderService.reply(session, greet_msg)
+                await WebsiteBuilderService.save_session(session)
+                return type("Result", (), {
+                    "message": session.messages[-1]["content"],
+                    "quick_actions": [],
+                    "session": session
+                })
 
             sub_step = session.collected_data.get("sub_step", "category")
 
-            # If we already asked for products/services in a previous turn:
+            # If products/services were requested in previous turn:
             if sub_step == "products_services":
+                # Check if the user is stating or correcting their business category:
+                cat_in_prod = WebsiteBuilderService.detect_business_category(message)
+                existing_cat = session.collected_data.get("Business Category")
+                is_bad_cat = existing_cat in ["Hii", "Hi", "Hello", "Hey", "", None]
+
+                if cat_in_prod and (cat_in_prod != existing_cat or is_bad_cat):
+                    session.collected_data["Business Category"] = cat_in_prod
+                    products = extracted.get("Products/Services")
+                    if products:
+                        session.collected_data["Products/Services"] = products
+                        session.collected_data["onboarding_step"] = "business_name"
+                        session.current_step = 2
+                        await WebsiteBuilderService.reply(
+                            session,
+                            WebsiteBuilderService.get_localized_text("ask_name", lang)
+                        )
+                    else:
+                        session.collected_data["sub_step"] = "products_services"
+                        ask_prod_msg = WebsiteBuilderService.get_localized_text(
+                            "got_category_ask_products",
+                            lang,
+                            category=cat_in_prod
+                        )
+                        await WebsiteBuilderService.reply(session, ask_prod_msg)
+
+                    await WebsiteBuilderService.save_session(session)
+                    return type("Result", (), {
+                        "message": session.messages[-1]["content"],
+                        "quick_actions": [],
+                        "session": session
+                    })
+
                 candidate = message.strip()
                 clean_prod = re.sub(
-                    r"^(i sell|we sell|selling|i offer|we offer|services are|products are|we do|i do|everything related to|everything related)\s+",
+                    r"^(i sell|we sell|selling|i offer|we offer|services are|products are|we do|i do|everything related to|everything related|hamare paas|hum bechte hain)\s+",
                     "",
                     candidate,
                     flags=re.I
@@ -545,108 +1114,177 @@ class WebsiteBuilderService:
                 session.collected_data["onboarding_step"] = "business_name"
                 session.current_step = 2
 
-                await WebsiteBuilderService.reply(
-                    session,
-                    "Great! What is the name of your business or shop?"
-                )
+                ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+                await WebsiteBuilderService.reply(session, ask_name_msg)
 
             else:
                 category = (
-                    session.collected_data.get("Business Category")
-                    or WebsiteBuilderService.detect_business_category(message)
+                    WebsiteBuilderService.detect_business_category(message)
+                    or session.collected_data.get("Business Category")
                 )
 
-                if not category:
-                    await WebsiteBuilderService.reply(
-                        session,
-                        "Please tell me what type of business you run. "
-                        "For example, a sweet shop, flower shop, gym or restaurant."
-                    )
-
+                if not category or category in ["Hii", "Hi", "Hello", "Hey"]:
+                    ask_cat_msg = WebsiteBuilderService.get_localized_text("ask_category", lang)
+                    await WebsiteBuilderService.reply(session, ask_cat_msg)
                 else:
                     session.collected_data["Business Category"] = category
                     products = extracted.get("Products/Services")
 
                     if not products:
-                        # Need to ask for products/services
                         session.collected_data["sub_step"] = "products_services"
-                        await WebsiteBuilderService.reply(
-                            session,
-                            f"Got it! You run a {category}. "
-                            "What products or services do you offer?"
+                        ask_prod_msg = WebsiteBuilderService.get_localized_text(
+                            "got_category_ask_products",
+                            lang,
+                            category=category
                         )
+                        await WebsiteBuilderService.reply(session, ask_prod_msg)
                     else:
                         session.collected_data["Products/Services"] = products
                         session.collected_data["onboarding_step"] = "business_name"
                         session.current_step = 2
 
-                        await WebsiteBuilderService.reply(
-                            session,
-                            "Great! What is the name of your business or shop?"
-                        )
+                        ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+                        await WebsiteBuilderService.reply(session, ask_name_msg)
 
         # -----------------------------------------------------
         # STEP 2: BUSINESS NAME
         # -----------------------------------------------------
 
         elif step == "business_name":
+            # Check if user is actually clarifying or correcting their business category
+            cat_in_msg = WebsiteBuilderService.detect_business_category(message)
+            msg_lower = message.lower().strip()
+            is_cat_phrase = cat_in_msg and (
+                any(w in msg_lower for w in ["no", "not", "nahi", "actually", "ran a", "run a", "have a", "mera", "meri", "ek", "hai", "instead"])
+                or msg_lower in [k.lower() for k in WebsiteBuilderService.CATEGORY_KEYWORDS.keys()]
+                or any(kw == msg_lower for kws in WebsiteBuilderService.CATEGORY_KEYWORDS.values() for kw in kws)
+            )
+
+            if is_cat_phrase:
+                session.collected_data["Business Category"] = cat_in_msg
+                ask_name_msg = WebsiteBuilderService.get_localized_text("ask_name", lang)
+                got_text = (
+                    f"Got it! You run a {cat_in_msg}. "
+                    if lang == "en" else
+                    f"Samajh gaya! Aapka {cat_in_msg} ka business hai. "
+                    if lang == "hinglish" else
+                    f"समझ गया! आपका {cat_in_msg} का व्यवसाय है। "
+                )
+                await WebsiteBuilderService.reply(session, got_text + ask_name_msg)
+                await WebsiteBuilderService.save_session(session)
+                return type("Result", (), {
+                    "message": session.messages[-1]["content"],
+                    "quick_actions": [],
+                    "session": session
+                })
 
             name = extracted.get("Business Name")
 
             if not name:
                 candidate = message.strip()
                 cleaned = re.sub(
-                    r"^(my business name is|business name is|shop name is|store name is|it is called|it's called|it is|it's|called|name is)\s+",
+                    r"^(my business name is|business name is|shop name is|store name is|it is called|it's called|it is|it's|called|name is|naam hai|dukaan ka naam)\s+",
                     "",
                     candidate,
                     flags=re.I
                 ).strip(" .'")
 
+                stopwords_name = {"i need", "i want", "website", "shop", "business", "no", "yes", "ok", "banao", "chahiye"}
                 if (
                     len(cleaned) >= 2
                     and len(cleaned) <= 80
-                    and cleaned.lower() not in [
-                        "i need", "i want", "website", "shop", "business", "no", "yes", "ok"
-                    ]
+                    and cleaned.lower() not in stopwords_name
                 ):
                     name = cleaned
 
             if not name:
-                await WebsiteBuilderService.reply(
-                    session,
-                    "Please enter the name you want to display on your website."
-                )
+                retry_name_msg = WebsiteBuilderService.get_localized_text("ask_name_retry", lang)
+                await WebsiteBuilderService.reply(session, retry_name_msg)
             else:
                 session.collected_data["Business Name"] = name
                 session.collected_data["onboarding_step"] = "design_choice"
                 session.current_step = 3
 
-                await WebsiteBuilderService.reply(
-                    session,
-                    f"Nice to meet you, {name}! Would you like me to "
-                    "recommend three designs or build directly?",
-                    options=[
+                meet_msg = WebsiteBuilderService.get_localized_text("nice_to_meet", lang, name=name)
+
+                # Localized design choice buttons
+                if lang == "hinglish":
+                    design_options = [
+                        {"label": "✨ Recommend Designs", "action": "recommend"},
+                        {"label": "⚡ Direct Website Banao", "action": "build_directly"}
+                    ]
+                elif lang == "hi":
+                    design_options = [
+                        {"label": "✨ डिज़ाइन सुझाव देखें", "action": "recommend"},
+                        {"label": "⚡ सीधे वेबसाइट बनाएं", "action": "build_directly"}
+                    ]
+                else:
+                    design_options = [
                         {"label": "✨ Recommend Designs", "action": "recommend"},
                         {"label": "⚡ Build Directly", "action": "build_directly"}
                     ]
-                )
+
+                await WebsiteBuilderService.reply(session, meet_msg, options=design_options)
 
         # -----------------------------------------------------
         # STEP 3: DESIGN CHOICE
         # -----------------------------------------------------
 
         elif step == "design_choice":
+            wants_recommend = (
+                action == "recommend"
+                or any(w in message.lower() for w in ["recommend", "design", "designs", "template", "templates", "dikhao", "options", "suggestions"])
+            )
 
-            if action == "recommend" or "recommend" in message.lower():
+            if wants_recommend:
                 return await WebsiteBuilderService.generate_recommendations(session)
 
-            session.collected_data["selected_template_name"] = "Apex Modern Pro"
-            session.collected_data["selected_template_id"] = "apex-modern-pro"
-            session.selected_template = "apex-modern-pro"
+            # Build directly: set default template and proceed
+            cat = session.collected_data.get("Business Category", "Business")
+            session.collected_data["selected_template_name"] = f"{cat} Modern Pro"
+            session.collected_data["selected_template_id"] = f"{cat.lower().replace(' ', '-')}-pro"
+            session.selected_template = f"{cat.lower().replace(' ', '-')}-pro"
 
             session.collected_data["onboarding_step"] = "industry_details"
             session.current_step = 5
+            await WebsiteBuilderService.ask_industry_question(session)
 
+        # -----------------------------------------------------
+        # STEP 4: TEMPLATE SELECTION (TEXT OR CHIP)
+        # -----------------------------------------------------
+
+        elif step == "template_selection":
+            # Handles user selecting or typing template name (e.g., "Sweet Heritage", "1", "Rustic Haven")
+            recs = session.recommendations or []
+            matched = None
+
+            for rec in recs:
+                rec_name = rec.get("name", "").lower()
+                rec_id = rec.get("id", "").lower()
+                if rec_name in lower_msg or rec_id in lower_msg:
+                    matched = rec
+                    break
+
+            if not matched and recs:
+                if "1" in message or "first" in lower_msg or "pahla" in lower_msg:
+                    matched = recs[0]
+                elif ("2" in message or "second" in lower_msg or "doosra" in lower_msg) and len(recs) > 1:
+                    matched = recs[1]
+                elif ("3" in message or "third" in lower_msg or "teesra" in lower_msg) and len(recs) > 2:
+                    matched = recs[2]
+                else:
+                    matched = recs[0]
+
+            if matched:
+                session.selected_template = str(matched["id"])
+                session.collected_data["selected_template_id"] = str(matched["id"])
+                session.collected_data["selected_template_name"] = str(matched["name"])
+            else:
+                clean_choice = message.strip()
+                session.collected_data["selected_template_name"] = clean_choice or "Custom Modern"
+
+            session.collected_data["onboarding_step"] = "industry_details"
+            session.current_step = 5
             await WebsiteBuilderService.ask_industry_question(session)
 
         # -----------------------------------------------------
@@ -654,79 +1292,178 @@ class WebsiteBuilderService:
         # -----------------------------------------------------
 
         elif step == "industry_details":
-
             session.collected_data["industry_details"] = message.strip()
-
             session.collected_data["onboarding_step"] = "logo_check"
             session.current_step = 6
 
-            await WebsiteBuilderService.check_logo_and_continue(
-                user_id,
-                session,
-                action=action,
-                message=message
-            )
+            # Explicitly ask user about logo (upload existing or generate new)
+            await WebsiteBuilderService.ask_logo_question(session, user_id=user_id)
 
         # -----------------------------------------------------
         # STEP 6: LOGO CHECK
         # -----------------------------------------------------
 
         elif step == "logo_check":
+            lower_msg = message.lower().strip()
+            b_name = session.collected_data.get("Business Name", "Brand")
+            b_cat = session.collected_data.get("Business Category", "Business")
+            theme = WebsiteBuilderService.resolve_palette(category=b_cat)
 
-            if action == "open_brand_kit":
+            # Check if user wants to use saved brand logo
+            wants_saved = any(
+                w in lower_msg for w in ["use saved", "saved logo", "purana", "brand kit wala", "brand kit logo"]
+            )
+            saved_logo = session.collected_data.get("saved_brand_logo")
+            if wants_saved and saved_logo:
+                session.collected_data["Logo"] = saved_logo
+                session.collected_data["logo_status"] = "available"
+                session.collected_data["onboarding_step"] = "confirmation"
+                session.current_step = 7
+                await WebsiteBuilderService.show_confirmation_summary(session)
+                await WebsiteBuilderService.save_session(session)
+                return type("Result", (), {
+                    "message": session.messages[-1]["content"],
+                    "quick_actions": session.messages[-1].get("options", []),
+                    "session": session
+                })
+
+            # Check if user says they do NOT have a logo or explicitly want one generated
+            has_negation = any(
+                neg in lower_msg for neg in [
+                    "nahi", "nhi", "no", "not", "dont", "don't", "na", "without", "bina", "kuch nahi", "koi nahi"
+                ]
+            )
+            wants_generate = (
+                has_negation
+                or any(
+                    w in lower_msg for w in [
+                        "generate", "bana do", "banao", "make", "create", "ai logo",
+                        "monogram", "skip", "continue", "naya", "new", "kardo", "auto"
+                    ]
+                )
+            )
+
+            # Check if user says they already have a logo or want to upload
+            user_has_logo = (
+                not wants_generate
+                and any(
+                    w in lower_msg for w in [
+                        "have", "upload", "paas hai", "hai logo", "mera logo", "file", "haan hai", "yes i have", "mere paas"
+                    ]
+                )
+            )
+
+            if user_has_logo:
+                upload_prompt = (
+                    f"Great! Please click below to upload your logo file for {b_name}, or click generate if you'd like a new one:"
+                    if lang == "en" else
+                    f"Bahut badiya! Kripya niche button par click karke '{b_name}' ka logo upload karein, ya naya AI logo generate karein:"
+                    if lang == "hinglish" else
+                    f"बहुत बढ़िया! कृपया नीचे बटन पर क्लिक करके '{b_name}' का लोगो अपलोड करें, या नया लोगो बनाएं:"
+                )
+                await WebsiteBuilderService.reply(session, upload_prompt, options=[
+                    {"label": "📁 Upload Logo File", "action": "upload_logo"},
+                    {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"}
+                ])
+
+            elif action == "open_brand_kit" or "brand kit" in lower_msg:
+                brand_help = (
+                    "You can design a logo in Brand Kit, or click below to generate an instant styled logo."
+                    if lang == "en" else
+                    "Aap Brand Kit me logo bana sakte hain, ya niche click karke instant AI logo ke saath continue kar sakte hain."
+                    if lang == "hinglish" else
+                    "आप ब्रांड किट में लोगो बना सकते हैं, या नीचे क्लिक करके तुरंत नया लोगो बना सकते हैं।"
+                )
                 await WebsiteBuilderService.reply(
                     session,
-                    "Please create and save your logo in Brand Kit. "
-                    "Return here once it is ready."
+                    brand_help,
+                    options=[
+                        {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"},
+                        {"label": "⚡ Monogram Logo", "action": "monogram_logo"}
+                    ]
                 )
 
             else:
-                await WebsiteBuilderService.check_logo_and_continue(
-                    user_id,
-                    session
+                # User says "generate", "nahi hai", "no logo", "bana do", "make", "skip", "continue":
+                session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                    b_name, b_cat, theme["primary"]
                 )
+                session.collected_data["logo_status"] = "generated"
+                session.collected_data["onboarding_step"] = "confirmation"
+                session.current_step = 7
+
+                ack_gen = (
+                    f"Generated a custom logo for {b_name}!"
+                    if lang == "en" else
+                    f"Maine aapki dukaan '{b_name}' ke liye ek stylish naya logo generate kar diya hai!"
+                    if lang == "hinglish" else
+                    f"मैंने आपकी दुकान '{b_name}' के लिए नया लोगो तैयार कर दिया है!"
+                )
+                await WebsiteBuilderService.reply(session, ack_gen)
+                await WebsiteBuilderService.show_confirmation_summary(session)
 
         # -----------------------------------------------------
         # STEP 7: CONFIRMATION
         # -----------------------------------------------------
 
         elif step == "confirmation":
+            confirm_keywords = ["yes", "confirm", "build", "generate", "haan", "banao", "bana do", "theek hai", "ready", "shuru"]
+            if action == "generate" or any(w in lower_msg for w in confirm_keywords):
+                return await WebsiteBuilderService.generate_website(session, user_id)
 
-            if action == "generate" or message.lower().strip() in [
-                "yes", "confirm", "build", "generate",
-                "confirm & generate website"
-            ]:
-                return await WebsiteBuilderService.generate_website(
+            if action == "add_page_content" or any(w in lower_msg for w in ["content", "story", "details", "mission", "hours", "address", "phone"]):
+                session.collected_data["onboarding_step"] = "page_content_details"
+                await WebsiteBuilderService.reply(
                     session,
-                    user_id
+                    "What specific details would you like to feature on your pages? For example, your story/mission for About, specialized offerings, or opening hours."
                 )
 
-            if action == "edit_details":
+            elif action == "edit_details":
                 session.collected_data["onboarding_step"] = "industry_details"
-
                 await WebsiteBuilderService.ask_industry_question(session)
 
             else:
-                await WebsiteBuilderService.reply(
-                    session,
-                    "Would you like to generate the website or edit your details?",
-                    options=[
-                        {"label": "🚀 Confirm & Generate Website", "action": "generate"},
-                        {"label": "Edit Details", "action": "edit_details"}
-                    ]
-                )
+                await WebsiteBuilderService.show_confirmation_summary(session)
+
+        elif step == "page_content_details":
+            session.collected_data["custom_page_content"] = message.strip()
+            session.collected_data["onboarding_step"] = "confirmation"
+            await WebsiteBuilderService.show_confirmation_summary(session)
 
         # -----------------------------------------------------
         # GENERATED WEBSITE EDITING
         # -----------------------------------------------------
 
         elif step == "generated":
-
-            await WebsiteBuilderService.reply(
-                session,
-                "Your website is ready. You can ask me to change its "
-                "images, text, colors, layout or sections."
-            )
+            if session.website_project_id:
+                project = await WebsiteBuilderService.get_website(
+                    str(session.website_project_id),
+                    user_id
+                )
+                if project:
+                    current_site_data = getattr(project, "website_data", None) or {
+                        "business_name": project.business_name,
+                        "pages": project.pages,
+                        "theme": getattr(project, "theme", {})
+                    }
+                    edit_res = await WebsiteBuilderService.apply_website_edit(
+                        user_id=user_id,
+                        session_id=str(session.id),
+                        instruction=message,
+                        current_state=current_site_data
+                    )
+                    reply_msg = edit_res.get("message") or "I have updated the website according to your instruction."
+                    await WebsiteBuilderService.reply(session, reply_msg)
+                else:
+                    await WebsiteBuilderService.reply(
+                        session,
+                        "Your website is ready. You can ask me to change its images, text, colors, layout or sections."
+                    )
+            else:
+                await WebsiteBuilderService.reply(
+                    session,
+                    "Your website is ready. You can ask me to change its images, text, colors, layout or sections."
+                )
 
         await WebsiteBuilderService.save_session(session)
 
@@ -746,134 +1483,203 @@ class WebsiteBuilderService:
         )
 
     # ---------------------------------------------------------
+    # CONFIRMATION SUMMARY HELPER
+    # ---------------------------------------------------------
+
+    @staticmethod
+    async def show_confirmation_summary(session):
+        lang = getattr(session, "language", "en")
+        name = session.collected_data.get("Business Name", "Your Business")
+        cat = session.collected_data.get("Business Category", "Business")
+        offerings = session.collected_data.get("Products/Services", "Catalog & Services")
+        design = session.collected_data.get("selected_template_name", "Modern Showcase")
+        has_logo = bool(session.collected_data.get("Logo"))
+        logo_status = session.collected_data.get("logo_status")
+        if logo_status == "uploaded":
+            logo_info = "Uploaded Custom Logo" if lang == "en" else "Aapka Uploaded Logo" if lang == "hinglish" else "अपलोड किया गया लोगो"
+        elif has_logo or logo_status in ["generated", "available"]:
+            logo_info = f"AI Generated ({cat})" if lang == "en" else f"AI Generated Logo ({cat})" if lang == "hinglish" else f"AI द्वारा तैयार लोगो ({cat})"
+        else:
+            logo_info = "AI Custom Monogram"
+
+        summary = WebsiteBuilderService.get_localized_text(
+            "summary",
+            lang,
+            name=name,
+            category=cat,
+            offerings=offerings,
+            design=design,
+            logo_info=logo_info
+        )
+
+        if lang == "hinglish":
+            options = [
+                {"label": "🚀 Website Bana Do", "action": "generate"},
+                {"label": "📝 Details Add Karein", "action": "add_page_content"},
+                {"label": "Details Badlein", "action": "edit_details"}
+            ]
+        elif lang == "hi":
+            options = [
+                {"label": "🚀 वेबसाइट बनाएं", "action": "generate"},
+                {"label": "📝 पेज विवरण जोड़ें", "action": "add_page_content"},
+                {"label": "विवरण बदलें", "action": "edit_details"}
+            ]
+        else:
+            options = [
+                {"label": "🚀 Build the Website", "action": "generate"},
+                {"label": "📝 Add Specific Page Details", "action": "add_page_content"},
+                {"label": "Edit Details", "action": "edit_details"}
+            ]
+
+        await WebsiteBuilderService.reply(session, summary, options=options)
+
+    # ---------------------------------------------------------
     # INDUSTRY QUESTIONS
     # ---------------------------------------------------------
 
     @staticmethod
     async def ask_industry_question(session):
-
-        category = session.collected_data.get(
-            "Business Category",
-            ""
-        ).lower()
+        category = session.collected_data.get("Business Category", "").lower()
+        lang = getattr(session, "language", "en")
 
         questions = {
-            "indian sweet shop": (
-                "What makes your sweet shop special? "
-                "For example, traditional recipes, fresh mithai, "
-                "gift boxes or festival collections?"
-            ),
-            "flower shop": (
-                "Do you offer home delivery, event decoration, "
-                "custom bouquets or all of these?"
-            ),
-            "gym & fitness": (
-                "What facilities or programs do you offer? "
-                "For example, strength training, cardio, yoga "
-                "or personal training?"
-            ),
-            "restaurant": (
-                "What type of cuisine do you serve, and "
-                "do you offer dine-in, takeaway or delivery?"
-            ),
-            "clothing store": (
-                "What clothing collections do you sell, "
-                "and do you offer online ordering?"
-            ),
-            "beauty salon": (
-                "Which services do you provide? "
-                "For example, hair styling, skincare, makeup or spa?"
-            ),
+            "farm house & resort": {
+                "en": "What amenities or experiences do you offer? For example, swimming pool, weekend stays, organic farming, or private party bookings?",
+                "hinglish": "Aapke farm house par kya suvidhayein hain? Jaise pool, weekend stay, organic food ya party booking?",
+                "hi": "आपके फार्म हाउस में क्या सुविधाएं हैं? जैसे स्विमिंग पूल, वीकेंड स्टे, पार्टी बुकिंग आदि?"
+            },
+            "stationery & books": {
+                "en": "What are your popular products? For example, school & office supplies, art materials, book collections, or printing services?",
+                "hinglish": "Aapke paas main products kya hain? Jaise school/office stationery, art craft supplies, books ya printing?",
+                "hi": "आपके मुख्य उत्पाद क्या हैं? जैसे स्कूल व ऑफिस स्टेशनरी, किताबें या प्रिंटिंग सेवाएँ?"
+            },
+            "korean sweet shop": {
+                "en": "What signature Korean treats do you serve? For example, Bingsu, traditional hangwa, mochi, or Korean specialty beverages?",
+                "hinglish": "Aapke yahan konsi Korean sweets special hain? Jaise Bingsu, Mochi, Korean desserts ya bubble tea?",
+                "hi": "आपकी दुकान की क्या विशेषता है? जैसे बिंगसू, मोची या अन्य कोरियन मिठाइयाँ?"
+            },
+            "indian sweet shop": {
+                "en": "What makes your sweet shop special? For example, traditional recipes, pure desi ghee sweets, or festival gift boxes?",
+                "hinglish": "Aapki mithai ki dukaan ki kya khaasiyat hai? Jaise pure desi ghee mithai, festival gift hampers ya fresh rasgulla?",
+                "hi": "आपकी मिठाई की क्या खासियत है? जैसे शुद्ध देसी घी की मिठाइयाँ, काजू कतली या उपहार बॉक्स?"
+            },
+            "flower shop": {
+                "en": "Do you offer wedding decorations, custom bouquets, express same-day delivery, or plant collections?",
+                "hinglish": "Kya aap custom bouquets, shaadi/event decoration ya same-day flower delivery offer karte hain?",
+                "hi": "क्या आप फूलों के गुलदस्ते, सजावट या होम डिलीवरी की सेवा देते हैं?"
+            },
+            "gym & fitness": {
+                "en": "What programs do you offer? For example, strength training, personal coaching, cardio, yoga, or weight loss plans?",
+                "hinglish": "Aapke gym me kya facilities hain? Jaise strength training, personal trainer, cardio ya yoga?",
+                "hi": "आपके जिम में क्या सुविधाएं हैं? जैसे स्ट्रेंथ ट्रेनिंग, पर्सनल ट्रेनर, कार्डियो या योग?"
+            },
+            "grocery & kirana": {
+                "en": "Do you offer daily essentials, fresh fruits & vegetables, or quick home delivery?",
+                "hinglish": "Kya aap daily groceries ke sath free home delivery ya fresh produce offer karte hain?",
+                "hi": "क्या आप दैनिक किराना सामान और होम डिलीवरी की सुविधा प्रदान करते हैं?"
+            },
+            "medical & clinic": {
+                "en": "What healthcare services do you provide? For example, doctor consultations, dental treatments, or pharmacy?",
+                "hinglish": "Aapke clinic me kya healthcare services uplabdh hain? Jaise doctor consultation, lab tests ya pharmacy?",
+                "hi": "आपके क्लीनिक में क्या चिकित्सा सेवाएँ उपलब्ध हैं?"
+            }
         }
 
-        question = questions.get(
-            category,
-            "What are the most important products, services or "
-            "features you want customers to see on your website?"
-        )
+        matched_q = None
+        for k, q_dict in questions.items():
+            if k in category or category in k:
+                matched_q = q_dict.get(lang) or q_dict.get("en")
+                break
 
-        await WebsiteBuilderService.reply(session, question)
+        if not matched_q:
+            matched_q = WebsiteBuilderService.get_localized_text("ask_industry_default", lang)
+
+        await WebsiteBuilderService.reply(session, matched_q)
 
     # ---------------------------------------------------------
-    # BRAND KIT VALIDATION
+    # BRAND KIT & LOGO VALIDATION
     # ---------------------------------------------------------
 
     @staticmethod
-    async def check_logo_and_continue(user_id, session, action=None, message=""):
+    async def ask_logo_question(session, user_id=None):
+        """
+        Explicitly asks the user about their logo:
+        Whether they have an existing logo to upload, want to use a saved Brand Kit logo,
+        or want the AI to generate a category-specific logo for their shop.
+        """
+        lang = getattr(session, "language", "en")
+        b_name = session.collected_data.get("Business Name", "Your Business")
+        b_cat = session.collected_data.get("Business Category", "Business")
 
-        brand = await WebsiteBuilderService.get_saved_brand(
-            user_id,
-            session
-        )
+        brand = await WebsiteBuilderService.get_saved_brand(user_id or session.user_id, session)
+        saved_logo = (brand or {}).get("logo_url")
 
-        logo = (
-            session.collected_data.get("Logo")
-            or (brand or {}).get("logo_url")
-        )
+        session.collected_data["onboarding_step"] = "logo_check"
+        session.current_step = 6
 
-        if not logo:
-            action_name = (action or "").lower()
-            if action_name in ["skip_logo", "use_text_logo"] or any(
-                w in (message or "").lower() for w in ["skip", "without logo", "text logo", "later", "no logo"]
-            ):
-                logo = ""
-                session.collected_data["Logo"] = ""
-                session.collected_data["logo_status"] = "skipped"
+        if saved_logo:
+            if lang == "hinglish":
+                text = f"Aapke Brand Kit me ek logo pehle se saved hai. Kya aap wahi logo use karna chahenge, apna logo upload karna chahenge, ya hum '{b_name}' ke liye naya AI logo generate karein?"
+                options = [
+                    {"label": "✅ Use Saved Logo", "action": "use_saved_logo"},
+                    {"label": "📁 Upload My Logo", "action": "upload_logo"},
+                    {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"},
+                    {"label": "🎨 Open Brand Kit", "action": "open_brand_kit"}
+                ]
+            elif lang == "hi":
+                text = f"आपके ब्रांड किट में एक लोगो पहले से मौजूद है। क्या आप वही लोगो उपयोग करना चाहेंगे, नया लोगो अपलोड करना चाहेंगे, या हम '{b_name}' के लिए नया लोगो बनाएं?"
+                options = [
+                    {"label": "✅ पुराना लोगो उपयोग करें", "action": "use_saved_logo"},
+                    {"label": "📁 नया लोगो अपलोड करें", "action": "upload_logo"},
+                    {"label": "✨ नया लोगो बनाएं (AI)", "action": "generate_logo"},
+                    {"label": "🎨 ब्रांड किट खोलें", "action": "open_brand_kit"}
+                ]
             else:
-                session.collected_data["logo_status"] = "required"
-                session.collected_data["onboarding_step"] = "logo_check"
+                text = f"We found a saved logo in your Brand Kit. Would you like to use your saved logo, upload your own, or auto-generate a custom logo for '{b_name}'?"
+                options = [
+                    {"label": "✅ Use Saved Logo", "action": "use_saved_logo"},
+                    {"label": "📁 Upload My Logo", "action": "upload_logo"},
+                    {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"},
+                    {"label": "🎨 Open Brand Kit", "action": "open_brand_kit"}
+                ]
+        else:
+            if lang == "hinglish":
+                text = f"Kya aapke paas '{b_name}' ka logo pehle se hai, ya hum aapke business ke hisab se ek naya AI logo generate kar dein?"
+                options = [
+                    {"label": "📁 Mere Paas Logo Hai (Upload)", "action": "upload_logo"},
+                    {"label": "✨ Naya AI Logo Generate Karein", "action": "generate_logo"},
+                    {"label": "⚡ Monogram Logo se Banao", "action": "monogram_logo"},
+                    {"label": "🎨 Brand Kit me banayein", "action": "open_brand_kit"}
+                ]
+            elif lang == "hi":
+                text = f"क्या आपके पास '{b_name}' का लोगो पहले से है, या हम आपके व्यवसाय के लिए एक नया आकर्षक लोगो तैयार कर दें?"
+                options = [
+                    {"label": "📁 मेरे पास लोगो है (अपलोड करें)", "action": "upload_logo"},
+                    {"label": "✨ नया लोगो बनाएं (AI)", "action": "generate_logo"},
+                    {"label": "⚡ मोनोग्राम लोगो के साथ बनाएं", "action": "monogram_logo"},
+                    {"label": "🎨 ब्रांड किट में बनाएं", "action": "open_brand_kit"}
+                ]
+            else:
+                text = f"Do you already have a logo for '{b_name}', or would you like me to generate a custom logo for your business?"
+                options = [
+                    {"label": "📁 I Have a Logo (Upload)", "action": "upload_logo"},
+                    {"label": "✨ Auto-Generate AI Logo", "action": "generate_logo"},
+                    {"label": "⚡ Continue with Monogram", "action": "monogram_logo"},
+                    {"label": "🎨 Create in Brand Kit", "action": "open_brand_kit"}
+                ]
 
-                await WebsiteBuilderService.reply(
-                    session,
-                    "Your website needs your business logo. "
-                    "You can create one in Brand Kit, or proceed with a text logo for now.",
-                    options=[
-                        {
-                            "label": "Create Logo in Brand Kit",
-                            "action": "open_brand_kit"
-                        },
-                        {
-                            "label": "Proceed with Text Logo (Skip)",
-                            "action": "skip_logo"
-                        }
-                    ],
-                    data={
-                        "brand_kit_required": True,
-                        "redirect": "/brand-kit"
-                    }
-                )
-                return
+        await WebsiteBuilderService.reply(session, text, options=options)
 
-        session.collected_data["Logo"] = logo
-        session.collected_data["logo_status"] = "available"
+    @staticmethod
+    async def check_logo_and_continue(user_id, session, action=None, message=""):
+        logo = session.collected_data.get("Logo")
+        if not logo:
+            await WebsiteBuilderService.ask_logo_question(session, user_id=user_id)
+            return
 
         session.collected_data["onboarding_step"] = "confirmation"
         session.current_step = 7
-
-        summary = (
-            "Here is your website information:\n\n"
-            f"Business: {session.collected_data.get('Business Name')}\n"
-            f"Category: {session.collected_data.get('Business Category')}\n"
-            f"Products/Services: {session.collected_data.get('Products/Services', 'Not specified')}\n"
-            f"Design: {session.collected_data.get('selected_template_name')}\n"
-            f"Additional details: {session.collected_data.get('industry_details', 'Not specified')}\n\n"
-            "Would you like me to generate your website now?"
-        )
-
-        await WebsiteBuilderService.reply(
-            session,
-            summary,
-            options=[
-                {
-                    "label": "🚀 Confirm & Generate Website",
-                    "action": "generate"
-                },
-                {
-                    "label": "Edit Details",
-                    "action": "edit_details"
-                }
-            ]
-        )
+        await WebsiteBuilderService.show_confirmation_summary(session)
 
     # ---------------------------------------------------------
     # TEMPLATE RECOMMENDATIONS
@@ -881,55 +1687,87 @@ class WebsiteBuilderService:
 
     @staticmethod
     async def generate_recommendations(session):
+        category = session.collected_data.get("Business Category", "Business")
+        lang = getattr(session, "language", "en")
 
-        category = session.collected_data.get(
-            "Business Category",
-            "Business"
-        )
-
-        templates = {
+        templates_by_category = {
+            "Farm House & Resort": [
+                ("Nature Retreat", "Rustic luxury design with scenic farm views and booking options."),
+                ("Green Meadows", "Peaceful countryside layout highlighting outdoor amenities and stays."),
+                ("Heritage Farm Stay", "Warm earthy aesthetic celebrating nature, pool, and organic food.")
+            ],
+            "Stationery & Books": [
+                ("Page & Pen", "Organized vibrant storefront for stationery, art supplies, and gifts."),
+                ("Scholar's Haven", "Clean minimalist layout highlighting publications and essentials."),
+                ("Creative Corner", "Modern colorful showcase for artisan papercrafts and school supplies.")
+            ],
+            "Korean Sweet Shop": [
+                ("K-Sweet Delight", "Trendy pastel aesthetic featuring bingsu, mochi, and specialty desserts."),
+                ("Seoul Treats", "Modern minimalist Asian confectionery storefront."),
+                ("Blossom Cafe", "Chic cafe and sweet shop layout with vibrant dessert photo highlights.")
+            ],
             "Indian Sweet Shop": [
                 ("Royal Mithai", "Traditional Indian sweets with a premium royal design."),
                 ("Sweet Heritage", "Warm traditional design with rich product galleries."),
-                ("Modern Mithai", "Clean modern storefront for Indian sweets.")
+                ("Modern Mithai", "Clean modern storefront for Indian sweets and hampers.")
             ],
             "Flower Shop": [
-                ("Floral Elegance", "Elegant floral photography and soft colors."),
-                ("Bloom & Blossom", "Modern bouquet-focused storefront."),
-                ("Botanical Garden", "Natural botanical layout with green accents.")
+                ("Floral Elegance", "Elegant floral photography and soft romantic colors."),
+                ("Bloom & Blossom", "Modern bouquet-focused storefront with delivery highlights."),
+                ("Botanical Garden", "Natural botanical layout with green accents and plant collections.")
             ],
             "Gym & Fitness": [
-                ("Iron Forge Fitness", "Bold fitness-focused design."),
-                ("Pulse Athletics", "Modern athletic website with strong CTAs."),
-                ("Zenith Wellness", "Premium wellness and fitness layout.")
+                ("Iron Forge Fitness", "Bold fitness-focused design with workout program highlights."),
+                ("Pulse Athletics", "Modern athletic website with strong membership CTAs."),
+                ("Zenith Wellness", "Premium wellness, yoga, and fitness layout.")
             ],
-            "Restaurant": [
-                ("Culinary Premium", "Elegant restaurant design."),
-                ("Modern Bistro", "Modern food-focused layout."),
-                ("Taste & Tradition", "Warm hospitality design.")
+            "Restaurant & Cafe": [
+                ("Culinary Premium", "Elegant dining presentation with signature menu showcases."),
+                ("Modern Bistro", "Modern food-focused layout with table booking options."),
+                ("Taste & Tradition", "Warm hospitality design highlighting authentic flavors.")
             ],
-            "Clothing Store": [
-                ("Style Avenue", "Premium fashion storefront."),
-                ("Minimal Wardrobe", "Minimal product-led layout."),
-                ("Urban Collection", "Bold modern fashion design.")
+            "Clothing & Fashion": [
+                ("Style Avenue", "Premium fashion storefront with lookbook and collections."),
+                ("Minimal Wardrobe", "Minimal product-led layout for modern apparel."),
+                ("Urban Collection", "Bold contemporary fashion design.")
+            ],
+            "Grocery & Kirana": [
+                ("Daily Fresh Mart", "Organized essentials catalog with express pickup and local delivery."),
+                ("Green Pantry", "Fresh farm produce and daily grocery showcase."),
+                ("Quick Kirana", "Vibrant community storefront with daily deals.")
+            ],
+            "Medical & Clinic": [
+                ("HealthFirst Care", "Clean, trustworthy medical presentation with appointment booking."),
+                ("Vitality Wellness", "Modern healthcare and clinic layout with doctor profiles."),
+                ("Apex Dental & Care", "Professional healthcare showcase with service breakdown.")
             ]
         }
 
-        selected = templates.get(
-            category,
-            [
-                ("Modern Professional", "Clean professional layout."),
-                ("Minimal Business", "Simple and elegant layout."),
-                ("Premium Showcase", "Premium business presentation.")
+        # Match category flexibly
+        selected = None
+        for cat_key, t_list in templates_by_category.items():
+            if cat_key.lower() in category.lower() or category.lower() in cat_key.lower():
+                selected = t_list
+                break
+
+        if not selected:
+            clean_cat = category.strip() or "Business"
+            selected = [
+                (f"{clean_cat} Premier", f"Modern professional layout designed specifically for {clean_cat}."),
+                (f"{clean_cat} Showcase", f"Vibrant showcase highlighting your signature {clean_cat} offerings."),
+                (f"{clean_cat} Classic", f"Clean, elegant storefront presenting your services and brand story.")
             ]
-        )
 
         recommendations = []
-
         for index, (name, description) in enumerate(selected):
+            rec_id = f"{category.lower().replace(' ', '-')}-{index + 1}"
             recommendations.append({
-                "id": f"{category.lower().replace(' ', '-')}-{index + 1}",
+                "id": rec_id,
+                "templateId": rec_id,
+                "templateName": name,
                 "name": name,
+                "label": name,
+                "action": "select_template",
                 "description": description,
                 "reason": f"Designed for {category}",
                 "style": name
@@ -939,13 +1777,8 @@ class WebsiteBuilderService:
         session.collected_data["onboarding_step"] = "template_selection"
         session.current_step = 4
 
-        await WebsiteBuilderService.reply(
-            session,
-            f"Here are three designs created for your {category}. "
-            "Select one to continue.",
-            options=recommendations
-        )
-
+        intro_text = WebsiteBuilderService.get_localized_text("templates_intro", lang, category=category)
+        await WebsiteBuilderService.reply(session, intro_text, options=recommendations)
         await WebsiteBuilderService.save_session(session)
 
         return type("Result", (), {
@@ -960,7 +1793,6 @@ class WebsiteBuilderService:
 
     @staticmethod
     async def generate_website(session, user_id=None):
-
         collected = session.collected_data
 
         business_name = collected.get("Business Name")
@@ -972,24 +1804,15 @@ class WebsiteBuilderService:
                 "Business name and category are required."
             )
 
+        # Dynamic fallback: if user has no logo, auto-generate a beautiful initials monogram
+        # so generation NEVER blocks or halts!
         if not collected.get("Logo"):
-            if not user_id:
-                user_id = session.user_id
-
-            await WebsiteBuilderService.check_logo_and_continue(
-                user_id,
-                session,
-                action=action,
-                message=message
+            brand = collected.get("Brand Guidelines") or {}
+            theme = WebsiteBuilderService.resolve_palette(category=category, brand_guidelines=brand)
+            collected["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                business_name, category, theme["primary"]
             )
-
-            await WebsiteBuilderService.save_session(session)
-
-            return type("Result", (), {
-                "message": session.messages[-1]["content"],
-                "quick_actions": session.messages[-1].get("options", []),
-                "session": session
-            })
+            collected["logo_status"] = "available"
 
         WebsiteBuilderService.add_ai_message(
             session,
@@ -1013,19 +1836,49 @@ class WebsiteBuilderService:
 
         ai = AIProviderFactory.get_provider(preferred="openai")
 
+        service_tab_name = "Products" if any(w in category.lower() for w in ["shop", "store", "flower", "sweet", "boutique", "bakery", "jewel"]) else "Services"
+
         prompt = f"""
-Create a complete professional website for this business.
+Create a complete, modern, multi-page professional website for this business.
 
 BUSINESS NAME: {business_name}
 BUSINESS CATEGORY: {category}
 PRODUCTS/SERVICES: {offerings}
 ADDITIONAL DETAILS: {details}
+CUSTOM PAGE CONTENT & STORY: {collected.get('custom_page_content', '')}
 SELECTED TEMPLATE: {collected.get('selected_template_name')}
 
-Return ONLY valid JSON with this structure:
+REQUIREMENTS:
+1. Multi-Page Architecture: Generate 4 distinct pages in the "pages" array:
+   - "Home": Featuring a prominent Navbar, Hero Section, Signature Highlights/Offerings (Features), About preview, Contact inquiry preview, and Footer.
+   - "About": Featuring Navbar, Full Brand Story / Mission, Core Values / Why Choose Us, and Footer.
+   - "{service_tab_name}": Featuring Navbar, Comprehensive Offerings / Catalog (4 to 6 items with title, detailed description, realistic starting price/estimate, and image_prompt), Visual Showcase / Gallery (4 items), and Footer.
+   - "Contact": Featuring Navbar, Full Contact Information, Opening Hours, Inquiry / Message Form, and Footer.
+
+2. Navbar & Branding:
+   - Every page MUST have a "navbar" section with:
+     "title": "{business_name}",
+     "logo": "{logo}",
+     "navigation": ["Home", "About", "{service_tab_name}", "Contact"]
+   - The business name and logo MUST appear together in the navbar.
+
+3. Hero Section:
+   - On the "Home" page, include an impactful "hero" section with:
+     "title": Captivating, punchy headline tailored specifically to {business_name} and {category}.
+     "subtitle": Engaging value proposition (20-35 words).
+     "cta": "Explore Offerings" or "Get Started"
+     "secondary_cta": "About Us"
+     "image_prompt": "High-end professional photography representing {category} and {business_name}"
+
+4. Category Specifics:
+   - All section titles, descriptions, and image prompts MUST strictly match {category}.
+   - Never invent personal phone numbers, addresses, ratings, or customer count metrics.
+
+Return ONLY valid JSON with this exact structure:
 
 {{
   "business_name": "{business_name}",
+  "business_category": "{category}",
   "logo": "{logo}",
   "theme": {{
     "primary": "{theme['primary']}",
@@ -1033,6 +1886,7 @@ Return ONLY valid JSON with this structure:
     "accent": "{theme['accent']}",
     "font": "outfit"
   }},
+  "navigation": ["Home", "About", "{service_tab_name}", "Contact"],
   "pages": [
     {{
       "name": "Home",
@@ -1041,41 +1895,171 @@ Return ONLY valid JSON with this structure:
           "type": "navbar",
           "title": "{business_name}",
           "logo": "{logo}",
-          "navigation": ["Home", "About", "Products", "Contact"]
+          "navigation": ["Home", "About", "{service_tab_name}", "Contact"]
         }},
         {{
           "type": "hero",
-          "title": "Business-specific headline",
-          "subtitle": "Business-specific description",
+          "title": "Business Headline",
+          "subtitle": "Inspiring value proposition tailored to {category}",
           "cta": "Explore Now",
-          "image_prompt": "Relevant professional photograph for {category}",
+          "secondary_cta": "Learn More",
+          "image_prompt": "High resolution photograph for {category}",
           "image_url": ""
         }},
         {{
           "type": "features",
-          "title": "Our Products and Services",
+          "title": "Featured Highlights",
+          "subtitle": "Discover our signature {offerings or category}",
           "items": [
             {{
-              "title": "Real product or service",
-              "description": "Relevant description",
-              "image_prompt": "Photograph of this exact product or service",
+              "title": "Signature Item 1",
+              "description": "Specific description",
+              "image_prompt": "Photograph of item 1",
+              "image_url": ""
+            }},
+            {{
+              "title": "Signature Item 2",
+              "description": "Specific description",
+              "image_prompt": "Photograph of item 2",
+              "image_url": ""
+            }},
+            {{
+              "title": "Signature Item 3",
+              "description": "Specific description",
+              "image_prompt": "Photograph of item 3",
               "image_url": ""
             }}
           ]
         }},
         {{
           "type": "about",
-          "title": "About {business_name}",
-          "description": "Business introduction"
-        }},
-        {{
-          "type": "gallery",
-          "title": "Our Gallery",
-          "items": []
+          "title": "Welcome to {business_name}",
+          "description": "Engaging introduction to our business and dedication.",
+          "image_prompt": "Warm professional photograph of {category} space",
+          "image_url": ""
         }},
         {{
           "type": "contact",
-          "title": "Contact Us"
+          "title": "Get in Touch",
+          "subtitle": "We are here to serve you. Reach out today."
+        }},
+        {{
+          "type": "footer",
+          "title": "{business_name}",
+          "logo": "{logo}"
+        }}
+      ]
+    }},
+    {{
+      "name": "About",
+      "sections": [
+        {{
+          "type": "navbar",
+          "title": "{business_name}",
+          "logo": "{logo}",
+          "navigation": ["Home", "About", "{service_tab_name}", "Contact"]
+        }},
+        {{
+          "type": "about",
+          "title": "Our Journey & Passion",
+          "subtitle": "Committed to excellence in {category}",
+          "description": "Detailed background about our craft, standards, and customer commitment.",
+          "image_prompt": "Artisan/professional at work in {category}",
+          "image_url": ""
+        }},
+        {{
+          "type": "features",
+          "title": "Why Choose {business_name}",
+          "subtitle": "Our core principles & service promises",
+          "items": [
+            {{ "title": "Premium Quality", "description": "Highest standards in every offering." }},
+            {{ "title": "Tailored Care", "description": "Personalized service for every client." }},
+            {{ "title": "Trusted Expertise", "description": "Experienced and passionate professionals." }}
+          ]
+        }},
+        {{
+          "type": "footer",
+          "title": "{business_name}",
+          "logo": "{logo}"
+        }}
+      ]
+    }},
+    {{
+      "name": "{service_tab_name}",
+      "sections": [
+        {{
+          "type": "navbar",
+          "title": "{business_name}",
+          "logo": "{logo}",
+          "navigation": ["Home", "About", "{service_tab_name}", "Contact"]
+        }},
+        {{
+          "type": "products",
+          "title": "Our Offerings & Catalog",
+          "subtitle": "Explore our full range of {offerings or category}",
+          "items": [
+            {{
+              "title": "Offering 1",
+              "description": "Detailed description of offering 1",
+              "price": "Starts from inquiry",
+              "image_prompt": "Photograph for offering 1",
+              "image_url": ""
+            }},
+            {{
+              "title": "Offering 2",
+              "description": "Detailed description of offering 2",
+              "price": "Starts from inquiry",
+              "image_prompt": "Photograph for offering 2",
+              "image_url": ""
+            }},
+            {{
+              "title": "Offering 3",
+              "description": "Detailed description of offering 3",
+              "price": "Starts from inquiry",
+              "image_prompt": "Photograph for offering 3",
+              "image_url": ""
+            }},
+            {{
+              "title": "Offering 4",
+              "description": "Detailed description of offering 4",
+              "price": "Starts from inquiry",
+              "image_prompt": "Photograph for offering 4",
+              "image_url": ""
+            }}
+          ]
+        }},
+        {{
+          "type": "gallery",
+          "title": "Showcase Gallery",
+          "subtitle": "A glimpse of our work and atmosphere",
+          "items": [
+            {{ "title": "Gallery 1", "image_prompt": "Photo of {category} showcase 1" }},
+            {{ "title": "Gallery 2", "image_prompt": "Photo of {category} showcase 2" }},
+            {{ "title": "Gallery 3", "image_prompt": "Photo of {category} showcase 3" }},
+            {{ "title": "Gallery 4", "image_prompt": "Photo of {category} showcase 4" }}
+          ]
+        }},
+        {{
+          "type": "footer",
+          "title": "{business_name}",
+          "logo": "{logo}"
+        }}
+      ]
+    }},
+    {{
+      "name": "Contact",
+      "sections": [
+        {{
+          "type": "navbar",
+          "title": "{business_name}",
+          "logo": "{logo}",
+          "navigation": ["Home", "About", "{service_tab_name}", "Contact"]
+        }},
+        {{
+          "type": "contact",
+          "title": "Contact & Visit Us",
+          "subtitle": "Reach out directly with inquiries, orders, or bookings.",
+          "hours": "Mon - Sat: 9:00 AM - 8:00 PM"
         }},
         {{
           "type": "footer",
@@ -1086,27 +2070,15 @@ Return ONLY valid JSON with this structure:
     }}
   ]
 }}
-
-RULES:
-
-1. Every section must match the business category.
-2. Generate relevant products and services.
-3. Use professional image prompts.
-4. Never use unrelated office or corporate images.
-5. Do not invent phone numbers, addresses, prices, ratings,
-   testimonials or customer counts.
-6. Do not invent business contact details.
-7. Preserve the selected template's design direction.
-8. Include navbar, hero, content sections and footer.
-9. Return valid JSON only.
 """
 
         try:
             result = await ai.generate_json(
                 prompt,
                 system_prompt=(
-                    "You are a professional website designer. "
-                    "Generate complete, industry-specific website JSON. "
+                    "You are a professional website designer and developer. "
+                    "Generate a complete multi-page website in JSON with Home, About, Services/Products, and Contact pages. "
+                    "Ensure every page has a proper navbar with business name and navigation links, an engaging hero section, and category-relevant content. "
                     "Never invent factual business information."
                 ),
                 temperature=0.3,
@@ -1127,12 +2099,12 @@ RULES:
             )
 
         pages = result["pages"]
+        navigation_tabs = ["Home", "About", service_tab_name, "Contact"]
 
         for page in pages:
             for section_index, section in enumerate(
                 page.get("sections", [])
             ):
-
                 if not isinstance(section, dict):
                     continue
 
@@ -1140,9 +2112,12 @@ RULES:
 
                 if section_type == "navbar":
                     section["logo"] = logo
+                    section["title"] = business_name
+                    section["navigation"] = navigation_tabs
 
                 if section_type == "footer":
                     section["logo"] = logo
+                    section["title"] = business_name
 
                 if section_type == "hero":
                     section["image_url"] = (
@@ -1154,22 +2129,35 @@ RULES:
                         )
                     )
 
+                if section_type in ["about", "story"]:
+                    section["image_url"] = (
+                        WebsiteBuilderService.resolve_curated_image(
+                            category,
+                            section.get("image_prompt", f"about {category}"),
+                            section_index + 1,
+                            False
+                        )
+                    )
+
                 for item_index, item in enumerate(
                     section.get("items", [])
                 ):
-                    if isinstance(item, dict) and item.get("image_prompt"):
+                    if isinstance(item, dict):
+                        item_prompt = item.get("image_prompt") or item.get("title") or category
                         item["image_url"] = (
                             WebsiteBuilderService.resolve_curated_image(
                                 category,
-                                item["image_prompt"],
-                                item_index,
+                                item_prompt,
+                                item_index + 2,
                                 False
                             )
                         )
 
         result["business_name"] = business_name
+        result["business_category"] = category
         result["logo"] = logo
         result["theme"] = theme
+        result["navigation"] = navigation_tabs
 
         project = WebsiteProject(
             user_id=session.user_id,
@@ -1332,15 +2320,49 @@ Rules:
             ""
         )
 
+        b_name = session.collected_data.get('Business Name') or current_state.get('business_name', 'Business')
+
+        # Repair any corrupted category (e.g. if mistakenly recorded as 'Hii' or greeting)
+        resolved_category = (
+            WebsiteBuilderService.detect_business_category(b_name + " " + instruction)
+            or WebsiteBuilderService.detect_business_category(b_name)
+        )
+        if resolved_category and (category in ["Hii", "Hi", "Hello", "Hey", "", None] or resolved_category in ["Medical & Clinic", "Farm House & Resort", "Stationery & Books"]):
+            category = resolved_category
+            session.collected_data["Business Category"] = category
+            if session.website_project_id:
+                p_coll = await WebsiteBuilderService.get_project_collection()
+                await p_coll.update_one(
+                    {"_id": ObjectId(session.website_project_id), "user_id": user_id},
+                    {"$set": {"business_category": category, "website_data.business_category": category}}
+                )
+
+        lang = WebsiteBuilderService.detect_language_mode(instruction, getattr(session, "language", "en"))
+        session.language = lang
+
+        lower_category = (category or "").lower()
+        lower_instruction = instruction.lower()
+
+        # Check if the user is asking to generate, fix, or update the logo
+        is_logo_request = any(w in lower_instruction for w in ["logo", "لوगो", "लोगो", "monogram", "brand mark", "icon"])
+        new_logo = None
+
+        if is_logo_request:
+            brand = session.collected_data.get("Brand Guidelines") or {}
+            theme = WebsiteBuilderService.resolve_palette(category=category, brand_guidelines=brand)
+            new_logo = WebsiteBuilderService.generate_dynamic_logo(b_name, category, theme["primary"])
+            session.collected_data["Logo"] = new_logo
+            session.collected_data["logo_status"] = "available"
+            current_state["logo"] = new_logo
+
+        logo = new_logo or session.collected_data.get('Logo') or current_state.get('logo', '')
+
         # Detect explicit category conflicts.
         category_conflicts = {
             "flower": ["gym", "workout", "fitness equipment"],
             "gym": ["bouquet", "flowers", "floral arrangement"],
             "indian sweet shop": ["gym equipment", "fitness training"]
         }
-
-        lower_category = category.lower()
-        lower_instruction = instruction.lower()
 
         for business, conflicting_terms in category_conflicts.items():
             if business in lower_category:
@@ -1357,11 +2379,14 @@ Rules:
 
         ai = AIProviderFactory.get_provider(preferred="openai")
 
+        lang_name = "Hinglish (conversational Hindi in Latin script)" if lang == "hinglish" else "Hindi" if lang == "hi" else "English"
+
         prompt = f"""
-Edit the existing website.
+Edit the existing website based on user instruction.
 
 Business category: {category}
-Business name: {session.collected_data.get('Business Name')}
+Business name: {b_name}
+User language: {lang_name}
 
 User instruction:
 {instruction}
@@ -1372,21 +2397,31 @@ Current website:
 Return JSON:
 {{
   "action": "update_text",
-  "message": "Description of the change",
+  "message": "Friendly, conversational response in {lang_name}",
   "updated_state": {{}}
 }}
 
 Rules:
-- Preserve unrelated content.
-- Make only requested changes.
-- Keep all images business-relevant.
-- Never regenerate the entire site unless explicitly requested.
+- Preserve existing structure and content unless explicitly requested to change.
+- In the 'message' field: Speak warmly and naturally to the user in {lang_name}. Keep it to 1-2 friendly, reassuring sentences. NEVER write dry technical changelogs or mention internal codes.
+- If requested to modify navbar or tabs:
+  - Navbar MUST include the business name "{b_name}" and logo.
+  - Navbar tabs MUST include navigation links corresponding to pages (e.g. Home, About, Services/Products, Contact).
+- If requested to modify or add hero section or images:
+  - Include captivating headline, subtitle, CTAs, and category-matched image prompts.
+- If requested to add or modify pages:
+  - Ensure the "pages" array has complete pages (Home, About, Services/Products, Contact) with proper sections.
+- Keep all images authentic and relevant to {category}.
 """
 
         try:
             result = await ai.generate_json(
                 prompt,
-                system_prompt="You are a precise website editor.",
+                system_prompt=(
+                    f"You are a helpful, friendly AI website designer. "
+                    f"Always respond to the user in {lang_name}. "
+                    "Make concise, reassuring responses and never output robotic change logs."
+                ),
                 temperature=0.2,
                 max_tokens=8192
             )
@@ -1399,6 +2434,52 @@ Rules:
             if not isinstance(updated, dict):
                 raise ValueError("Missing updated_state")
 
+            # Post-process pages to ensure image resolution and navbar consistency
+            active_logo = new_logo or logo
+            if active_logo:
+                updated["logo"] = active_logo
+
+            if "pages" in updated and isinstance(updated["pages"], list):
+                nav_tabs = updated.get("navigation") or ["Home", "About", "Services", "Contact"]
+                for p_idx, page in enumerate(updated["pages"]):
+                    if not isinstance(page, dict):
+                        continue
+                    for s_idx, section in enumerate(page.get("sections", [])):
+                        if not isinstance(section, dict):
+                            continue
+                        stype = section.get("type", "")
+                        if stype in ["navbar", "footer"]:
+                            section["title"] = b_name
+                            if active_logo:
+                                section["logo"] = active_logo
+                            if stype == "navbar":
+                                section["navigation"] = nav_tabs
+                        elif stype == "hero":
+                            if not section.get("image_url") or "placeholder" in section.get("image_url", ""):
+                                section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                                    category, section.get("image_prompt", category), s_idx, True
+                                )
+                        elif stype in ["about", "story"]:
+                            if not section.get("image_url") or "placeholder" in section.get("image_url", ""):
+                                section["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                                    category, section.get("image_prompt", f"about {category}"), s_idx, False
+                                )
+                        for itm_idx, itm in enumerate(section.get("items", [])):
+                            if isinstance(itm, dict) and (not itm.get("image_url") or "placeholder" in itm.get("image_url", "")):
+                                itm_prompt = itm.get("image_prompt") or itm.get("title") or category
+                                itm["image_url"] = WebsiteBuilderService.resolve_curated_image(
+                                    category, itm_prompt, itm_idx, False
+                                )
+
+            # If user explicitly asked for logo, provide a warm natural response
+            if is_logo_request:
+                if lang == "hi":
+                    result["message"] = f"मैंने आपकी दुकान '{b_name}' के लिए नया लोगो बनाकर वेबसाइट के नेवबार और फुटर में जोड़ दिया है। अब यह आपको वेबसाइट में स्पष्ट दिखेगा!"
+                elif lang == "hinglish":
+                    result["message"] = f"Maine aapki dukaan '{b_name}' ke hisab se naya logo generate karke navbar aur footer me laga diya hai. Ab yeh aapko website me saaf dikhega!"
+                else:
+                    result["message"] = f"I have generated and updated a customized logo for '{b_name}' across your website header and footer. It is now clearly visible on your website!"
+
             # Persist the changed state to the actual website project.
             if session.website_project_id:
                 collection = await WebsiteBuilderService.get_project_collection()
@@ -1410,6 +2491,7 @@ Rules:
                     },
                     {
                         "$set": {
+                            "logo": active_logo,
                             "website_data": updated,
                             "pages": updated.get("pages", []),
                             "theme": updated.get("theme", {}),
