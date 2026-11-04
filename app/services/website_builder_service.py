@@ -1,12 +1,16 @@
 import json
 import re
 import uuid
+<<<<<<< Updated upstream
 import logging
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
 from fastapi import HTTPException
+=======
+from fastapi import HTTPException, status
+>>>>>>> Stashed changes
 
 from app.core.database import get_database
 from app.models.website_builder import WebsiteProject, WebsiteBuilderSession
@@ -397,6 +401,7 @@ class WebsiteBuilderService:
     # ---------------------------------------------------------
 
     @staticmethod
+<<<<<<< Updated upstream
     def add_ai_message(
         session,
         content: str,
@@ -421,6 +426,13 @@ class WebsiteBuilderService:
 
     @staticmethod
     def add_user_message(session, content: str):
+=======
+    async def process_chat(session_id: str, user_id: str, message: str, language: str = None, data: dict = None):
+        session = await WebsiteBuilderService.get_session(session_id, user_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            
+>>>>>>> Stashed changes
         session.messages.append({
             "id": str(uuid.uuid4()),
             "role": "user",
@@ -440,9 +452,176 @@ class WebsiteBuilderService:
         data: dict = None
     ):
 
+<<<<<<< Updated upstream
         session = await WebsiteBuilderService.get_session(
             session_id,
             user_id
+=======
+    @staticmethod
+    async def select_template(session_id: str, user_id: str, template_id: str) -> WebsiteBuilderSession:
+        session = await WebsiteBuilderService.get_session(session_id, user_id)
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+            
+        session.selected_template = template_id
+        session.current_step = 7
+        session.messages.append({
+            "id": str(uuid.uuid4()),
+            "role": "ai",
+            "content": f"You selected the {template_id} template! Click 'Build My Website' to generate your site.",
+            "type": "summary",
+            "data": {
+                "business": session.collected_data.get("Business Name", "Your Business"),
+                "theme": template_id,
+                "language": session.language
+            },
+            "options": [{"label": "Build My Website", "action": "generate"}]
+        })
+        await WebsiteBuilderService.save_session(session)
+        return session
+        
+    @staticmethod
+    async def generate_website(session: WebsiteBuilderSession):
+        session.messages.append({
+            "id": str(uuid.uuid4()),
+            "role": "ai",
+            "content": "Generating your custom website based on your chatbot prompt...",
+            "type": "generation_status",
+            "data": { "progress": ["Business Information", "Brand Style", "Website Structure"] }
+        })
+        await WebsiteBuilderService.save_session(session)
+        
+        user_prompts = [m.get("content") for m in session.messages if m.get("role") == "user" and m.get("content")]
+        full_user_intent = " | ".join(user_prompts) if user_prompts else "Website"
+        
+        b_name = session.collected_data.get("Business Name") or session.collected_data.get("Business Category")
+        if not b_name or str(b_name).strip().upper() in ["A", "AN", "THE", "MYBUSINESS", "NONE", "NULL", ""]:
+            clean_intent = full_user_intent.replace("build", "").replace("website", "").replace("create", "").replace("want", "").replace("for", "").strip()
+            if clean_intent and len(clean_intent) > 2 and clean_intent.upper() not in ["A", "AN", "THE"]:
+                b_name = clean_intent.title()
+            elif session.collected_data.get("Business Category"):
+                b_name = f"{session.collected_data['Business Category'].title()} Studio"
+            else:
+                b_name = "My Business"
+
+        b_cat = session.collected_data.get("Business Category", full_user_intent)
+        if str(b_cat).strip().upper() in ["A", "AN", "THE", ""]:
+            b_cat = b_name
+
+        brand_guidelines = session.collected_data.get("Brand Guidelines") or {}
+        theme_data = WebsiteBuilderService.resolve_palette(full_user_intent, b_cat, brand_guidelines)
+        logo_url = session.collected_data.get("Logo") or WebsiteBuilderService.resolve_brand_logo(b_name, theme_data["primary"], brand_guidelines)
+
+        # Dynamic topic-aligned schema example with rich multi-sections
+        schema_example = json.dumps({
+            "theme": theme_data,
+            "logo": logo_url,
+            "pages": [
+                {
+                    "name": "Home",
+                    "sections": [
+                        {
+                            "type": "hero", 
+                            "title": f"Welcome to {b_name}", 
+                            "subtitle": f"Experience handcrafted excellence and premium quality tailored for your lifestyle in {b_cat}.", 
+                            "cta": f"Explore {b_cat}", 
+                            "image_prompt": f"high quality beautiful {b_cat} background banner", 
+                            "image_url": ""
+                        },
+                        {
+                            "type": "features", 
+                            "title": f"Featured {b_cat} Collections", 
+                            "subtitle": f"Our most popular selections crafted with care",
+                            "items": [
+                                {"title": f"Signature {b_cat} Classic", "description": f"Exceptional quality and professional standards for all your {b_cat} needs.", "price": "$29.00", "image_prompt": f"hd professional photo of {b_name} {b_cat} showcase", "image_url": ""},
+                                {"title": "Artisanal Specialty", "description": f"Customized features and tailored packages designed for {b_cat}.", "price": "$39.00", "image_prompt": f"high quality {b_cat} service feature banner", "image_url": ""},
+                                {"title": "Premium Experience", "description": f"Delivering satisfaction and top performance in {b_cat}.", "price": "$49.00", "image_prompt": f"modern sleek design for {b_cat}", "image_url": ""}
+                            ]
+                        },
+                        {
+                            "type": "features",
+                            "title": f"Why Choose {b_name}",
+                            "subtitle": "Unmatched standards that set us apart",
+                            "items": [
+                                {"title": "Ethically Sourced & Crafted", "description": "We believe in sustainable, transparent practices in everything we produce.", "image_prompt": f"quality craftsmanship banner for {b_cat}"},
+                                {"title": "Dedicated Specialists", "description": f"Decades of expertise poured into every single {b_cat} detail.", "image_prompt": f"expert team at work in {b_cat}"},
+                                {"title": "Customer Satisfaction", "description": "Guaranteed quality and personalized support for every client.", "image_prompt": f"happy satisfied clients and 5 star service"}
+                            ]
+                        },
+                        {
+                            "type": "features",
+                            "title": "Customer Favorites & Reviews",
+                            "subtitle": "Loved by thousands in our community",
+                            "items": [
+                                {"title": "Top Rated Selection", "description": "Outstanding quality! Exceeded our expectations in every single way.", "price": "5.0 ★ Rating", "image_prompt": f"top customer choice {b_cat}"},
+                                {"title": "Seasonal Special", "description": "A must-try favorite recommended by our loyal regulars.", "price": "$34.00", "image_prompt": f"popular trending {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "About",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": f"About {b_name}", 
+                            "subtitle": f"Our mission and story in {b_cat}",
+                            "items": [
+                                {"title": "Our Heritage", "description": f"How {b_name} strives to deliver unmatched excellence in {b_cat}.", "image_prompt": f"professional team working on {b_cat}"},
+                                {"title": "Our Quality Commitment", "description": f"Rigorous standards and dedication to perfection in every {b_cat} project.", "image_prompt": f"quality guarantee badge for {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Products",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": f"Our Complete {b_cat} Catalog", 
+                            "subtitle": f"Browse our full collection of products & packages",
+                            "items": [
+                                {"title": f"Flagship {b_cat} Tier", "description": f"Best-in-class products and gear for {b_cat}.", "price": "$59.00", "image_prompt": f"featured product showcase {b_cat}"},
+                                {"title": f"Custom Packages", "description": f"Tailored options engineered specifically for your {b_cat} requirements.", "price": "$89.00", "image_prompt": f"custom designed {b_cat} item"},
+                                {"title": f"Everyday Essentials", "description": f"Top trending items highly recommended in {b_cat}.", "price": "$24.00", "image_prompt": f"popular essential collection {b_cat}"}
+                            ]
+                        }
+                    ]
+                },
+                {
+                    "name": "Contact",
+                    "sections": [
+                        {
+                            "type": "features", 
+                            "title": "Get In Touch", 
+                            "subtitle": "We'd love to hear from you",
+                            "items": [
+                                {"title": "Email Us", "description": f"contact@{b_name.lower().replace(' ', '')}.com", "image_prompt": "modern contact support desk email"},
+                                {"title": "Phone Helpline", "description": "+1 (800) 555-0199", "image_prompt": "phone hotline customer support"},
+                                {"title": "Showroom Location", "description": "742 Innovation Parkway, Suite 100", "image_prompt": f"modern showroom for {b_cat}"}
+                            ]
+                        }
+                    ]
+                }
+            ]
+        })
+        ai = AIProviderFactory.get_provider(preferred="openai")
+        prompt = (
+            f"""Generate a custom structured website JSON based strictly on the user's business topic and prompt.
+
+User Prompt / Intent: '{full_user_intent}'
+Business Name: '{b_name}'
+Business Topic / Category: '{b_cat}'
+Language: {session.language or 'English'}.
+
+CRITICAL REQUIREMENTS:
+1. Heavily prioritize and implement ALL specific instructions, custom content, themes, and image concepts mentioned in the 'User Prompt / Intent'.
+2. EVERYTHING (titles, descriptions, section headlines, prices, image_prompts) MUST be tailored to '{b_cat}', business name '{b_name}', AND the user's specific prompt.
+3. Every item MUST include a detailed English 'image_prompt' that describes crisp visual photography relevant to '{b_cat}'.
+4. Include rich content sections on Home: Hero, Featured Collections with prices, Why Choose Us, and Customer Favorites.
+5. In 'theme', provide matching hex codes: {{"primary": "{theme_data['primary']}", "secondary": "{theme_data['secondary']}", "font": "outfit"}}.
+6. Return ONLY valid JSON matching this structure: {schema_example}."""
+>>>>>>> Stashed changes
         )
 
         if not session:

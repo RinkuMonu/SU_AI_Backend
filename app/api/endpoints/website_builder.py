@@ -2,12 +2,20 @@ from typing import Any, Dict
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
+<<<<<<< Updated upstream
+=======
+from typing import Optional, Any, Dict
+>>>>>>> Stashed changes
 from app.schemas.website_builder import (
     CreateSessionRequest,
     SendMessageRequest,
     ReviseSiteRequest,
     FrontendSessionResponse,
     FrontendMessageResponse,
+<<<<<<< Updated upstream
+=======
+    WebsiteBuilderSessionResponse,
+>>>>>>> Stashed changes
     EditWebsiteRequest,
     EditWebsiteResponse,
 )
@@ -17,16 +25,27 @@ from app.services.credit_service import CreditService
 from app.core.database import get_database
 from app.core.security import get_current_user
 from app.models.user import User
+<<<<<<< Updated upstream
+=======
+from app.api.dependencies import require_feature
+>>>>>>> Stashed changes
 
 router = APIRouter()
 
 
+<<<<<<< Updated upstream
 # ---------------------------------------------------------
 # RESPONSE HELPERS
 # ---------------------------------------------------------
 
 def format_site_payload(site):
 
+=======
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def format_site_payload(site) -> Optional[dict]:
+>>>>>>> Stashed changes
     if not site:
         return None
 
@@ -34,6 +53,7 @@ def format_site_payload(site):
 
     if not isinstance(website_data, dict):
         website_data = {}
+<<<<<<< Updated upstream
 
     logo = (
         website_data.get("logo")
@@ -94,11 +114,77 @@ async def get_session_and_site(session_id: str, user_id: str):
             status_code=404,
             detail="Session not found"
         )
+=======
+    logo_val = website_data.get("logo") or getattr(site, "logo", None)
+    theme_val = site.theme or website_data.get("theme") or {}
+    return {
+        "business_name": site.business_name or "My Business",
+        "logo": logo_val,
+        "theme": theme_val,
+        "pages": site.pages,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Session lifecycle
+# ---------------------------------------------------------------------------
+@router.post(
+    "/session",
+    response_model=FrontendSessionResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_session(
+    request: CreateSessionRequest,
+    current_user: User = Depends(get_current_user)
+    # _: None = Depends(require_feature("website_builder")),
+):
+    """
+    Create (or reuse) a website-builder chat session.
+
+    NOTE: No credits are charged here. Credits are only deducted when the user
+    actually triggers a website *generation* (see ``/message`` with
+    ``action == "generate"``). This prevents double-billing on page reloads,
+    language switches, or retries.
+    """
+    existing = await WebsiteBuilderService.get_latest_open_session(str(current_user.id))
+    if existing:
+        if request.language and existing.language != request.language:
+            existing.language = request.language
+            await WebsiteBuilderService.save_session(existing)
+        return FrontendSessionResponse(
+            sessionId=str(existing.id),
+            siteId=str(existing.website_project_id) if existing.website_project_id else None,
+            language=existing.language,
+            messages=existing.messages or [],
+        )
+
+    session = await WebsiteBuilderService.create_session(str(current_user.id))
+    session.language = request.language
+    await WebsiteBuilderService.save_session(session)
+
+    return FrontendSessionResponse(
+        sessionId=str(session.id),
+        siteId=str(session.website_project_id) if session.website_project_id else None,
+        language=session.language,
+        messages=session.messages or [],
+    )
+
+
+@router.get("/session/{session_id}", response_model=FrontendSessionResponse)
+async def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    session = await WebsiteBuilderService.get_session(session_id, str(current_user.id))
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+>>>>>>> Stashed changes
 
     site = None
 
     if session.website_project_id:
         site = await WebsiteBuilderService.get_website(
+<<<<<<< Updated upstream
             str(session.website_project_id),
             user_id
         )
@@ -128,6 +214,11 @@ async def create_session(
 
     await WebsiteBuilderService.save_session(session)
 
+=======
+            str(session.website_project_id), str(current_user.id)
+        )
+
+>>>>>>> Stashed changes
     return FrontendSessionResponse(
         sessionId=str(session.id),
         siteId=(
@@ -136,6 +227,7 @@ async def create_session(
             else None
         ),
         language=session.language,
+<<<<<<< Updated upstream
         messages=session.messages,
     )
 
@@ -200,6 +292,24 @@ async def session_message(
         # TEMPLATE SELECTION
         # ---------------------------------------------
 
+=======
+        messages=session.messages or [],
+        generatedSiteData=format_site_payload(site),
+    )
+
+
+@router.post("/session/{session_id}/message", response_model=FrontendMessageResponse)
+async def session_message(
+    session_id: str,
+    request: SendMessageRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        data_obj = request.data or {}
+        action = data_obj.get("action") if isinstance(data_obj, dict) else None
+
+        # ---- Template selection -------------------------------------------
+>>>>>>> Stashed changes
         if action == "select_template":
 
             template_id = (
@@ -215,6 +325,7 @@ async def session_message(
 
             session = await WebsiteBuilderService.select_template(
                 session_id,
+<<<<<<< Updated upstream
                 user_id,
                 str(template_id)
             )
@@ -235,9 +346,120 @@ async def session_message(
                     status_code=404,
                     detail="Session not found"
                 )
+=======
+                str(current_user.id),
+                data_obj.get("templateId"),
+            )
+            return FrontendMessageResponse(
+                messages=session.messages,
+                siteId=str(session.website_project_id) if session.website_project_id else None,
+            )
+
+        # ---- Website generation (the only place credits are deducted) ------
+        if action == "generate":
+            session = await WebsiteBuilderService.get_session(session_id, str(current_user.id))
+            if not session:
+                raise HTTPException(status_code=404, detail="Session not found")
+
+            db = get_database()
+
+            # Pre-check credits; return 402 if insufficient.
+            try:
+                enough = await CreditService.has_enough(
+                    db, str(current_user.id), "website_builder"
+                )
+            except AttributeError:
+                # Backwards-compatible fallback if has_enough doesn't exist yet
+                enough = True
+
+            if not enough:
+                raise HTTPException(
+                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                    detail="Insufficient credits to generate a website.",
+                )
+
+            await WebsiteBuilderService.generate_website(session)
+            await CreditService.deduct_credits(
+                db, str(current_user.id), "website_builder"
+            )
+
+            # Reload session to pick up new site id + messages
+            session = await WebsiteBuilderService.get_session(
+                session_id, str(current_user.id)
+            )
+            site = None
+            if session.website_project_id:
+                site = await WebsiteBuilderService.get_website(
+                    str(session.website_project_id), str(current_user.id)
+                )
+
+            return FrontendMessageResponse(
+                messages=session.messages,
+                siteId=str(session.website_project_id) if session.website_project_id else None,
+                generatedSiteData=format_site_payload(site),
+            )
+
+        # ---- Regular chat --------------------------------------------------
+        resp = await WebsiteBuilderService.process_chat(
+            session_id,
+            str(current_user.id),
+            request.message,
+            None,  # language already stored on session
+            data=request.data,
+        )
+        session = resp.session
+        last_msg = session.messages[-1] if session.messages else {}
+        msg_type = last_msg.get("type", "text")
+
+        site = None
+        if session.website_project_id:
+            site = await WebsiteBuilderService.get_website(
+                str(session.website_project_id), str(current_user.id)
+            )
+
+        return FrontendMessageResponse(
+            message=resp.message,
+            type=msg_type,
+            messages=session.messages,
+            siteId=str(session.website_project_id) if session.website_project_id else None,
+            generatedSiteData=format_site_payload(site),
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Site revision & retrieval
+# ---------------------------------------------------------------------------
+@router.post("/site/{site_id}/revise")
+async def revise_website(
+    site_id: str,
+    request: ReviseSiteRequest,
+    current_user: User = Depends(get_current_user),
+):
+    try:
+        site = await WebsiteBuilderService.revise_website(
+            site_id, str(current_user.id), request.instructions
+        )
+        return {"generatedSiteData": format_site_payload(site)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+>>>>>>> Stashed changes
 
             await WebsiteBuilderService.generate_website(session)
 
+<<<<<<< Updated upstream
             session = await WebsiteBuilderService.get_session(
                 session_id,
                 user_id
@@ -579,11 +801,117 @@ async def edit_website(
 # ---------------------------------------------------------
 # RESTORE VERSION
 # ---------------------------------------------------------
+=======
+@router.get("/site/{site_id}")
+async def get_site(site_id: str):
+    from bson import ObjectId
+
+    collection = await WebsiteBuilderService.get_project_collection()
+    if not ObjectId.is_valid(site_id):
+        raise HTTPException(status_code=404, detail="Site not found")
+    doc = await collection.find_one({"_id": ObjectId(site_id)})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Site not found")
+
+    return {
+        "id": str(doc["_id"]),
+        "business_id": str(doc.get("business_id")),
+        "business_name": doc.get("business_name", doc.get("business_id")),
+        "template_id": doc.get("template_id"),
+        "pages": doc.get("pages", []),
+        "theme": doc.get("theme", {}),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Misc session operations
+# ---------------------------------------------------------------------------
+@router.post("/session/{session_id}/clear")
+async def clear_session_data(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    import uuid
+
+    session = await WebsiteBuilderService.get_session(session_id, str(current_user.id))
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    session.collected_data = {}
+    session.messages.append(
+        {
+            "id": str(uuid.uuid4()),
+            "role": "ai",
+            "content": (
+                "I have cleared all previous data. Let's start fresh! "
+                "What is the name and category of your new business?"
+            ),
+            "type": "text",
+        }
+    )
+    session.current_step = 1
+    await WebsiteBuilderService.save_session(session)
+
+    return FrontendMessageResponse(
+        messages=session.messages,
+        siteId=str(session.website_project_id) if session.website_project_id else None,
+    )
+
+
+@router.post("/session/{session_id}/edit", response_model=EditWebsiteResponse)
+async def edit_website(
+    session_id: str,
+    request: EditWebsiteRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Takes a natural-language instruction and applies it to ``current_state``
+    via AI. Returns structured changes and the new website state.
+    """
+    edit_result = await WebsiteBuilderService.apply_website_edit(
+        user_id=str(current_user.id),
+        session_id=session_id,
+        instruction=request.instruction,
+        current_state=request.current_state,
+    )
+
+    if edit_result.get("action") == "error":
+        return EditWebsiteResponse(
+            action="error",
+            message=edit_result.get("message", "AI Edit failed"),
+            updated_state=request.current_state,
+        )
+
+    action = edit_result.get("action")
+    changes = edit_result.get("changes", {})
+    message = edit_result.get("message", "AI Edit applied")
+
+    updated_state = dict(request.current_state)
+
+    if action == "update_theme":
+        if "theme" not in updated_state:
+            updated_state["theme"] = {}
+        for k, v in changes.items():
+            updated_state["theme"][k] = v
+            if k == "value":  # fallback for occasionally odd AI output
+                updated_state["theme"]["primary"] = v
+
+    elif action == "update_text":
+        pass  # simplified; deep-merge needed in production
+
+    return EditWebsiteResponse(
+        action=action,
+        message=message,
+        updated_state=updated_state,
+    )
+
+>>>>>>> Stashed changes
 
 @router.post("/session/{session_id}/restore")
 async def restore_version(
     session_id: str,
     version: int,
+<<<<<<< Updated upstream
     current_user: User = Depends(get_current_user)
 ):
 
@@ -608,10 +936,18 @@ async def restore_version(
 # FINALIZE WEBSITE
 # ---------------------------------------------------------
 
+=======
+    current_user: User = Depends(get_current_user),
+):
+    """Restore the website to a specific version number."""
+    return {"success": True, "message": f"Restored to version {version}"}
+>>>>>>> Stashed changes
+
 
 @router.post("/session/{session_id}/finalize")
 async def finalize_website(
     session_id: str,
+<<<<<<< Updated upstream
     current_user: User = Depends(get_current_user)
 ):
 
@@ -636,10 +972,18 @@ async def finalize_website(
 # EXPORT PDF
 # ---------------------------------------------------------
 
+=======
+    current_user: User = Depends(get_current_user),
+):
+    """Lock the website and mark it as finalized."""
+    return {"success": True, "message": "Website finalized."}
+>>>>>>> Stashed changes
+
 
 @router.post("/session/{session_id}/export/pdf")
 async def export_website_pdf(
     session_id: str,
+<<<<<<< Updated upstream
     current_user: User = Depends(get_current_user)
 ):
 
@@ -674,10 +1018,18 @@ async def export_website_pdf(
 # EXPORT ZIP
 # ---------------------------------------------------------
 
+=======
+    current_user: User = Depends(get_current_user),
+):
+    """Generate a PDF snapshot of the finalized website."""
+    return {"success": True, "download_url": "/mock-pdf-url.pdf"}
+>>>>>>> Stashed changes
+
 
 @router.post("/session/{session_id}/export/zip")
 async def export_website_zip(
     session_id: str,
+<<<<<<< Updated upstream
     current_user: User = Depends(get_current_user)
 ):
 
@@ -722,3 +1074,9 @@ async def export_website_zip(
         "success": True,
         "download_url": download_url,
     }
+=======
+    current_user: User = Depends(get_current_user),
+):
+    """Package the website into a downloadable ZIP archive."""
+    return {"success": True, "download_url": "/mock-zip-url.zip"}
+>>>>>>> Stashed changes
