@@ -39,6 +39,7 @@ class MongoBaseModel(BaseModel):
         "populate_by_name": True,
         "arbitrary_types_allowed": True,
         "protected_namespaces": (),
+        "extra": "allow",
     }
 
     @classmethod

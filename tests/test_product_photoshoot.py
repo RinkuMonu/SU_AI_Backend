@@ -685,6 +685,7 @@ async def test_failure_recovery_and_partial_retry():
 
         # Now simulate a partial failure on a new job to test retry
         partial_job_id = f"job_partial_{user_id[:6]}"
+        await db["photoshoot_jobs"].delete_many({"job_id": partial_job_id})
         failed_item = {
             "index": 2,
             "style": "Luxury Studio Composition",

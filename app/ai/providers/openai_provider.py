@@ -288,7 +288,7 @@ class OpenAIProvider(AIProvider):
             if "input_fidelity" in kwargs:
                 call_kwargs["input_fidelity"] = kwargs["input_fidelity"]
             elif "gpt-image-1" in str(model_name):
-                call_kwargs["input_fidelity"] = "low"
+                call_kwargs["input_fidelity"] = "high"
             if "response_format" in kwargs:
                 call_kwargs["response_format"] = kwargs["response_format"]
 

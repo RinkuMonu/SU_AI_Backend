@@ -18,6 +18,7 @@ class User(MongoBaseModel):
     email_verified_at: Optional[datetime] = None
     verification_token: Optional[str] = None
     phone_verification_token: Optional[str] = None
+    is_new_user: bool = False
     resetPasswordToken: Optional[str] = None
     resetPasswordExpiresAt: Optional[datetime] = None
     termsAcceptedAt: Optional[datetime] = None

@@ -119,6 +119,8 @@ class UserResponse(BaseModel):
     online_presence: Optional[str] = None
     selected_services: Optional[List[str]] = Field(default_factory=list)
     selectedServices: Optional[List[str]] = Field(default_factory=list)
+    is_new_user: Optional[bool] = False
+    isNewUser: Optional[bool] = False
 
     @model_validator(mode="before")
     @classmethod
