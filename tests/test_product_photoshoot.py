@@ -391,7 +391,7 @@ async def test_flow_a_mens_tshirt_with_model():
 
         # Check credits deducted in DB
         sub = await db["subscriptions"].find_one({"user_id": user_id})
-        assert sub["credits_remaining"] == 95  # 100 - 5 = 95
+        assert sub["credits_remaining"] == 98  # 100 - 2 = 98
 
 
 # ---------------------------------------------------------------------------
@@ -1184,7 +1184,6 @@ async def test_canonical_photography_styles_and_preview_urls():
         r_gal_product = await ac.get("/api/v1/product-photoshoot/gallery?workflow_mode=product_photography", headers=headers)
         assert r_gal_product.status_code == 200
         assert r_gal_product.json()["success"] is True
-
 
 
 

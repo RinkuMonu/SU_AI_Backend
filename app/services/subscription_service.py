@@ -3,7 +3,10 @@ from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
 from app.core.billing_config import PLANS
 
-QUALIFYING_PAID_PLANS = {"STARTER", "GROWTH", "PRO", "BUSINESS", "INFLUENCER", "TEST_PLAN", "TEST"}
+QUALIFYING_PAID_PLANS = {
+    "PRO_STARTER", "PRO", "PRO_PLUS", "BUSINESS", "BUSINESS_PREMIUM",
+    "STARTER", "GROWTH", "INFLUENCER", "TEST_PLAN", "TEST",
+}
 
 class SubscriptionService:
     @staticmethod
@@ -12,35 +15,79 @@ class SubscriptionService:
         existing = await collection.find_one({"user_id": user_id})
         
         if existing:
+            if (existing.get("plan_id") or "FREE").upper() == "FREE":
+                await SubscriptionService._grant_free_signup_credits(db, user_id)
+                existing = await collection.find_one({"user_id": user_id})
             return existing
             
         now = datetime.now(timezone.utc)
         default_plan_id = "FREE"
-        plan_config = PLANS[default_plan_id]
-        
         new_sub = {
             "user_id": user_id,
             "plan_id": default_plan_id,
             "plan": default_plan_id, # for backwards compatibility
             "billing_cycle": "monthly",
-            "credits_total": plan_config["credits"],
-            "credits_remaining": plan_config["credits"],
+            "credits_total": 0,
+            "credits_remaining": 0,
             "status": "active",
             "start_date": now,
             "created_at": now,
             "updated_at": now
         }
         
-        try:
-            result = await collection.find_one_and_update(
-                {"user_id": user_id},
-                {"$setOnInsert": new_sub},
-                upsert=True,
-                return_document=ReturnDocument.AFTER
-            )
-            return result
-        except Exception:
-            return await collection.find_one({"user_id": user_id})
+        result = await collection.find_one_and_update(
+            {"user_id": user_id},
+            {"$setOnInsert": new_sub},
+            upsert=True,
+            return_document=ReturnDocument.AFTER
+        )
+        if (result.get("plan_id") or "FREE").upper() == "FREE":
+            await SubscriptionService._grant_free_signup_credits(db, user_id)
+            result = await collection.find_one({"user_id": user_id})
+        return result
+
+    @staticmethod
+    async def _grant_free_signup_credits(db, user_id: str) -> None:
+        now = datetime.now(timezone.utc)
+        subscription = await db["subscriptions"].find_one_and_update(
+            {
+                "user_id": user_id,
+                "plan_id": "FREE",
+                "free_signup_credits_granted": {"$ne": True},
+            },
+            {
+                "$set": {
+                    "credits_total": PLANS["FREE"]["credits"],
+                    "credits_remaining": PLANS["FREE"]["credits"],
+                    "free_signup_credits_granted": True,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.BEFORE,
+        )
+        if not subscription:
+            return
+
+        await db["credit_transactions"].update_one(
+            {
+                "user_id": user_id,
+                "transaction_type": "grant",
+                "reference_id": f"free_signup_{user_id}",
+            },
+            {
+                "$setOnInsert": {
+                    "user_id": user_id,
+                    "transaction_type": "grant",
+                    "amount": PLANS["FREE"]["credits"],
+                    "feature": "free_plan_signup",
+                    "reference_id": f"free_signup_{user_id}",
+                    "balance_before": subscription.get("credits_remaining", 0),
+                    "balance_after": PLANS["FREE"]["credits"],
+                    "created_at": now,
+                }
+            },
+            upsert=True,
+        )
 
     @staticmethod
     async def check_feature_access(db, user_id: str, feature_name: str):
@@ -176,7 +223,7 @@ class SubscriptionService:
             cycle = "monthly"
 
         expires_at = now + timedelta(days=days)
-        credits_to_add = plan_config.get("credits", 0) * multiplier
+        monthly_credits = plan_config.get("credits", 0) * multiplier
 
         # Update subscription status and validity (without double-incrementing credits)
         updated = await collection.find_one_and_update(
@@ -197,15 +244,101 @@ class SubscriptionService:
             return_document=ReturnDocument.AFTER
         )
 
-        # Log to credit transactions and increment credits atomically and idempotently
-        from app.services.credit_service import CreditService
+        # A successful renewal replaces the previous allowance; unused credits do not roll over.
         credit_ref = reference_id or f"upgrade_{normalized_plan_id}_{user_id}_{now.strftime('%Y%m%d%H%M%S')}"
-        if credits_to_add > 0:
-            updated = await CreditService.grant_credits(
-                db, user_id, credits_to_add,
-                reason=f"plan_upgrade_{normalized_plan_id.lower()}",
-                reference_id=credit_ref
-            )
+        tx_col = db["credit_transactions"]
+        existing_grant = await tx_col.find_one({
+            "user_id": user_id,
+            "transaction_type": "grant",
+            "reference_id": credit_ref,
+        })
+        signup_bonus_ref = f"paid_signup_bonus_{user_id}"
+        existing_signup_bonus = await tx_col.find_one({
+            "user_id": user_id,
+            "transaction_type": "grant",
+            "reference_id": signup_bonus_ref,
+        })
+        if not existing_signup_bonus:
+            existing_signup_bonus = await db["subscription_history"].find_one({
+                "user_id": user_id,
+                "payment_status": "paid",
+                "plan_id": {
+                    "$in": [
+                        "PRO_STARTER", "PRO", "PRO_PLUS", "BUSINESS", "BUSINESS_PREMIUM",
+                        "STARTER", "GROWTH", "INFLUENCER",
+                    ]
+                },
+            })
+        if not existing_signup_bonus:
+            prior_payment_query = {
+                "user_id": user_id,
+                "status": "success",
+                "plan_id": {
+                    "$in": [
+                        "PRO_STARTER", "PRO", "PRO_PLUS", "BUSINESS", "BUSINESS_PREMIUM",
+                        "STARTER", "GROWTH", "INFLUENCER",
+                    ]
+                },
+            }
+            excluded_refs = [value for value in (reference_id, transaction_id) if value]
+            if excluded_refs:
+                prior_payment_query["order_id"] = {"$nin": excluded_refs}
+                prior_payment_query["transaction_id"] = {"$nin": excluded_refs}
+            existing_signup_bonus = await db["payment_transactions"].find_one(prior_payment_query)
+        signup_bonus = (
+            plan_config.get("signup_bonus", 0)
+            if amount != 0 and not existing_signup_bonus
+            else 0
+        )
+        credits_granted = monthly_credits + signup_bonus
+
+        if monthly_credits > 0 and not existing_grant:
+            if "signup_bonus" not in plan_config:
+                from app.services.credit_service import CreditService
+                updated = await CreditService.grant_credits(
+                    db,
+                    user_id,
+                    monthly_credits,
+                    reason=f"plan_upgrade_{normalized_plan_id.lower()}",
+                    reference_id=credit_ref,
+                )
+            else:
+                before = await collection.find_one({"user_id": user_id})
+                balance_before = before.get("credits_remaining", 0) if before else 0
+                updated = await collection.find_one_and_update(
+                    {"user_id": user_id},
+                    {
+                        "$set": {
+                            "credits_remaining": credits_granted,
+                            "credits_total": credits_granted,
+                            "updated_at": now,
+                        }
+                    },
+                    return_document=ReturnDocument.AFTER,
+                )
+                await tx_col.insert_one({
+                    "user_id": user_id,
+                    "transaction_type": "grant",
+                    "amount": monthly_credits,
+                    "feature": f"plan_upgrade_{normalized_plan_id.lower()}",
+                    "reference_id": credit_ref,
+                    "balance_before": balance_before,
+                    "balance_after": monthly_credits,
+                    "created_at": now,
+                })
+                if signup_bonus:
+                    await tx_col.insert_one({
+                        "user_id": user_id,
+                        "transaction_type": "grant",
+                        "amount": signup_bonus,
+                        "feature": "paid_signup_bonus",
+                        "reference_id": signup_bonus_ref,
+                        "balance_before": monthly_credits,
+                        "balance_after": credits_granted,
+                        "created_at": now,
+                    })
+        else:
+            updated = await collection.find_one({"user_id": user_id})
 
         # Mark onboarding step 3 completed in businesses
         await db["businesses"].update_one(
@@ -239,7 +372,7 @@ class SubscriptionService:
             payment_status="paid" if amount > 0 else "free_activation",
             payment_provider=payment_provider,
             transaction_id=transaction_id or reference_id,
-            credits_granted=credits_to_add,
+            credits_granted=credits_granted,
             valid_until=expires_at
         )
 
@@ -253,7 +386,23 @@ class SubscriptionService:
         Idempotent: Prevents duplicate history or credit grants on repeat activations.
         """
         now = datetime.now(timezone.utc)
-        sub = await SubscriptionService.get_or_create_subscription(db, user_id)
+        await SubscriptionService.get_or_create_subscription(db, user_id)
+        await db["subscriptions"].update_one(
+            {"user_id": user_id},
+            {
+                "$set": {
+                    "plan_id": "FREE",
+                    "plan": "FREE",
+                    "billing_cycle": "monthly",
+                    "status": "active",
+                    "features": PLANS["FREE"]["features"],
+                    "verified_payment": False,
+                    "updated_at": now,
+                },
+                "$unset": {"expires_at": ""},
+            },
+        )
+        await SubscriptionService._grant_free_signup_credits(db, user_id)
         
         # Check if already activated in subscription history
         history_col = db["subscription_history"]
@@ -271,7 +420,7 @@ class SubscriptionService:
                 "payment_status": "free_activation",
                 "payment_provider": None,
                 "transaction_id": None,
-                "credits_granted": 5,
+                "credits_granted": PLANS["FREE"]["credits"],
                 "invoice_reference": f"INV-FREE-{user_id[:8].upper()}",
                 "is_free": True,
                 "activated_at": now,
@@ -280,14 +429,6 @@ class SubscriptionService:
             }
             await history_col.insert_one(free_record)
             
-            # Grant free tier credits idempotently
-            from app.services.credit_service import CreditService
-            await CreditService.grant_credits(
-                db, user_id, 5,
-                reason="free_plan_activation",
-                reference_id=f"free_plan_{user_id}"
-            )
-
         # Mark business record as completed
         await db["businesses"].update_one(
             {"owner_id": user_id},

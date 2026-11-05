@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
 from bson import ObjectId
-from app.core.billing_config import FEATURE_PRICING
+from app.core.billing_config import FEATURE_PRICING, NON_CREDIT_FEATURES, UNPRICED_FEATURES
 
 class CreditService:
     @staticmethod
@@ -18,6 +18,13 @@ class CreditService:
         has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
 
         sub = await CreditService.get_or_create_subscription(db, user_id)
+        if action in NON_CREDIT_FEATURES:
+            return True
+        if action in UNPRICED_FEATURES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"CREDIT_COST_UNCONFIGURED: Credit pricing for '{action}' is not set yet.",
+            )
         cost = FEATURE_PRICING.get(action, 1)
 
         if sub.get("credits_remaining", 0) < cost:
@@ -48,6 +55,13 @@ class CreditService:
         is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
         has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
 
+        if action in NON_CREDIT_FEATURES:
+            return {"success": True}
+        if action in UNPRICED_FEATURES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"CREDIT_COST_UNCONFIGURED: Credit pricing for '{action}' is not set yet.",
+            )
         cost = FEATURE_PRICING.get(action, 1)
 
         if cost == 0:

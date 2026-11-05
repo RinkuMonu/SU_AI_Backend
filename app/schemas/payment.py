@@ -157,7 +157,7 @@ class TestPlanResetResponse(BaseModel):
 # ===========================================================================
 
 class CashfreeSubscriptionCreateRequest(BaseModel):
-    plan_id: str = Field(..., description="Plan ID e.g. STARTER, GROWTH, BUSINESS, INFLUENCER")
+    plan_id: str = Field(..., description="Plan ID: PRO_STARTER, PRO_PLUS, BUSINESS, or BUSINESS_PREMIUM")
     billing_cycle: Optional[str] = Field("monthly", description="monthly, quarterly, or yearly")
     customer_phone: Optional[str] = Field(None, description="10-digit customer mobile number for SMS/mandate")
     return_url: Optional[str] = Field(None, description="Frontend redirect URL after mandate approval")
