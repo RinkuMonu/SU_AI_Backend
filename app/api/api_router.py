@@ -16,6 +16,9 @@ from app.api.endpoints import (
     leads,
     transactions,
     photoshoot,
+    influencer_onboarding,
+    influencer_social,
+    chats,
 )
 
 api_router = APIRouter()
@@ -30,9 +33,12 @@ api_router.include_router(payments.router, prefix="/payments", tags=["payments"]
 api_router.include_router(transactions.router, prefix="/transactions", tags=["Transactions"])
 api_router.include_router(photoshoot.router, prefix="/product-photoshoot", tags=["Product Photoshoot Studio"])
 api_router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
+api_router.include_router(influencer_onboarding.router, prefix="/influencer/onboarding", tags=["Influencer Onboarding"])
+api_router.include_router(influencer_social.router, prefix="/influencer/social", tags=["Influencer Social Connections"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(businesses.router, prefix="/businesses", tags=["Businesses"])
 api_router.include_router(brand.router, prefix="/brands", tags=["Brand Kit"])
 api_router.include_router(linkedin.router, prefix="/linkedin", tags=["LinkedIn"])
+api_router.include_router(chats.router, prefix="/chats", tags=["Chats & Messaging"])
 api_router.include_router(leads.router, prefix="/leads", tags=["Leads"])
 api_router.include_router(leads.router, prefix="/contact", tags=["Contact"], include_in_schema=False)

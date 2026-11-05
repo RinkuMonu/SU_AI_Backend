@@ -46,7 +46,13 @@ class SMSService:
         """
         ch = (channel or "sms").lower().strip()
         if ch == "whatsapp":
-            return await cls._send_via_msg91_whatsapp(phone_number, otp)
+            try:
+                res = await cls._send_via_msg91_whatsapp(phone_number, otp)
+                if isinstance(res, dict) and (res.get("type") == "success" or res.get("return") is True or res.get("success") is True):
+                    return res
+            except Exception as w_err:
+                logger.warning(f"MSG91 WhatsApp delivery failed ({w_err}), falling back to SMS...")
+                # Seamless fallback to SMS delivery below!
 
         provider = (getattr(settings, "SMS_PROVIDER", None) or "msg91").lower().strip()
         last_exc = None
@@ -322,12 +328,9 @@ class SMSService:
                         ):
                             logger.warning(f"[FALLBACK] Fast2SMS response note ({err_msg}). Continuing with simulated success for OTP {otp}")
                             return {"success": True, "simulated": True, "channel": channel, "message": "OTP processed"}
-                        raise HTTPException(
-                            status_code=status.HTTP_502_BAD_GATEWAY,
-                            detail=f"SMS delivery failed: {err_msg}"
-                        )
+                        logger.warning(f"Fast2SMS DLT route failed ({err_msg}), attempting fallback routes...")
             except HTTPException:
-                raise
+                pass
             except httpx.RequestError as exc:
                 logger.error(f"Network error contacting Fast2SMS DLT for {mask_phone_number(clean_10)}: {exc}")
                 if settings.ENVIRONMENT == "development" or "pytest" in sys.modules:

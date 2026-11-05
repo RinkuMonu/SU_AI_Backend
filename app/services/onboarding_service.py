@@ -122,10 +122,20 @@ class OnboardingService:
 
         # 2. Influencer or Admin roles do not require business online presence onboarding
         if role == "influencer":
+            is_completed = bool(
+                user_doc.get("influencer_onboarding_completed", False) or
+                (
+                    user_doc.get("role") == "influencer" and
+                    bool(user_doc.get("onboardingCompleted", False) or user_doc.get("onboarding_completed", False)) and
+                    int(user_doc.get("onboarding_step", 1) or 1) >= 7 and
+                    str(user_doc.get("onboarding_status", "")).lower() == "completed"
+                )
+            )
+            step = int(user_doc.get("onboarding_step", 1) or 1)
             return {
                 "role": "influencer",
-                "onboarding_status": "completed",
-                "onboarding_step": 1,
+                "onboarding_status": "completed" if is_completed else ("in_progress" if step > 1 else "not_started"),
+                "onboarding_step": step,
                 "online_presence": None,
                 "canonical_presence": None,
                 "business_source": None,
@@ -134,14 +144,14 @@ class OnboardingService:
                 "selected_platforms": [],
                 "selected_services": selected_services,
                 "selectedServices": selected_services,
-                "onboarding_completed": True,
-                "onboardingCompleted": True,
-                "can_access_dashboard": True,
-                "requires_onboarding": False,
+                "onboarding_completed": is_completed,
+                "onboardingCompleted": is_completed,
+                "can_access_dashboard": is_completed,
+                "requires_onboarding": not is_completed,
                 "requires_role_selection": False,
-                "next_step": "dashboard",
-                "dashboard_route": "/dashboard/creator",
-                "onboarding_route": "/dashboard/creator"
+                "next_step": "dashboard" if is_completed else "influencer_onboarding",
+                "dashboard_route": "/influencer" if is_completed else "/onboarding/influencer",
+                "onboarding_route": "/influencer" if is_completed else "/onboarding/influencer"
             }
 
         if role == "admin":

@@ -4,10 +4,16 @@ from fastapi import FastAPI, Request, Response
 from fastapi.encoders import ENCODERS_BY_TYPE
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import os
+import sys
+import traceback
+from pymongo.errors import PyMongoError
+from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # Register ObjectId serialization globally so jsonable_encoder never throws 500 on MongoDB ObjectIds
 ENCODERS_BY_TYPE[ObjectId] = str
-# Reload trigger 10
+
 from app.core.config import settings
 from app.core.database import connect_to_mongo, close_mongo_connection, init_db_indexes
 from app.services.scheduler_service import scheduler_service
@@ -33,6 +39,8 @@ from app.api.endpoints.transactions import router as transactions_router
 from app.api.endpoints.influencer_marketplace import router as influencer_marketplace_router
 from app.api.endpoints.leads import router as leads_router
 from app.api.endpoints.photoshoot import router as photoshoot_router
+from app.api.endpoints.chats import router as chats_router
+from app.ai.providers.openai_provider import OpenAIServiceError
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -43,14 +51,15 @@ async def lifespan(app: FastAPI):
     # Shutdown
     await scheduler_service.stop()
     close_mongo_connection()
-from fastapi.staticfiles import StaticFiles
+
 app = FastAPI(
     title="Dhanda Grow API",
     description="Backend API for Dhanda Grow Platform",
     version="1.0.0",
     lifespan=lifespan,
 )
-import os
+
+# Ensure directories exist and mount static assets
 os.makedirs("uploads", exist_ok=True)
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 os.makedirs("media", exist_ok=True)
@@ -58,19 +67,55 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 if os.path.exists("assets"):
     app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
-from pymongo.errors import PyMongoError
-from fastapi.responses import JSONResponse
-
 # Set up CORS - works for localhost and all live deployments
+
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=settings.CORS_ORIGINS_LIST,
+#     allow_origin_regex=r"https?://.*",
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+#     expose_headers=["*"],
+# )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS_LIST,
-    allow_origin_regex=r"https?://.*",
+    # allow_origin_regex=r"https?://.*",
+    
+    allow_origin_regex=(
+        r"^https?://([a-z0-9-]+\.)*"
+        + (
+            (settings.FRONTEND_URL or "").replace("https://", "").replace("http://", "").split("/")[0].replace(".", r"\.")
+            if settings.FRONTEND_URL else r"(localhost|127\.0\.0\.1)"
+        )
+        + r"(:\d+)?$"
+    ),
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+        "X-CSRF-Token",              # [NEW] CSRF double-submit
+        "ngrok-skip-browser-warning",  # [NEW] keep ngrok tunneling working
+    ],
     expose_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_vary_origin_header(request: Request, call_next):
+    response = await call_next(request)
+    if "Vary" in response.headers:
+        if "Origin" not in response.headers["Vary"]:
+            response.headers["Vary"] = response.headers["Vary"] + ", Origin"
+    else:
+        response.headers["Vary"] = "Origin"
+    return response
 
 
 @app.middleware("http")
@@ -92,7 +137,6 @@ async def pymongo_exception_handler(request: Request, exc: PyMongoError):
         }
     )
 
-from app.ai.providers.openai_provider import OpenAIServiceError
 
 @app.exception_handler(OpenAIServiceError)
 async def openai_service_exception_handler(request: Request, exc: OpenAIServiceError):
@@ -107,25 +151,14 @@ async def openai_service_exception_handler(request: Request, exc: OpenAIServiceE
     )
 
 
+# Register all application routers
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(content.router)
 app.include_router(social.router)
 app.include_router(social.api_social_router, include_in_schema=False)
-app.include_router(
-    insights.router,
-    prefix="/api/v1/insights",
-    tags=["Insights"]
-)
-app.include_router(
-    messages.router,
-    prefix="/api/v1/messages",
-    tags=["Messages"]
-)
-app.include_router(
-    reviews.router,
-    prefix="/api/v1/reviews",
-    tags=["Reviews"]
-)
+app.include_router(insights.router, prefix="/api/v1/insights", tags=["Insights"])
+app.include_router(messages.router, prefix="/api/v1/messages", tags=["Messages"])
+app.include_router(reviews.router, prefix="/api/v1/reviews", tags=["Reviews"])
 app.include_router(reel_router)
 app.include_router(reels_router)
 app.include_router(credits_router)
@@ -149,6 +182,7 @@ app.include_router(transactions_router, prefix="/api/transactions", include_in_s
 app.include_router(transactions_router, prefix="/transactions", include_in_schema=False)
 app.include_router(influencers_router, prefix="/api/v1")
 app.include_router(influencer_profile_router, prefix="/api/v1")
+app.include_router(influencer_profile_router, include_in_schema=False)
 app.include_router(business_collaborations_router, prefix="/api/v1")
 app.include_router(influencer_content_router, prefix="/api/v1")
 app.include_router(influencer_earnings_router, prefix="/api/v1")
@@ -159,6 +193,7 @@ app.include_router(leads_router, prefix="/leads", include_in_schema=False)
 app.include_router(leads_router, prefix="/contact", include_in_schema=False)
 app.include_router(photoshoot_router, prefix="/product-photoshoot", include_in_schema=False)
 app.include_router(photoshoot_router, prefix="/api/product-photoshoot", include_in_schema=False)
+app.include_router(chats_router, prefix="/chats", include_in_schema=False)
 @app.get("/")
 async def root():
     return {"message": "Welcome to Dhanda Grow API"}
@@ -169,11 +204,6 @@ async def root():
 async def health():
     return {"status": "healthy", "service": "Dhanda Grow API"}
 
-
-from fastapi.responses import JSONResponse
-from fastapi import Request
-import traceback
-import sys
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):

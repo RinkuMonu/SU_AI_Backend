@@ -14,7 +14,7 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, Any, Union
+from typing import Literal, Optional, List, Dict, Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import RedirectResponse, PlainTextResponse
@@ -1005,7 +1005,10 @@ async def schedule_instagram_post(
 
 @router.get("/insights")
 async def get_insights(
-    period: str = Query("day", enum=["day", "week", "days_28", "month", "lifetime"]),
+    # period: str = Query("day", enum=["day", "week", "days_28", "month", "lifetime"]),
+    period: Literal["day", "week", "days_28", "month", "lifetime"] = Query(
+      default="day"
+    ),
     current_user=Depends(get_current_user),
     db=Depends(get_database),
 ):

@@ -49,8 +49,29 @@ router = APIRouter(
 )
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/jpg"}
-MAX_IMAGE_SIZE_BYTES = 15 * 1024 * 1024  # 15 MB
-MIN_IMAGE_SIZE_BYTES = 500  # 500 bytes
+ALLOWED_VIDEO_TYPES = {"video/mp4", "video/quicktime", "video/webm", "video/x-matroska", "video/mpeg"}
+ALLOWED_MEDIA_TYPES = ALLOWED_IMAGE_TYPES | ALLOWED_VIDEO_TYPES
+
+MAX_IMAGE_SIZE_BYTES = 25 * 1024 * 1024   # 25 MB
+MAX_VIDEO_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB for reels
+MIN_MEDIA_SIZE_BYTES = 100               # 100 bytes
+
+def _infer_media_ext(filename: str, content_type: str) -> str:
+    ext = Path(filename or "").suffix.lower()
+    if ext in [".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".webm", ".mkv"]:
+        return ext
+    ct = (content_type or "").lower()
+    if "png" in ct:
+        return ".png"
+    if "webp" in ct:
+        return ".webp"
+    if "mp4" in ct:
+        return ".mp4"
+    if "quicktime" in ct or "mov" in ct:
+        return ".mov"
+    if "webm" in ct:
+        return ".webm"
+    return ".jpg"
 
 
 # ============================================================================
@@ -119,44 +140,57 @@ async def upload_multiple_product_images(
 
 
 @router.post("/upload-image")
-async def upload_single_product_image(
+@router.post("/upload-media")
+async def upload_single_media_asset(
     file: UploadFile = File(...),
     current_user=Depends(get_current_user),
 ):
-    """Securely uploads and validates a single authentic product image."""
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid image format '{file.content_type}'. Supported: JPEG, PNG, WebP."
-        )
+    """Securely uploads and validates an authentic product image or video reel."""
+    ct = (file.content_type or "").split(";")[0].strip().lower()
+    ext = _infer_media_ext(file.filename or "", ct)
+    is_video = ct in ALLOWED_VIDEO_TYPES or ext in [".mp4", ".mov", ".webm", ".mkv"]
+
+    if not is_video and ct not in ALLOWED_IMAGE_TYPES:
+        # Check if ext is allowed image
+        if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid media format '{ct or file.content_type}'. Supported: JPEG, PNG, WebP for posts; MP4, MOV, WebM for reels."
+            )
 
     content = await file.read()
-    if len(content) > MAX_IMAGE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="Image size exceeds maximum limit of 15MB.")
+    max_size = MAX_VIDEO_SIZE_BYTES if is_video else MAX_IMAGE_SIZE_BYTES
+    if len(content) > max_size:
+        limit_mb = max_size // (1024 * 1024)
+        raise HTTPException(status_code=400, detail=f"File exceeds maximum allowed size of {limit_mb}MB.")
 
-    if len(content) < MIN_IMAGE_SIZE_BYTES:
-        raise HTTPException(status_code=400, detail="Invalid or empty image file.")
+    if len(content) < MIN_MEDIA_SIZE_BYTES:
+        raise HTTPException(status_code=400, detail="Invalid or empty media file.")
 
-    ext = Path(file.filename or "image.jpg").suffix.lower()
-    if ext not in [".jpg", ".jpeg", ".png", ".webp"]:
-        ext = ".jpg"
-
-    dest_dir = Path("uploads") / "products"
+    dest_folder = "videos" if is_video else "products"
+    dest_dir = Path("uploads") / dest_folder
     dest_dir.mkdir(parents=True, exist_ok=True)
-    filename = f"raw_{uuid.uuid4().hex[:12]}{ext}"
+    prefix = "reel" if is_video else "prod"
+    filename = f"{prefix}_{uuid.uuid4().hex[:12]}{ext}"
     dest_path = dest_dir / filename
 
     with open(dest_path, "wb") as f:
         f.write(content)
 
-    public_url = settings.get_public_url(f"/uploads/products/{filename}")
+    public_url = settings.get_public_url(f"/uploads/{dest_folder}/{filename}")
+    media_type = "video" if is_video else "image"
     return {
         "success": True,
+        "media_id": filename,
+        "media_url": public_url,
+        "url": public_url,
         "image_id": filename,
         "image_url": public_url,
+        "video_url": public_url if is_video else None,
+        "media_type": media_type,
         "filename": filename,
         "size_bytes": len(content),
-        "content_type": file.content_type,
+        "content_type": ct,
     }
 
 

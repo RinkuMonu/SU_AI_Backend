@@ -707,14 +707,19 @@ class InvoiceService:
     ) -> Dict[str, Any]:
         """
         Dispatches MSG91 notification email when a payment or mandate authorization fails or is cancelled.
-        
-        Features:
-        - Resolves user and transaction context cleanly.
-        - Provides failure reason, attempted amount with GST, transaction/order ID, and retry link.
-        - Idempotent: avoids spamming duplicate failure emails for the same attempt unless retry=True.
-        - Logs audit trail in the payment_transactions record.
+        Delegates directly to centralized Msg91EmailService using template 'payment_failed_28'.
         """
-        now = datetime.now(timezone.utc)
+        try:
+            from app.services.msg91_email_service import Msg91EmailService
+            return await Msg91EmailService.send_payment_failed_email(
+                db=db,
+                transaction_or_order_id=transaction_or_id,
+                failure_reason=failure_reason,
+                retry=retry
+            )
+        except Exception as e:
+            logger.error(f"Error in Msg91EmailService.send_payment_failed_email delegation: {e}")
+            now = datetime.now(timezone.utc)
 
         # 1. Resolve transaction document
         if isinstance(transaction_or_id, dict):
