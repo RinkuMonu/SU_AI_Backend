@@ -1,4 +1,5 @@
-from typing import Any, Dict
+from app.models.website_builder import WebsiteProject
+from typing import Any, Dict, Optional
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -15,7 +16,7 @@ from app.schemas.website_builder import (
 from app.services.website_builder_service import WebsiteBuilderService
 from app.services.credit_service import CreditService
 from app.core.database import get_database
-from app.core.security import get_current_user
+from app.core.security import get_current_user, get_current_user_optional, CurrentUser
 from app.models.user import User
 
 router = APIRouter()
@@ -246,7 +247,7 @@ async def session_message(
         # WEBSITE GENERATION
         # ---------------------------------------------
 
-        elif action == "generate":
+        elif action in ["generate", "build_directly"]:
 
             session = await WebsiteBuilderService.get_session(
                 session_id,
@@ -259,7 +260,37 @@ async def session_message(
                     detail="Session not found"
                 )
 
-            await WebsiteBuilderService.generate_website(session)
+            biz_name = data.get("business_name") or session.collected_data.get("Business Name")
+            if not biz_name and current_user:
+                biz_name = getattr(current_user, "business_name", None) or getattr(current_user, "brand_name", None) or getattr(current_user, "company_name", None)
+            if not biz_name:
+                db = get_database()
+                u_doc = await db.users.find_one({"_id": ObjectId(user_id)}) if ObjectId.is_valid(user_id) else None
+                if u_doc:
+                    biz_name = u_doc.get("business_name") or u_doc.get("brand_name") or u_doc.get("company_name")
+            if not biz_name:
+                biz_name = "Business"
+
+            biz_cat = data.get("business_category") or session.collected_data.get("Business Category") or "Business"
+
+            session.collected_data["Business Name"] = biz_name
+            session.collected_data["Business Category"] = biz_cat
+            if data.get("industry_details"):
+                session.collected_data["industry_details"] = data.get("industry_details")
+            if data.get("products_services"):
+                session.collected_data["Products/Services"] = data.get("products_services")
+            if data.get("location"):
+                session.collected_data["Location & Contact"] = data.get("location")
+
+            if not session.collected_data.get("Logo"):
+                theme = WebsiteBuilderService.resolve_palette(category=biz_cat)
+                session.collected_data["Logo"] = WebsiteBuilderService.generate_dynamic_logo(
+                    biz_name, biz_cat, theme["primary"]
+                )
+                session.collected_data["logo_status"] = "available"
+
+            WebsiteBuilderService.add_user_message(session, request.message or "Build directly")
+            await WebsiteBuilderService.generate_website(session, user_id)
 
             session = await WebsiteBuilderService.get_session(
                 session_id,
@@ -405,9 +436,11 @@ async def clear_session_data(
     )
 
     if not session:
-        raise HTTPException(
-            status_code=404,
-            detail="Session not found"
+        new_sess = await WebsiteBuilderService.create_session(str(current_user.id))
+        return FrontendMessageResponse(
+            message=new_sess.messages[-1]["content"] if new_sess.messages else "I have cleared all previous data. Let's start fresh!",
+            messages=new_sess.messages,
+            siteId=None,
         )
 
     import uuid
@@ -447,33 +480,52 @@ async def clear_session_data(
 @router.get("/site/{site_id}")
 async def get_site(
     site_id: str,
-    current_user: User = Depends(get_current_user)
+    current_user: Optional[CurrentUser] = Depends(get_current_user_optional)
 ):
+    if not ObjectId.is_valid(site_id):
+        raise HTTPException(
+            status_code=404,
+            detail="Website not found"
+        )
 
-    site = await get_owned_site(
-        site_id,
-        str(current_user.id)
-    )
+    user_id = None
+    if current_user:
+        user_id = str(current_user.get("id") or current_user.get("_id") or "")
 
-    # Self-healing: if this site project doc has empty pages, check for the valid project for this user/session
-    if not getattr(site, "pages", None) or len(site.pages) == 0:
-        p_coll = await WebsiteBuilderService.get_project_collection()
+    p_coll = await WebsiteBuilderService.get_project_collection()
+    site_doc = await p_coll.find_one({"_id": ObjectId(site_id)})
+    if not site_doc:
+        raise HTTPException(
+            status_code=404,
+            detail="Website not found"
+        )
+
+    site = WebsiteProject(**site_doc)
+
+    # Self-healing: if this site project doc has empty pages, check for a valid project in this session or for this user
+    payload = format_site_payload(site)
+    if not payload["pages"] or len(payload["pages"]) == 0:
+        session_id = getattr(site, "session_id", None)
         valid_proj = None
-        if getattr(site, "session_id", None):
-            valid_proj = await p_coll.find_one({
-                "user_id": str(current_user.id),
-                "session_id": site.session_id,
-                "pages.0": {"$exists": True}
-            }, sort=[("_id", -1)])
-        if not valid_proj:
-            valid_proj = await p_coll.find_one({
-                "user_id": str(current_user.id),
-                "pages.0": {"$exists": True}
-            }, sort=[("_id", -1)])
+        if session_id:
+            cursor = p_coll.find({"session_id": session_id}).sort([("_id", -1)])
+            candidates = await cursor.to_list(length=10)
+            for c_doc in candidates:
+                cand_pages = c_doc.get("pages") or (c_doc.get("website_data", {}).get("pages") if isinstance(c_doc.get("website_data"), dict) else [])
+                if cand_pages and len(cand_pages) > 0:
+                    valid_proj = c_doc
+                    break
+        if not valid_proj and getattr(site, "user_id", None):
+            cursor = p_coll.find({"user_id": site.user_id}).sort([("_id", -1)])
+            candidates = await cursor.to_list(length=10)
+            for c_doc in candidates:
+                cand_pages = c_doc.get("pages") or (c_doc.get("website_data", {}).get("pages") if isinstance(c_doc.get("website_data"), dict) else [])
+                if cand_pages and len(cand_pages) > 0:
+                    valid_proj = c_doc
+                    break
         if valid_proj:
             site = WebsiteProject(**valid_proj)
-
-    payload = format_site_payload(site)
+            payload = format_site_payload(site)
 
     return {
         "id": str(site.id),
