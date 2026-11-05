@@ -148,6 +148,11 @@ async def test_cashfree_status_changed_webhook_activates_plan_once(setup_test_us
     user_id = user_info["user_id"]
     subscription_id = f"SUB_WEBHOOK_{user_id[-8:]}"
 
+    await db["payment_transactions"].delete_many({"user_id": user_id})
+    await db["subscription_history"].delete_many({"user_id": user_id})
+    await db["credit_transactions"].delete_many({"user_id": user_id})
+    await db["subscriptions"].delete_many({"user_id": user_id})
+
     await db["payment_subscriptions"].insert_one({
         "user_id": user_id,
         "subscription_id": subscription_id,

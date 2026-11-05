@@ -1083,9 +1083,9 @@ class PayinService:
         async for paid in paid_cursor:
             audit_preserved.append(paid.get("order_id"))
 
-        # 2. Reset Subscription to FREE with standard 5 credits
+        # 2. Reset Subscription to FREE with standard plan credits
         credits_before = sub.get("credits_remaining", 0) if sub else 0
-        target_credits = 5
+        target_credits = PLANS["FREE"]["credits"]
 
         await db["subscriptions"].update_one(
             {"user_id": uid},

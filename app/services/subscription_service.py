@@ -332,7 +332,7 @@ class SubscriptionService:
                         "transaction_type": "grant",
                         "amount": signup_bonus,
                         "feature": "paid_signup_bonus",
-                        "reference_id": signup_bonus_ref,
+                        "reference_id": reference_id or signup_bonus_ref,
                         "balance_before": monthly_credits,
                         "balance_after": credits_granted,
                         "created_at": now,
