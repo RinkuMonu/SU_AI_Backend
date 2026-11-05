@@ -217,6 +217,9 @@ async def test_13_credit_deduction_and_pricing_intact():
     assert "ai_reel" in FEATURE_PRICING
     assert FEATURE_PRICING["ai_post"] >= 1
     assert FEATURE_PRICING["ai_photoshoot"] >= 1
+    assert FEATURE_PRICING["ai_photobooth"] == 2
+    assert FEATURE_PRICING["instagram_dm_ai"] == 1
+    assert FEATURE_PRICING["ai_review_manager"] == 1
 
 
 @pytest.mark.asyncio

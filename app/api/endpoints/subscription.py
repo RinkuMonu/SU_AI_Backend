@@ -247,7 +247,7 @@ async def activate_free_plan_endpoint(
 ):
     """
     Activates the ₹0 Free tier plan for the authenticated user.
-    Records the free plan activation in subscription_history, grants 5 credits idempotently,
+    Records the free plan activation and grants its one-time 50-credit allowance,
     and marks Step 3 plan onboarding as completed.
     """
     user_id = str(current_user["id"])
