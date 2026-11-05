@@ -1831,6 +1831,24 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             upsert=True
         )
 
+        # 3. Also sync business name to users collection so profile & dashboard display it authoritatively
+        b_actual_name = bus_updates.get("business_name") or bus_updates.get("name")
+        if b_actual_name and str(b_actual_name).strip() and not str(b_actual_name).strip().startswith("User "):
+            clean_b_name = str(b_actual_name).strip()
+            from bson import ObjectId
+            u_oid = ObjectId(str(user_id)) if ObjectId.is_valid(str(user_id)) else str(user_id)
+            await db["users"].update_one(
+                {"$or": [{"_id": u_oid}, {"id": str(user_id)}]},
+                {"$set": {
+                    "business_name": clean_b_name,
+                    "businessName": clean_b_name,
+                    "company_name": clean_b_name,
+                    "name": clean_b_name,
+                    "fullName": clean_b_name,
+                    "updated_at": now
+                }}
+            )
+
         refreshed_kit = await db["brand_kits"].find_one({"$or": [{"owner_id": str(user_id)}, {"user_id": str(user_id)}]}) or {}
         refreshed_bus = await db["businesses"].find_one({"$or": [{"owner_id": str(user_id)}, {"ownerId": str(user_id)}]}) or {}
 

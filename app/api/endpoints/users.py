@@ -53,6 +53,26 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
             doc["businessName"] = biz.get("businessName") or biz.get("name")
             doc["business_name"] = biz.get("business_name") or biz.get("name")
             doc["businessType"] = biz.get("businessType") or biz.get("business_type")
+        if not biz or not (biz.get("name") or biz.get("business_name")):
+            bk = await db["brand_kits"].find_one({
+                "$or": [
+                    {"owner_id": str(doc["id"])},
+                    {"user_id": str(doc["id"])},
+                    {"business_id": str(doc["id"])}
+                ]
+            })
+            if bk:
+                bk_name = bk.get("business_name") or bk.get("brand_name")
+                if bk_name and str(bk_name).strip() and not str(bk_name).strip().startswith("User "):
+                    canonical_name = str(bk_name).strip()
+                    doc["businessName"] = canonical_name
+                    doc["business_name"] = canonical_name
+        if doc.get("business_name") and str(doc["business_name"]).strip() and not str(doc["business_name"]).strip().startswith("User "):
+            b_cand = str(doc["business_name"]).strip()
+            if canonical_name == "User" or canonical_name.startswith("User "):
+                canonical_name = b_cand
+            doc["businessName"] = b_cand
+            doc["business_name"] = b_cand
 
     doc["name"] = canonical_name
     doc["fullName"] = canonical_name

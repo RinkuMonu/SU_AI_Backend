@@ -275,11 +275,13 @@ async def signup(request: Request, response: Response):
             #         "next_step": "role_selection"
             #     }
             # }
-            # [NEW] Token lives in the cookie now.
             return {
                 "success": True,
                 "message": "User registered successfully.",
-                "token_type": "cookie",
+                "token_type": "bearer",
+                "access_token": access_token,
+                "accessToken": access_token,
+                "token": access_token,
                 "user": user_dict,
                 "requires_role_selection": True,
                 "dashboard_route": "/select-role",
@@ -430,11 +432,17 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     except Exception as em_err:
         logger.warning(f"Could not dispatch login notification email: {em_err}")
 
+    is_new = bool(getattr(user, "is_new_user", False))
     return {
         "success": True,
         "message": "OTP verified successfully. Logged in.",
-        "token_type": "cookie",
+        "token_type": "bearer",
+        "access_token": jwt_access_token,
+        "accessToken": jwt_access_token,
+        "token": jwt_access_token,
         "user": user_resp,
+        "is_new_user": is_new,
+        "isNewUser": is_new,
         "role": role,
         "phone_verified": True,
         "requires_role_selection": requires_role,
@@ -638,10 +646,12 @@ async def login(request: Request, response: Response):
     #         "next_step": onb_state["next_step"]
     #     }
     # }
-    # [NEW] No access_token in body.
     return {
         "success": True,
-        "token_type": "cookie",
+        "token_type": "bearer",
+        "access_token": access_token,
+        "accessToken": access_token,
+        "token": access_token,
         "user": user_dict,
         "role": role,
         "requires_role_selection": requires_role,

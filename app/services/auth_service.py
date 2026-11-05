@@ -81,11 +81,32 @@ class AuthService:
         return None
 
     @staticmethod
+    def build_phone_query(phone: str) -> dict:
+        clean = str(phone).strip()
+        digits = re.sub(r"\D", "", clean)
+        digits_10 = digits[-10:] if len(digits) >= 10 else digits
+        candidates = [
+            {"phone_number": clean},
+            {"phone": clean},
+            {"contactNumber": clean},
+        ]
+        if digits_10:
+            candidates.extend([
+                {"phone_number": f"+91{digits_10}"},
+                {"phone_number": digits_10},
+                {"phone": f"+91{digits_10}"},
+                {"phone": digits_10},
+                {"phone_number": {"$regex": f"{digits_10}$"}},
+            ])
+        return {"$or": candidates}
+
+    @staticmethod
     async def get_user_by_phone(phone_number: str) -> User | None:
         if not phone_number:
             return None
         collection = await AuthService.get_collection()
-        doc = await collection.find_one({"phone_number": phone_number})
+        query = AuthService.build_phone_query(phone_number)
+        doc = await collection.find_one(query)
         if doc:
             return User(**doc)
         return None
@@ -410,6 +431,7 @@ class AuthService:
                 setattr(user, "phone_verification_token", verification_token)
             except Exception:
                 pass
+            setattr(user, "is_new_user", False)
             logger.info(f"User logged in via phone OTP verification: id={user.id}, phone={mask_phone_number(user_phone)}")
             return user
 
@@ -437,8 +459,14 @@ class AuthService:
         doc_insert = new_user.model_dump(by_alias=True, exclude={'id'})
         if not doc_insert.get("email"):
             doc_insert.pop("email", None)
+        doc_insert["phone"] = user_phone
         result = await users_col.insert_one(doc_insert)
         new_user.id = str(result.inserted_id)
+        # Verify persistence immediately
+        verify_insert = await users_col.find_one({"_id": result.inserted_id})
+        if not verify_insert:
+            logger.error(f"Failed to persist user in users collection: {mask_phone_number(user_phone)}")
+            raise HTTPException(status_code=500, detail="Database persistence error: user could not be saved.")
 
         # Provision default Free subscription
         try:
@@ -464,6 +492,7 @@ class AuthService:
         except Exception:
             pass
 
+        setattr(new_user, "is_new_user", True)
         logger.info(f"New user registered and logged in via phone OTP: id={new_user.id}, phone={mask_phone_number(user_phone)}")
         return new_user
 
@@ -495,7 +524,8 @@ class AuthService:
         now = datetime.now(timezone.utc)
 
         # Check existing user
-        existing_user = await users_col.find_one({"phone_number": phone_number})
+        query_phone = AuthService.build_phone_query(phone_number)
+        existing_user = await users_col.find_one(query_phone)
 
         # Check existing OTP document
         doc = await collection.find_one({"phone_number": phone_number})
