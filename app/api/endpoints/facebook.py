@@ -284,7 +284,7 @@ async def facebook_callback(
             ig_param = ""
 
         return RedirectResponse(
-            url=build_facebook_redirect(frontend_url, f"facebook_connected=true{page_param}{ig_param}{token_param}")
+            url=build_facebook_redirect(frontend_url, f"facebook_connected=true&provider=facebook{page_param}{ig_param}{token_param}")
         )
     except HTTPException as e:
         logger.error(f"Facebook callback failed: {e.detail}")

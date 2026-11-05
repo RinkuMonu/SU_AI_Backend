@@ -239,6 +239,67 @@ async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_
                 }}
             )
     
+    # Sync Facebook credentials if present
+    fb_pid = clean_req.get("fb_page_id")
+    fb_tok = clean_req.get("fb_access_token") or clean_req.get("fb_page_access_token")
+    if fb_pid is not None or fb_tok is not None:
+        fb_user_update = {"updated_at": now}
+        if fb_pid is not None:
+            fb_user_update["fb_page_id"] = fb_pid
+        if fb_tok is not None:
+            fb_user_update["fb_access_token"] = fb_tok
+            fb_user_update["fb_page_access_token"] = fb_tok
+            fb_user_update["facebook_access_token"] = fb_tok
+            fb_user_update["facebook_connected"] = bool(fb_tok)
+        if ObjectId.is_valid(owner_str):
+            await db["users"].update_one({"_id": owner_oid}, {"$set": fb_user_update})
+        if fb_tok:
+            await db["facebook_connections"].update_one(
+                {"user_id": owner_str, "platform": "facebook"},
+                {"$set": {
+                    "user_id": owner_str,
+                    "platform": "facebook",
+                    "fb_page_id": fb_pid or "",
+                    "account_id": fb_pid or "",
+                    "access_token": fb_tok,
+                    "encrypted_access_token": fb_tok,
+                    "connected": True,
+                    "updated_at": now,
+                }},
+                upsert=True
+            )
+
+    # Sync Instagram credentials if present
+    ig_acc = clean_req.get("ig_account_id") or clean_req.get("instagram_user_id")
+    ig_tok = clean_req.get("ig_access_token") or clean_req.get("instagram_access_token")
+    if ig_acc is not None or ig_tok is not None:
+        ig_user_update = {"updated_at": now}
+        if ig_acc is not None:
+            ig_user_update["ig_account_id"] = ig_acc
+            ig_user_update["instagram_business_id"] = ig_acc
+            ig_user_update["instagram_user_id"] = ig_acc
+        if ig_tok is not None:
+            ig_user_update["ig_access_token"] = ig_tok
+            ig_user_update["instagram_access_token"] = ig_tok
+            ig_user_update["instagram_connected"] = bool(ig_tok)
+        if ObjectId.is_valid(owner_str):
+            await db["users"].update_one({"_id": owner_oid}, {"$set": ig_user_update})
+        if ig_tok:
+            await db["instagram_connections"].update_one(
+                {"user_id": owner_str, "platform": "instagram"},
+                {"$set": {
+                    "user_id": owner_str,
+                    "platform": "instagram",
+                    "instagram_user_id": ig_acc or "",
+                    "account_id": ig_acc or "",
+                    "ig_access_token": ig_tok,
+                    "encrypted_access_token": ig_tok,
+                    "connected": True,
+                    "updated_at": now,
+                }},
+                upsert=True
+            )
+
     # Sync LinkedIn credentials to users and linkedin_connections if present
     li_author = clean_req.get("linkedin_author_id")
     li_token = clean_req.get("linkedin_access_token")
