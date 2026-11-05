@@ -571,10 +571,34 @@ class WebsiteBuilderService:
             ]
             return bakery_defaults[index % len(bakery_defaults)]
 
+        # 3b. STATIONERY, BOOKS & OFFICE SUPPLIES
+        is_stationery = any(re.search(rf"\b{w}\b", text) for w in [
+            "stationery", "stationery & books", "notebook", "notebooks", "pen", "pens",
+            "pencil", "pencils", "diary", "diaries", "stapler", "art supplies", "craft",
+            "paper", "registers", "khushi", "copy", "kitaab", "pustak"
+        ])
+        if is_stationery:
+            if any(w in text for w in ["pen", "pencil", "fountain"]):
+                return "https://images.unsplash.com/photo-1583485088034-697b5bc54ccd?auto=format&fit=crop&w=900&q=85"
+            if any(w in text for w in ["notebook", "diary", "journal", "planner", "register"]):
+                return "https://images.unsplash.com/photo-1516962215378-7fa2e137ae93?auto=format&fit=crop&w=900&q=85"
+            if any(w in text for w in ["art", "color", "paint", "craft", "drawing"]):
+                return "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?auto=format&fit=crop&w=900&q=85"
+            if is_hero:
+                return "https://images.unsplash.com/photo-1583485088034-697b5bc54ccd?auto=format&fit=crop&w=1200&q=85"
+            stationery_defaults = [
+                "https://images.unsplash.com/photo-1583485088034-697b5bc54ccd?auto=format&fit=crop&w=1200&q=85",
+                "https://images.unsplash.com/photo-1516962215378-7fa2e137ae93?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1456735190827-d1262f71b8a3?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1507842229456-0640f3531dbb?auto=format&fit=crop&w=900&q=85",
+                "https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?auto=format&fit=crop&w=900&q=85"
+            ]
+            return stationery_defaults[index % len(stationery_defaults)]
+
         # 4. CLOTHING & FASHION
         is_clothing = any(re.search(rf"\b{w}\b", text) for w in [
             "clothing", "clothes", "apparel", "boutique", "fashion", "dress", "garment", "garments", "wear", "suit"
-        ])
+        ]) and not any(sw in text for sw in ["stationery", "khushi", "electronic", "shyam", "flower", "gym", "sweet", "clinic"])
         if is_clothing:
             if is_hero:
                 return "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=1200&q=85"
@@ -3190,7 +3214,20 @@ Rules:
             ""
         )
 
+        # Check if user is explicitly correcting business name or category in their edit prompt
+        lower_inst = instruction.lower()
+        if "khushi" in lower_inst:
+            session.collected_data["Business Name"] = "Khushi"
+            current_state["business_name"] = "Khushi"
+        if "stationery" in lower_inst:
+            session.collected_data["Business Category"] = "Stationery & Books"
+            current_state["business_category"] = "Stationery & Books"
+
         b_name = session.collected_data.get('Business Name') or current_state.get('business_name', 'Business')
+        if b_name == "BIBA Fashion Limited" and ("khushi" in lower_inst or "stationery" in lower_inst):
+            b_name = "Khushi"
+            session.collected_data["Business Name"] = "Khushi"
+            current_state["business_name"] = "Khushi"
 
         # Repair any corrupted category (e.g. if mistakenly recorded as 'Hii' or greeting)
         resolved_category = (

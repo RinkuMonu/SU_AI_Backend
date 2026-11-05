@@ -260,7 +260,11 @@ async def session_message(
                     detail="Session not found"
                 )
 
-            biz_name = data.get("business_name") or session.collected_data.get("Business Name")
+            # HIGHEST PRIORITY: The data explicitly answered by the user in this session!
+            # Never overwrite what user answered in chat with the user profile account name!
+            biz_name = session.collected_data.get("Business Name")
+            if not biz_name and data.get("business_name") and data.get("business_name") not in ["BIBA Fashion Limited", "Business", "My Business"]:
+                biz_name = data.get("business_name")
             if not biz_name and current_user:
                 biz_name = getattr(current_user, "business_name", None) or getattr(current_user, "brand_name", None) or getattr(current_user, "company_name", None)
             if not biz_name:
@@ -271,7 +275,11 @@ async def session_message(
             if not biz_name:
                 biz_name = "Business"
 
-            biz_cat = data.get("business_category") or session.collected_data.get("Business Category") or "Business"
+            biz_cat = session.collected_data.get("Business Category")
+            if not biz_cat and data.get("business_category") and data.get("business_category") != "Business":
+                biz_cat = data.get("business_category")
+            if not biz_cat:
+                biz_cat = "Business"
 
             session.collected_data["Business Name"] = biz_name
             session.collected_data["Business Category"] = biz_cat
