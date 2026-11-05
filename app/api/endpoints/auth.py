@@ -387,7 +387,7 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
 
     role = onb_state.get("role")
     requires_role = onb_state["requires_role_selection"]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    dashboard_route = onb_state["dashboard_route"]
 
     user_resp = UserResponse(
         id=str(user.id),
@@ -424,6 +424,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     #     message="OTP verified successfully. Logged in."
     # )
     # [NEW] No access_token in body — returned via cookie.
+    try:
+        from app.services.msg91_email_service import Msg91EmailService
+        asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_resp.model_dump(), request=None))
+    except Exception as em_err:
+        logger.warning(f"Could not dispatch login notification email: {em_err}")
+
     return {
         "success": True,
         "message": "OTP verified successfully. Logged in.",
@@ -583,7 +589,7 @@ async def login(request: Request, response: Response):
 
     role = onb_state.get("role")
     requires_role = onb_state["requires_role_selection"]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    dashboard_route = onb_state["dashboard_route"]
 
     user_dict["online_presence"] = onb_state.get("online_presence")
     user_dict["onboarding_step"] = onb_state.get("onboarding_step", 1)
@@ -592,6 +598,12 @@ async def login(request: Request, response: Response):
     user_dict["onboarding_completed"] = onb_state.get("onboarding_completed", False)
     user_dict["can_access_dashboard"] = onb_state["can_access_dashboard"]
     user_dict["next_step"] = onb_state["next_step"]
+
+    try:
+        from app.services.msg91_email_service import Msg91EmailService
+        asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_dict, request=request))
+    except Exception as em_err:
+        logger.warning(f"Could not dispatch login notification email: {em_err}")
 
     # [OLD] return {
     #     "success": True,
@@ -698,17 +710,74 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
 
     uid = str(doc.get("_id") or doc.get("id") or user_id)
     full_name = doc.get("fullName") or doc.get("name") or "User"
+    
+    # Sync creator profile data if user is an influencer or has default temporary name
+    prof = None
+    if doc.get("role") == "influencer" or full_name == "User" or full_name.startswith("User "):
+        prof = await db["influencer_profiles"].find_one({"user_id": uid})
+        if prof:
+            prof_name = prof.get("full_name") or prof.get("fullName")
+            if prof_name and prof_name.strip() and not prof_name.startswith("User "):
+                full_name = prof_name.strip()
+                if ObjectId.is_valid(uid):
+                    await db["users"].update_one(
+                        {"_id": ObjectId(uid)},
+                        {"$set": {"name": full_name, "fullName": full_name}}
+                    )
+
+    # Sync business profile data for business accounts or default temporary names
+    biz = None
+    if doc.get("role") in ["businessman", "business"] or full_name == "User" or full_name.startswith("User ") or not doc.get("businessName"):
+        biz = await db["businesses"].find_one({
+            "$or": [
+                {"ownerId": uid},
+                {"ownerId": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"owner_id": uid},
+                {"owner_id": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"userId": uid},
+                {"userId": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+                {"user_id": uid},
+                {"user_id": ObjectId(uid) if ObjectId.is_valid(uid) else uid},
+            ]
+        })
+        if biz:
+            biz_name = biz.get("name") or biz.get("businessName") or biz.get("business_name") or biz.get("company_name") or biz.get("owner_name")
+            if biz_name and str(biz_name).strip() and not str(biz_name).strip().startswith("User "):
+                b_name_clean = str(biz_name).strip()
+                if full_name == "User" or full_name.startswith("User "):
+                    full_name = b_name_clean
+                if ObjectId.is_valid(uid):
+                    await db["users"].update_one(
+                        {"_id": ObjectId(uid)},
+                        {"$set": {
+                            "name": full_name,
+                            "fullName": full_name,
+                            "businessName": b_name_clean,
+                            "business_name": b_name_clean
+                        }}
+                    )
+
     user_phone = doc.get("phone_number") or doc.get("phone") or doc.get("contactNumber")
     phone_verified = doc.get("phone_verified", True if not user_phone else False)
     if not user_phone or doc.get("role") in ["businessman", "influencer", "admin"]:
         phone_verified = True
     email_ver = bool(doc.get("emailVerified", doc.get("email_verified", True)))
 
+    user_image = (
+        doc.get("profileImageUrl")
+        or doc.get("image")
+        or doc.get("avatar")
+        or (prof.get("profile_image") if prof else None)
+        or (prof.get("profileImageUrl") if prof else None)
+    )
+    username = doc.get("username") or (prof.get("username") if prof else None)
+
     user_dict = {
         "id": uid,
         "_id": uid,
         "fullName": full_name,
         "name": full_name,
+        "username": username,
         "firstName": doc.get("firstName") or full_name.split()[0],
         "lastName": doc.get("lastName") or (" ".join(full_name.split()[1:]) if len(full_name.split()) > 1 else None),
         "email": doc.get("email") or None,
@@ -716,16 +785,17 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "phone": user_phone,
         "contactNumber": user_phone,
         "phone_verified": phone_verified,
-        "accountType": doc.get("accountType", "business"),
+        "accountType": doc.get("accountType", "personal" if doc.get("role") == "influencer" else "business"),
         "role": doc.get("role", "businessman") or "businessman",
         "emailVerified": email_ver,
         "email_verified": email_ver,
         "isVerified": email_ver,
-        "profileImageUrl": doc.get("profileImageUrl") or doc.get("image") or doc.get("avatar"),
-        "image": doc.get("image") or doc.get("profileImageUrl") or doc.get("avatar"),
-        "avatar": doc.get("avatar") or doc.get("profileImageUrl") or doc.get("image"),
+        "profileImageUrl": user_image,
+        "image": user_image,
+        "avatar": user_image,
         "preferredLanguage": doc.get("preferredLanguage"),
-        "businessName": doc.get("businessName") or doc.get("business_name"),
+        "businessName": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("businessName") or doc.get("business_name")),
+        "business_name": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("business_name") or doc.get("businessName")),
         "onboardingCompleted": doc.get("onboardingCompleted", False),
         "onboarding_step": doc.get("onboarding_step", 1),
     }
@@ -1701,9 +1771,17 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
     # [NEW] Set BOTH cookies.
     set_auth_cookies(response, access_token_jwt, refresh_token_jwt)
 
-    role = getattr(user, "role", None)
-    requires_role = role is None or role in ["user", ""]
-    dashboard_route = "/select-role" if requires_role else ("/influencer" if role == "influencer" else "/dashboard")
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    role = onb_state.get("role") or getattr(user, "role", None)
+    requires_role = onb_state["requires_role_selection"]
+    dashboard_route = onb_state["dashboard_route"]
+    onboarding_completed = onb_state["onboarding_completed"]
+    is_existing = (not requires_role) and onboarding_completed
+    next_step = onb_state["next_step"]
+
     user_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
     phone_verified = getattr(user, "phone_verified", False)
 
@@ -1728,15 +1806,6 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
     }
-
-    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
-    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
-    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
-
-    onboarding_completed = onb_state["onboarding_completed"]
-    requires_role = onb_state["requires_role_selection"]
-    is_existing = (not requires_role) and onboarding_completed
-    next_step = onb_state["next_step"]
 
     user_payload["online_presence"] = onb_state.get("online_presence")
     user_payload["onboarding_status"] = onb_state["onboarding_status"]

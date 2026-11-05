@@ -101,6 +101,16 @@ async def init_db_indexes():
     await _safe_create_index("photoshoot_jobs", "session_id", background=True)
     await _safe_create_index("photoshoot_jobs", "user_id", background=True)
 
+    # 11. Persistent business-creator messaging collections
+    await _safe_create_index("conversations", "business_user_id", background=True)
+    await _safe_create_index("conversations", "creator_user_id", background=True)
+    await _safe_create_index("conversations", [("business_user_id", 1), ("updated_at", -1)], background=True)
+    await _safe_create_index("conversations", [("creator_user_id", 1), ("updated_at", -1)], background=True)
+    await _safe_create_index("conversations", [("business_user_id", 1), ("creator_user_id", 1), ("collaboration_id", 1)], background=True)
+    await _safe_create_index("conversation_messages", "conversation_id", background=True)
+    await _safe_create_index("conversation_messages", [("conversation_id", 1), ("created_at", -1)], background=True)
+    await _safe_create_index("conversation_messages", [("conversation_id", 1), ("sender_id", 1), ("read", 1)], background=True)
+
 def close_mongo_connection():
     if db_manager.client:
         db_manager.client.close()

@@ -1586,6 +1586,22 @@ class AuthService:
                     await get_database()["pending_users"].delete_one({"_id": user_doc["_id"]})
                 except Exception:
                     pass
+            elif canonical_role == "influencer" and not user_doc.get("onboarding_status"):
+                user_doc["onboarding_status"] = "not_started"
+                user_doc["onboarding_step"] = user_doc.get("onboarding_step") or 1
+                user_doc["onboardingCompleted"] = False
+                user_doc["onboarding_completed"] = False
+                user_doc["influencer_onboarding_completed"] = False
+                await users.update_one(
+                    {"_id": ObjectId(user_id)},
+                    {"$set": {
+                        "onboarding_status": "not_started",
+                        "onboarding_step": user_doc["onboarding_step"],
+                        "onboardingCompleted": False,
+                        "onboarding_completed": False,
+                        "influencer_onboarding_completed": False
+                    }}
+                )
             return User(**user_doc)
 
         # If user already has a DIFFERENT role assigned, reject modifying it (one-time onboarding)
@@ -1599,6 +1615,21 @@ class AuthService:
         now = datetime.now(timezone.utc)
         user_doc["role"] = canonical_role
         user_doc["updated_at"] = now
+
+        update_set = {"role": canonical_role, "updated_at": now}
+        if canonical_role == "influencer":
+            user_doc["onboarding_status"] = "not_started"
+            user_doc["onboarding_step"] = 1
+            user_doc["onboardingCompleted"] = False
+            user_doc["onboarding_completed"] = False
+            user_doc["influencer_onboarding_completed"] = False
+            update_set.update({
+                "onboarding_status": "not_started",
+                "onboarding_step": 1,
+                "onboardingCompleted": False,
+                "onboarding_completed": False,
+                "influencer_onboarding_completed": False
+            })
 
         if is_pending:
             db = get_database()
@@ -1619,7 +1650,7 @@ class AuthService:
         else:
             await users.update_one(
                 {"_id": ObjectId(user_id)},
-                {"$set": {"role": canonical_role, "updated_at": now}}
+                {"$set": update_set}
             )
 
         logger.info(f"User {user_id} selected role '{canonical_role}' successfully.")

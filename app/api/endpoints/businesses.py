@@ -222,6 +222,22 @@ async def update_my_business(req: dict, current_user: CurrentUser = Depends(get_
 
     # Always allow upsert so that settings saved from social integration pages are NEVER lost
     await db["businesses"].update_one(query, biz_op, upsert=True)
+
+    # Sync business name to users collection so profile always reflects business identity
+    biz_title = clean_req.get("businessName") or clean_req.get("business_name") or clean_req.get("name")
+    if biz_title and str(biz_title).strip() and not str(biz_title).strip().startswith("User "):
+        clean_biz_title = str(biz_title).strip()
+        if ObjectId.is_valid(owner_str):
+            await db["users"].update_one(
+                {"_id": owner_oid},
+                {"$set": {
+                    "name": clean_biz_title,
+                    "fullName": clean_biz_title,
+                    "businessName": clean_biz_title,
+                    "business_name": clean_biz_title,
+                    "updated_at": now
+                }}
+            )
     
     # Sync LinkedIn credentials to users and linkedin_connections if present
     li_author = clean_req.get("linkedin_author_id")

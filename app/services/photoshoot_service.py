@@ -2367,6 +2367,14 @@ class PhotoshootService:
 
 
             ext = Path(fname).suffix.lower()
+            if not ext or ext not in allowed_exts:
+                ct = (file.content_type or "").lower()
+                if "png" in ct:
+                    ext = ".png"
+                elif "webp" in ct:
+                    ext = ".webp"
+                else:
+                    ext = ".jpg" 
 
 
 
@@ -4149,6 +4157,8 @@ class PhotoshootService:
             item = {
                 "image_id": enh_id,
                 "source_image_id": source_img_id,
+                "source_image_url": source_image.get("url"),
+                "original_url": source_image.get("url"),
                 "style": style,
                 "url": rel_url,
                 "is_selected": False,
@@ -4204,6 +4214,9 @@ class PhotoshootService:
             "session_id": session_id,
             "total_variations": len(enhanced_results),
             "enhanced_images": list(enhanced_results),
+            "original_images": session_doc.get("original_images", []),
+            "source_image_url": source_image.get("url"),
+            "original_url": source_image.get("url"),
             "message": "Product image enhancement variations generated with strict product preservation."
         }
 

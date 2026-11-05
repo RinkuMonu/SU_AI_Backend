@@ -85,7 +85,23 @@ async def update_application_status(
             agreed_price=application.get("proposed_price") or 0.0,
             status="active"
         )
-        await db["collaborations"].insert_one(collab.model_dump(by_alias=True, exclude={"id"}))
+        collab_res = await db["collaborations"].insert_one(collab.model_dump(by_alias=True, exclude={"id"}))
+        collab_id = str(collab_res.inserted_id)
+
+        # Link or activate persistent conversation
+        try:
+            from app.services.chat_service import ChatService
+            await ChatService.get_or_create_conversation(
+                current_user_id=str(current_user.id),
+                business_user_id=str(business.get("owner_id") or current_user.id),
+                creator_user_id=str(application["influencer_id"]),
+                collaboration_id=collab_id,
+                campaign_id=str(application["campaign_id"]),
+                initial_message="Collaboration confirmed! Let's discuss details and next steps here."
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"Could not auto-create conversation for collaboration: {e}")
         
     return {"success": True, "message": f"Application {new_status}"}
 

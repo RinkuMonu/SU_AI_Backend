@@ -189,6 +189,29 @@ async def get_session(
             user_id
         )
 
+    # Self-healing: if session.website_project_id is missing OR points to a project with empty pages,
+    # find the most recent project for this session/user that has valid pages!
+    if not site or not getattr(site, "pages", None) or len(site.pages) == 0:
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        valid_proj = await p_coll.find_one({
+            "user_id": user_id,
+            "session_id": session_id,
+            "pages.0": {"$exists": True}
+        }, sort=[("_id", -1)])
+        if not valid_proj:
+            valid_proj = await p_coll.find_one({
+                "user_id": user_id,
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+
+        if valid_proj:
+            site = WebsiteProject(**valid_proj)
+            session.website_project_id = str(valid_proj["_id"])
+            if session.current_step < 8:
+                session.current_step = 8
+            session.collected_data["onboarding_step"] = "generated"
+            await WebsiteBuilderService.save_session(session)
+
     return session, site
 
 
@@ -654,6 +677,24 @@ async def get_site(
         str(current_user.id)
     )
 
+    # Self-healing: if this site project doc has empty pages, check for the valid project for this user/session
+    if not getattr(site, "pages", None) or len(site.pages) == 0:
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        valid_proj = None
+        if getattr(site, "session_id", None):
+            valid_proj = await p_coll.find_one({
+                "user_id": str(current_user.id),
+                "session_id": site.session_id,
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+        if not valid_proj:
+            valid_proj = await p_coll.find_one({
+                "user_id": str(current_user.id),
+                "pages.0": {"$exists": True}
+            }, sort=[("_id", -1)])
+        if valid_proj:
+            site = WebsiteProject(**valid_proj)
+
     payload = format_site_payload(site)
 
     return {
@@ -695,10 +736,34 @@ async def edit_website(
         )
 
     if not session.website_project_id:
-        raise HTTPException(
-            status_code=400,
-            detail="Generate a website before editing it."
+        p_coll = await WebsiteBuilderService.get_project_collection()
+        recent_proj = await p_coll.find_one(
+            {"$or": [{"session_id": session_id}, {"user_id": user_id}]},
+            sort=[("created_at", -1)]
         )
+        if recent_proj:
+            session.website_project_id = str(recent_proj["_id"])
+            await WebsiteBuilderService.save_session(session)
+        elif request.current_state and (request.current_state.get("pages") or request.current_state.get("sections")):
+            from datetime import datetime, timezone
+            proj_doc = {
+                "user_id": user_id,
+                "session_id": session_id,
+                "business_name": request.current_state.get("business_name", "My Business"),
+                "business_category": request.current_state.get("business_category", "Business"),
+                "website_data": request.current_state,
+                "theme": request.current_state.get("theme", {}),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+            res = await p_coll.insert_one(proj_doc)
+            session.website_project_id = str(res.inserted_id)
+            await WebsiteBuilderService.save_session(session)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Generate a website before editing it."
+            )
 
     edit_result = await WebsiteBuilderService.apply_website_edit(
         user_id=user_id,
@@ -732,6 +797,14 @@ async def edit_website(
                 "message",
                 "Please clarify this change."
             ),
+            updated_state=request.current_state,
+        )
+
+    if action == "ask_color":
+        return EditWebsiteResponse(
+            action=action,
+            message=edit_result.get("message", "Which color would you like for your website?"),
+            options=edit_result.get("options", []),
             updated_state=request.current_state,
         )
 

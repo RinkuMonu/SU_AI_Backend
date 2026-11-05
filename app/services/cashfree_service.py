@@ -280,6 +280,13 @@ class CashfreeService:
         except Exception as tx_err:
             logger.warning("Failed to insert initial payment_transactions record: %s", tx_err)
 
+        # Dispatch MSG91 auto-debit initiated notification email (non-blocking)
+        try:
+            from app.services.msg91_email_service import Msg91EmailService
+            asyncio.create_task(Msg91EmailService.send_auto_debit_initiated_email(db, tx_record))
+        except Exception as mail_err:
+            logger.warning("Could not queue auto-debit initiated email: %s", mail_err)
+
         return {
             "success": True,
             "subscription_id": subscription_id,

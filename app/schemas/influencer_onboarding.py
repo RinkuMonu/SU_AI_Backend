@@ -30,9 +30,10 @@ class SocialPlatformItem(BaseModel):
 
 class SocialAccountsStepRequest(BaseModel):
     instagram: Optional[SocialPlatformItem] = Field(None, description="Instagram profile details")
+    facebook: Optional[SocialPlatformItem] = Field(None, description="Facebook page or profile details")
+    linkedin: Optional[SocialPlatformItem] = Field(None, description="LinkedIn profile details")
     youtube: Optional[SocialPlatformItem] = Field(None, description="YouTube channel details")
     tiktok: Optional[SocialPlatformItem] = Field(None, description="TikTok profile details")
-    facebook: Optional[SocialPlatformItem] = Field(None, description="Facebook page or profile details")
 
 
 class GoalsStepRequest(BaseModel):
