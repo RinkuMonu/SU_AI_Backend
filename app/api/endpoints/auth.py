@@ -1874,18 +1874,27 @@ async def google_signup(req: GoogleAuthLoginRequest, response: Response, request
 
 @router.get("/google/callback")
 async def google_callback(
+    request: Request,
     code: Optional[str] = Query(None),
     state: Optional[str] = Query(None),
     error: Optional[str] = Query(None)
 ):
     """Direct callback handler for Google OAuth redirect."""
     from fastapi.responses import RedirectResponse
+    import urllib.parse
     frontend_base = settings.FRONTEND_URL or "http://localhost:3000"
     if error:
         return RedirectResponse(url=f"{frontend_base}/login/user?error={error}")
     if code:
         state_param = f"&state={state}" if state else ""
-        return RedirectResponse(url=f"{frontend_base}/login/user?code={code}&provider=google{state_param}")
+        # Pass callback_uri to frontend so exchange_code_for_token receives the identical redirect_uri
+        try:
+            callback_uri = str(request.url).split("?")[0]
+            encoded_cb = urllib.parse.quote(callback_uri, safe="")
+            redirect_param = f"&redirect_uri={encoded_cb}"
+        except Exception:
+            redirect_param = ""
+        return RedirectResponse(url=f"{frontend_base}/login/user?code={code}&provider=google{state_param}{redirect_param}")
     return RedirectResponse(url=f"{frontend_base}/login/user")
 
 
@@ -2275,3 +2284,174 @@ async def linkedin_disconnect(current_user=Depends(get_current_user)):
     )
     await db["linkedin_connections"].delete_one({"user_id": uid})
     return {"success": True, "message": "LinkedIn disconnected successfully"}
+
+# ─────────────────────────────────────────────────────────────
+# Facebook Authentication Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/facebook/connect")
+async def auth_facebook_connect(
+    redirect_uri: Optional[str] = Query(None),
+    frontend_url: Optional[str] = Query(None),
+    db=Depends(get_database),
+):
+    """Returns Facebook OAuth authorization URL for user login/signup."""
+    import secrets
+    state = secrets.token_urlsafe(32)
+    effective_frontend = frontend_url or redirect_uri or settings.FRONTEND_URL or "http://localhost:3000"
+    await db["facebook_oauth_states"].insert_one({
+        "state": state,
+        "user_id": "pending_login",
+        "frontend_url": effective_frontend,
+        "created_at": datetime.now(timezone.utc),
+    })
+    auth_url = FacebookService.get_authorization_url(state=state, custom_scopes=["public_profile", "email"])
+    return {"success": True, "authorization_url": auth_url, "url": auth_url}
+
+
+@router.post("/facebook/login")
+async def auth_facebook_login(
+    req: FacebookAuthLoginRequest,
+    response: Response,
+    request: Request = None,
+    db=Depends(get_database),
+):
+    """Authenticate or register user via Facebook OAuth."""
+    if not req.access_token and not req.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide 'access_token' or 'code'."
+        )
+    access_token = req.access_token
+    if not access_token and req.code:
+        token_data = await FacebookService.exchange_code_for_token(req.code, redirect_uri=req.redirect_uri)
+        access_token = token_data["access_token"]
+
+    user, access_token_jwt, refresh_token_jwt = await FacebookService.authenticate_facebook_user(
+        db=db,
+        access_token=access_token,
+        account_type=req.accountType or "user",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Facebook authentication successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload,
+        }
+    }
+
+
+# ─────────────────────────────────────────────────────────────
+# Instagram Authentication Endpoints
+# ─────────────────────────────────────────────────────────────
+
+@router.get("/instagram/connect")
+async def auth_instagram_connect(
+    redirect_uri: Optional[str] = Query(None),
+    frontend_url: Optional[str] = Query(None),
+    db=Depends(get_database),
+):
+    """Returns Instagram OAuth authorization URL for user login/signup."""
+    import secrets
+    from app.services.instagram_service import InstagramService
+    state = secrets.token_urlsafe(32)
+    effective_frontend = frontend_url or redirect_uri or settings.FRONTEND_URL or "http://localhost:3000"
+    await db["instagram_oauth_states"].insert_one({
+        "state": state,
+        "user_id": "pending_login",
+        "frontend_url": effective_frontend,
+        "created_at": datetime.now(timezone.utc),
+    })
+    auth_url = InstagramService.get_authorization_url(state=state)
+    return {"success": True, "authorization_url": auth_url, "url": auth_url}
+
+
+@router.post("/instagram/login")
+async def auth_instagram_login(
+    req: InstagramAuthLoginRequest,
+    response: Response,
+    request: Request = None,
+    db=Depends(get_database),
+):
+    """Authenticate or register user via Instagram OAuth."""
+    from app.services.instagram_service import InstagramService
+    if not req.access_token and not req.code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Please provide 'access_token' or 'code'."
+        )
+    access_token = req.access_token
+    if not access_token and req.code:
+        token_data = await InstagramService.exchange_code_for_token(req.code, redirect_uri=req.redirect_uri)
+        access_token = token_data["access_token"]
+
+    user, access_token_jwt, refresh_token_jwt = await InstagramService.authenticate_instagram_user(
+        db=db,
+        access_token=access_token,
+        account_type=req.accountType or "user",
+    )
+    set_refresh_cookie(response, refresh_token_jwt)
+
+    user_payload = {
+        "id": str(user.id),
+        "fullName": user.fullName,
+        "firstName": user.firstName,
+        "lastName": user.lastName,
+        "email": user.email,
+        "phone": user.phone,
+        "contactNumber": user.contactNumber,
+        "accountType": user.accountType,
+        "role": getattr(user, "role", "user") or "user",
+        "name": getattr(user, "name", user.fullName) or user.fullName,
+        "emailVerified": bool(user.emailVerified),
+        "email_verified": bool(user.emailVerified),
+        "isVerified": bool(user.emailVerified),
+        "profileImageUrl": user.profileImageUrl,
+        "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
+        "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+    }
+
+    return {
+        "success": True,
+        "message": "Instagram authentication successful",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "user": user_payload,
+        "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "user": user_payload,
+        }
+    }

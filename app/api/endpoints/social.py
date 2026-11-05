@@ -176,6 +176,53 @@ async def publish_linkedin(
     return {"success": True, "message": "Successfully published to LinkedIn", "data": result}
 
 
+@router.post("/publish-facebook")
+async def publish_facebook_direct(
+    req: dict = Body(default={}),
+    current_user = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    caption = req.get("caption", "")
+    image_url = req.get("image_url") or req.get("imageUrl")
+    content_id = req.get("content_id")
+    business_id = current_user.get("business_id")
+    
+    from app.services.facebook_service import FacebookService
+    result = await FacebookService.publish_post(
+        db=db,
+        user_id=user_id,
+        caption=caption,
+        image_url=image_url,
+        content_id=content_id,
+        business_id=business_id,
+    )
+    return {"success": True, "message": "Successfully published to Facebook", "data": result}
+
+
+@router.post("/publish-instagram")
+async def publish_instagram_direct(
+    req: dict = Body(default={}),
+    current_user = Depends(get_current_user),
+    db = Depends(get_database)
+):
+    user_id = str(current_user.get("id") or current_user.get("_id"))
+    caption = req.get("caption", "")
+    image_url = req.get("image_url") or req.get("imageUrl")
+    content_id = req.get("content_id")
+    business_id = current_user.get("business_id")
+    
+    from app.services.instagram_service import InstagramService
+    result = await InstagramService.publish_image(
+        db=db,
+        user_id=user_id,
+        image_url=image_url or "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1080&q=80",
+        caption=caption,
+        content_id=content_id,
+    )
+    return {"success": True, "message": "Successfully published to Instagram", "data": result}
+
+
 @router.post("/publish-linkedin")
 async def publish_linkedin_direct(
     req: dict = Body(default={}),

@@ -251,6 +251,23 @@ class FacebookService:
                     "category": p.get("category"),
                 }
                 ig = p.get("instagram_business_account")
+
+                # If instagram_business_account was not expanded on /me/accounts, query the Page directly with Page Access Token
+                if not ig and p.get("id") and p.get("access_token"):
+                    try:
+                        p_res = await client.get(
+                            f"{GRAPH_API_BASE}/{api_version}/{p['id']}",
+                            params={
+                                "fields": "id,name,instagram_business_account{id,username,name,profile_picture_url,followers_count,media_count},connected_instagram_account{id,username,name}",
+                                "access_token": p["access_token"],
+                            }
+                        )
+                        if p_res.status_code == 200:
+                            p_data = p_res.json()
+                            ig = p_data.get("instagram_business_account") or p_data.get("connected_instagram_account")
+                    except Exception as ex_page_ig:
+                        logger.warning(f"Direct page instagram query for {p.get('id')} notice: {ex_page_ig}")
+
                 if ig:
                     page_info["instagram_business_account"] = {
                         "id": ig.get("id"),
@@ -724,6 +741,25 @@ class FacebookService:
                     fb_page_token = decrypt_token(user_doc["fb_page_access_token"])
                 elif user_doc.get("facebook_access_token"):
                     fb_page_token = decrypt_token(user_doc["facebook_access_token"])
+
+        # Fallback to facebook_connections collection
+        if not fb_page_token or not fb_page_id:
+            fb_conn = await db["facebook_connections"].find_one({
+                "$or": [{"user_id": str(user_id)}, {"user_id": user_id}],
+                "platform": "facebook",
+                "connected": True
+            }) or await db["facebook_connections"].find_one({
+                "$or": [{"user_id": str(user_id)}, {"user_id": user_id}],
+                "platform": "facebook"
+            })
+            if fb_conn:
+                fb_page_id = fb_page_id or fb_conn.get("fb_page_id") or fb_conn.get("account_id")
+                if fb_conn.get("encrypted_access_token"):
+                    fb_page_token = fb_page_token or decrypt_token(fb_conn["encrypted_access_token"])
+                elif fb_conn.get("access_token"):
+                    fb_page_token = fb_page_token or fb_conn["access_token"]
+                elif fb_conn.get("fb_page_access_token"):
+                    fb_page_token = fb_page_token or decrypt_token(fb_conn["fb_page_access_token"])
 
         if not fb_page_token or not fb_page_id:
             raise HTTPException(

@@ -275,7 +275,7 @@ async def instagram_callback(
         return RedirectResponse(
             url=build_instagram_redirect(
                 frontend_url,
-                f"instagram_connected=true&ig_access_token={access_token}&access_token={access_token}&ig_user_id={ig_id}&ig_account_id={ig_id}&ig_username={ig_username}{token_param}{onboarding_param}"
+                f"instagram_connected=true&provider=instagram&ig_access_token={access_token}&access_token={access_token}&ig_user_id={ig_id}&ig_account_id={ig_id}&ig_username={ig_username}{token_param}{onboarding_param}"
             )
         )
 
