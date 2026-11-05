@@ -113,11 +113,7 @@ async def get_session_and_site(session_id: str, user_id: str):
             "session_id": session_id,
             "pages.0": {"$exists": True}
         }, sort=[("_id", -1)])
-        if not valid_proj:
-            valid_proj = await p_coll.find_one({
-                "user_id": user_id,
-                "pages.0": {"$exists": True}
-            }, sort=[("_id", -1)])
+
 
         if valid_proj:
             site = WebsiteProject(**valid_proj)
@@ -523,14 +519,7 @@ async def get_site(
                 if cand_pages and len(cand_pages) > 0:
                     valid_proj = c_doc
                     break
-        if not valid_proj and getattr(site, "user_id", None):
-            cursor = p_coll.find({"user_id": site.user_id}).sort([("_id", -1)])
-            candidates = await cursor.to_list(length=10)
-            for c_doc in candidates:
-                cand_pages = c_doc.get("pages") or (c_doc.get("website_data", {}).get("pages") if isinstance(c_doc.get("website_data"), dict) else [])
-                if cand_pages and len(cand_pages) > 0:
-                    valid_proj = c_doc
-                    break
+
         if valid_proj:
             site = WebsiteProject(**valid_proj)
             payload = format_site_payload(site)
@@ -576,7 +565,7 @@ async def edit_website(
     if not session.website_project_id:
         p_coll = await WebsiteBuilderService.get_project_collection()
         recent_proj = await p_coll.find_one(
-            {"$or": [{"session_id": session_id}, {"user_id": user_id}]},
+            {"session_id": session_id, "user_id": user_id},
             sort=[("created_at", -1)]
         )
         if recent_proj:
