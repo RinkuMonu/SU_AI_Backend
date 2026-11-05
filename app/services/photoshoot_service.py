@@ -7538,52 +7538,53 @@ class PhotoshootService:
 
             clean_mid = model_id.replace("model_f_", "model_female_").replace("model_m_", "model_male_")
 
-            MASTER_AVATAR_VARIATIONS = {
-                "model_female_01": [
-                    Path("uploads/photoshoot/final/photoshoot_final_530bfdf34604.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_119d35d55920.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_83d1b831b5fa.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_236e55aeaefd.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_46a030a4d4a2.jpg"),
-                ],
-                "model_female_03": [
-                    Path("uploads/photoshoot/final/photoshoot_final_9b00ce2c855f.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_1617e313f094.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_55a761829422.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_d4beab080b51.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_01a5a681f05d.jpg"),
-                ],
-                "model_female_02": [
-                    Path("uploads/photoshoot/final/photoshoot_final_fd9eb6f98639.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_d5991a60d9b6.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_2c6a99006d29.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_24af159e8892.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_02fe175b7ac7.jpg"),
-                ],
-                "model_male_01": [
-                    Path("uploads/photoshoot/final/photoshoot_final_db34d8528548.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_5438493000d5.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_05ba0dc2a6b6.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_bbceec3a3f81.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_0be3b6beb82b.jpg"),
-                ],
-                "model_male_02": [
-                    Path("uploads/photoshoot/final/photoshoot_final_1897bed46b1b.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_14be60a33ce3.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_043422b75de8.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_a1bdc06e934b.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_00be7d136f43.jpg"),
-                ],
-                "model_male_03": [
-                    Path("uploads/photoshoot/final/photoshoot_final_1897bed46b1b.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_14be60a33ce3.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_043422b75de8.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_a1bdc06e934b.jpg"),
-                    Path("uploads/photoshoot/final/photoshoot_final_00be7d136f43.jpg"),
-                ],
-            }
+            # Determine whether the product is a dress / gown / kurti / saree / feminine full-length garment
+            prod_str = f"{product_name or ''} {product_category or ''}".lower()
+            is_dress = any(w in prod_str for w in ["dress", "gown", "kurti", "frock", "saree", "skirt", "midi", "maxi", "one piece", "full-length", "women"])
+            is_explicit_tshirt = any(w in prod_str for w in ["t-shirt", "tshirt", "tee", "men's apparel"])
 
-            var_list = MASTER_AVATAR_VARIATIONS.get(clean_mid) or MASTER_AVATAR_VARIATIONS["model_female_01"]
+            if not is_dress and not is_explicit_tshirt and reference_image_path and Path(reference_image_path).exists() and Path(reference_image_path).is_file():
+                try:
+                    with Image.open(reference_image_path) as rim:
+                        rw, rh = rim.size
+                        if rh / max(1, rw) > 1.20 and not any(w in prod_str for w in ["t-shirt", "tshirt", "tee"]):
+                            is_dress = True
+                except Exception:
+                    pass
+
+            DRESS_VARIATIONS = [
+                Path("uploads/photoshoot/final/photoshoot_final_fd9eb6f98639.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_d5991a60d9b6.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_2c6a99006d29.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_24af159e8892.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_02fe175b7ac7.jpg"),
+            ]
+
+            FEMALE_TSHIRT_VARIATIONS = [
+                Path("uploads/photoshoot/final/photoshoot_final_530bfdf34604.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_119d35d55920.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_83d1b831b5fa.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_236e55aeaefd.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_46a030a4d4a2.jpg"),
+            ]
+
+            MALE_VARIATIONS = [
+                Path("uploads/photoshoot/final/photoshoot_final_db34d8528548.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_5438493000d5.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_05ba0dc2a6b6.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_bbceec3a3f81.jpg"),
+                Path("uploads/photoshoot/final/photoshoot_final_0be3b6beb82b.jpg"),
+            ]
+
+            if clean_mid.startswith("model_male_"):
+                var_list = MALE_VARIATIONS
+            else:
+                # For female models: if product is a dress / gown / kurti / female apparel or not explicitly a t-shirt,
+                # use authentic draped dress master variations.
+                if is_dress or not is_explicit_tshirt:
+                    var_list = DRESS_VARIATIONS
+                else:
+                    var_list = FEMALE_TSHIRT_VARIATIONS
             chosen_idx = variation_idx % len(var_list)
 
             if style:
