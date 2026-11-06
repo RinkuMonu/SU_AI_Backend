@@ -27,24 +27,11 @@ class CreditService:
             )
         cost = FEATURE_PRICING.get(action, 1)
 
-        if sub.get("credits_remaining", 0) < cost:
-            if is_dev or has_custom_key:
-                # Auto-replenish in development or when custom OpenAI API key is configured
-                sub_collection = db["subscriptions"]
-                await sub_collection.update_one(
-                    {"user_id": user_id},
-                    {
-                        "$set": {
-                            "credits_remaining": 1000,
-                            "credits_total": 1000,
-                            "updated_at": datetime.now(timezone.utc),
-                        }
-                    },
-                )
-                return True
+        remaining = sub.get("credits_remaining", 0)
+        if remaining < cost:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {sub.get('credits_remaining', 0)}",
+                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {remaining}. Please upgrade your plan or purchase credit top-up.",
             )
         return True
 
@@ -85,37 +72,12 @@ class CreditService:
         )
 
         if not updated_sub:
-            if is_dev or has_custom_key:
-                # Auto-replenish in development or with custom key so operation doesn't fail
-                await sub_collection.update_one(
-                    {"user_id": user_id},
-                    {
-                        "$set": {
-                            "credits_remaining": 1000,
-                            "credits_total": 1000,
-                            "updated_at": datetime.now(timezone.utc),
-                        }
-                    },
-                )
-                updated_sub = await sub_collection.find_one_and_update(
-                    {
-                        "user_id": user_id,
-                        "credits_remaining": {"$gte": cost},
-                    },
-                    {
-                        "$inc": {"credits_remaining": -cost},
-                        "$set": {"updated_at": datetime.now(timezone.utc)},
-                    },
-                    return_document=ReturnDocument.AFTER,
-                )
-
-            if not updated_sub:
-                current = await sub_collection.find_one({"user_id": user_id})
-                remaining = current.get("credits_remaining", 0) if current else 0
-                raise HTTPException(
-                    status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                    detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}",
-                )
+            current = await sub_collection.find_one({"user_id": user_id})
+            remaining = current.get("credits_remaining", 0) if current else 0
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}. Please upgrade your plan or purchase credit top-up.",
+            )
             
         # Record transaction
         tx_collection = db["credit_transactions"]
