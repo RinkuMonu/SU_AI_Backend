@@ -1,29 +1,10 @@
 from datetime import datetime, timezone
-from bson import ObjectId
 from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
+from bson import ObjectId
 from app.core.billing_config import FEATURE_PRICING, NON_CREDIT_FEATURES, UNPRICED_FEATURES
 
 class CreditService:
-    @staticmethod
-    def _get_action_cost(action: str) -> int:
-        normalized_action = (action or "").strip().lower().replace("-", "_")
-        if normalized_action in NON_CREDIT_FEATURES:
-            return 0
-        if normalized_action in UNPRICED_FEATURES or normalized_action not in FEATURE_PRICING:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"CREDIT_COST_UNCONFIGURED: Credit pricing for '{action}' is not set.",
-            )
-        return FEATURE_PRICING[normalized_action]
-
-    @staticmethod
-    def _uid_query(uid: str):
-        s = str(uid or "").strip()
-        if ObjectId.is_valid(s):
-            return {"$in": [s, ObjectId(s)]}
-        return s
-
     @staticmethod
     async def get_or_create_subscription(db, user_id: str):
         from app.services.subscription_service import SubscriptionService
@@ -32,21 +13,44 @@ class CreditService:
     @staticmethod
     async def check_credits(db, user_id: str, action: str):
         """Check if user has enough credits without deducting. Raises 402 if not."""
-        cost = CreditService._get_action_cost(action)
-        if cost == 0:
-            return True
+        from app.core.config import settings
+        is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
+        has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
+
         sub = await CreditService.get_or_create_subscription(db, user_id)
-        if sub.get("credits_remaining", 0) < cost:
+        if action in NON_CREDIT_FEATURES:
+            return True
+        if action in UNPRICED_FEATURES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"CREDIT_COST_UNCONFIGURED: Credit pricing for '{action}' is not set yet.",
+            )
+        cost = FEATURE_PRICING.get(action, 1)
+
+        remaining = sub.get("credits_remaining", 0)
+        if remaining < cost:
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {sub.get('credits_remaining', 0)}",
+                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining: {remaining}. Please upgrade your plan or purchase credit top-up.",
             )
         return True
 
     @staticmethod
     async def deduct_credits(db, user_id: str, action: str) -> dict:
         """Atomically deducts credits for an action and logs the transaction. Raises 402 if insufficient."""
-        cost = CreditService._get_action_cost(action)
+        from app.core.config import settings
+        is_dev = getattr(settings, "ENVIRONMENT", "development") == "development"
+        has_custom_key = bool(getattr(settings, "OPENAI_API_KEY", None))
+
+        if action in NON_CREDIT_FEATURES:
+            return {"success": True}
+        if action in UNPRICED_FEATURES:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"CREDIT_COST_UNCONFIGURED: Credit pricing for '{action}' is not set yet.",
+            )
+        cost = FEATURE_PRICING.get(action, 1)
+
         if cost == 0:
             return {"success": True}
 
@@ -57,7 +61,7 @@ class CreditService:
         sub_collection = db["subscriptions"]
         updated_sub = await sub_collection.find_one_and_update(
             {
-                "user_id": CreditService._uid_query(user_id),
+                "user_id": user_id,
                 "credits_remaining": {"$gte": cost},
             },
             {
@@ -72,13 +76,13 @@ class CreditService:
             remaining = current.get("credits_remaining", 0) if current else 0
             raise HTTPException(
                 status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}",
+                detail=f"INSUFFICIENT_CREDITS: Required {cost}, Remaining {remaining}. Please upgrade your plan or purchase credit top-up.",
             )
             
         # Record transaction
         tx_collection = db["credit_transactions"]
         tx = {
-            "user_id": CreditService._uid_query(user_id),
+            "user_id": user_id,
             "transaction_type": "deduction",
             "amount": cost,
             "feature": action,
@@ -95,7 +99,8 @@ class CreditService:
     @staticmethod
     async def refund_credits(db, user_id: str, action: str, job_id: str = None) -> dict:
         """Refunds credits (e.g. if an async job fails right away). Idempotent if job_id provided."""
-        cost = CreditService._get_action_cost(action)
+        cost = FEATURE_PRICING.get(action, 1)
+        
         if cost == 0:
             return {"success": True}
             
@@ -104,7 +109,7 @@ class CreditService:
         # Ensure idempotency
         if job_id:
             existing_refund = await tx_collection.find_one({
-                "user_id": CreditService._uid_query(user_id),
+                "user_id": user_id,
                 "transaction_type": "refund",
                 "reference_id": job_id
             })
@@ -123,7 +128,7 @@ class CreditService:
         
         if updated_sub:
             tx = {
-                "user_id": CreditService._uid_query(user_id),
+                "user_id": user_id,
                 "transaction_type": "refund",
                 "amount": cost,
                 "feature": action,
@@ -150,7 +155,7 @@ class CreditService:
         tx_col = db["credit_transactions"]
         if reference_id:
             existing_grant = await tx_col.find_one({
-                "user_id": CreditService._uid_query(user_id),
+                "user_id": user_id,
                 "transaction_type": "grant",
                 "reference_id": reference_id
             })
@@ -182,7 +187,7 @@ class CreditService:
         balance_after = updated_sub.get("credits_remaining", balance_before + amount)
 
         tx = {
-            "user_id": CreditService._uid_query(user_id),
+            "user_id": user_id,
             "transaction_type": "grant",
             "amount": amount,
             "feature": reason,
@@ -204,19 +209,25 @@ class CreditService:
         total_in_sub = sub.get("credits_total", remaining)
 
         cursor = db["credit_transactions"].find({"user_id": user_id})
+        total_granted = 0
         total_consumed = 0
         async for tx in cursor:
             ttype = tx.get("transaction_type")
             amt = tx.get("amount", 0)
-            if ttype == "deduction":
+            if ttype == "grant":
+                total_granted += amt
+            elif ttype == "deduction":
                 total_consumed += amt
             elif ttype == "refund":
                 total_consumed -= amt
 
+        if total_granted == 0:
+            total_granted = total_in_sub
+
         return {
             "plan_id": sub.get("plan_id", "FREE"),
-            "credits_total": total_in_sub,
-            "credits_granted": total_in_sub,
+            "credits_total": max(total_granted, total_in_sub),
+            "credits_granted": max(total_granted, total_in_sub),
             "credits_consumed": max(total_consumed, 0),
             "credits_remaining": remaining
         }
