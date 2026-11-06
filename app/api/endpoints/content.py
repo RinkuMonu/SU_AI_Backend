@@ -454,7 +454,7 @@ async def generate_post(
         logger.error(f"OpenAI Quota Exceeded in generate_post: {qe}")
         raise HTTPException(
             status_code=402,
-            detail="AI credits or quota exceeded with the AI provider. Please verify your billing or retry."
+            detail="AI credits exhausted. Your OpenAI account has run out of credits. Please add funds to your OpenAI billing balance at platform.openai.com/settings/organization/billing to generate posts and images."
         )
     except OpenAIModelUnavailableError as me:
         logger.error(f"OpenAI Model Unavailable in generate_post: {me}")

@@ -45,7 +45,7 @@ class OpenAIModelUnavailableError(OpenAIServiceError):
 class OpenAIQuotaExceededError(OpenAIServiceError):
     """Raised when OpenAI rate limit or billing quota is exceeded."""
     def __init__(self, model: str, details: Any = None):
-        msg = f"Quota or rate limit exceeded for OpenAI model '{model}' (HTTP 429). Details: {details}."
+        msg = "AI credits or quota exhausted. Please recharge your OpenAI account credits to continue generating content and images."
         super().__init__(msg, status_code=429, error_code="QUOTA_EXCEEDED", details=details)
 
 
