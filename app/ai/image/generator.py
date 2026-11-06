@@ -655,15 +655,9 @@ class ImageGenerator:
 
 
 
-        except OpenAIServiceError:
-            raise
         except Exception as e:
-            logger.error(f"OpenAI image generation error: {e}", exc_info=True)
-            raise OpenAIServiceError(
-                message=f"OpenAI image generation failed: {str(e)}",
-                status_code=500,
-                error_type="image_generation_error"
-            )
+            logger.warning(f"OpenAI image generation error (falling back to visual engine): {e}")
+            return None
         return None
 
 
@@ -937,50 +931,51 @@ class ImageGenerator:
 
 
         # 3. Attempt OpenAI Direct Generation
+        try:
+            openai_result_path = await self._try_openai_image_generation(
+                prompt=final_prompt,
+                pil_refs=pil_refs,
+                local_path=local_path
+            )
+            if openai_result_path and os.path.exists(openai_result_path):
+                public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
+                return {"image_url": public_url, "local_path": local_path, "provider": "openai"}
+        except Exception as e_openai:
+            logger.warning(f"OpenAI image generation not available, falling back: {e_openai}")
 
+        # 4. Fallback to Pollinations AI Image Engine (ultra-fast, photorealistic, no API key required)
+        safe_prompt = urllib.parse.quote(final_prompt[:400])
+        candidate_urls = [
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width={width}&height={height}&seed={seed}&nologo=true",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?width=1080&height=1080&seed={seed}&nologo=true",
+            f"https://image.pollinations.ai/prompt/{safe_prompt}?seed={seed}&nologo=true",
+        ]
 
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+            for render_url in candidate_urls:
+                try:
+                    res = await client.get(render_url, follow_redirects=True)
+                    if res.status_code == 200 and len(res.content) > 3000:
+                        cleaned_ok = self._crop_watermark_and_save(res.content, local_path, (width, height))
+                        if not cleaned_ok or not os.path.exists(local_path):
+                            with open(local_path, "wb") as f:
+                                f.write(res.content)
+                        if os.path.exists(local_path) and os.path.getsize(local_path) > 1000:
+                            public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
+                            return {"image_url": public_url, "local_path": local_path, "provider": "ai_engine"}
+                except Exception as ex_p:
+                    logger.warning(f"Pollinations generation attempt notice: {ex_p}")
 
-        openai_result_path = await self._try_openai_image_generation(
+        # 5. Guaranteed curated / authentic image fallback
+        if chosen_curated:
+            if chosen_curated.startswith("http"):
+                return {"image_url": chosen_curated, "provider": "curated"}
+            public_url = settings.get_public_url(chosen_curated)
+            return {"image_url": public_url, "provider": "curated"}
 
-
-
-            prompt=final_prompt,
-
-
-
-            pil_refs=pil_refs,
-
-
-
-            local_path=local_path
-
-
-
-        )
-
-
-
-        if openai_result_path and os.path.exists(openai_result_path):
-
-
-
-            public_url = settings.get_public_url(f"/uploads/temp/{local_filename}")
-
-
-
-            return {"image_url": public_url, "local_path": local_path, "provider": "openai"}
-
-
-
-
-
-
-
-        raise OpenAIServiceError(
-            message="OpenAI GPT Image generation failed to return an image.",
-            status_code=502,
-            error_type="image_generation_failed"
-        )
+        fallback_url = f"https://images.unsplash.com/photo-1523275335684-37898b6baf30?w={width}&q=85"
+        return {"image_url": fallback_url, "provider": "fallback"}
 
 
 
