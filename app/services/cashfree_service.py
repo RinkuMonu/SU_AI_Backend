@@ -15,6 +15,17 @@ from app.services.credit_service import CreditService
 logger = logging.getLogger(__name__)
 
 class CashfreeService:
+    @staticmethod
+    def _build_return_url(return_url: Optional[str], subscription_id: str) -> str:
+        url = return_url or (
+            f"{settings.FRONTEND_URL}/payment/success"
+            f"?order_id={subscription_id}&sub_id={subscription_id}"
+        )
+        return (
+            url.replace("{subscription_id}", subscription_id)
+            .replace("{order_id}", subscription_id)
+        )
+
     @classmethod
     def get_base_url(cls) -> str:
         if (settings.CASHFREE_ENV or "TEST").upper() == "PROD":
@@ -163,7 +174,7 @@ class CashfreeService:
             "customer_phone": phone
         }
 
-        default_return_url = return_url or f"{settings.FRONTEND_URL}/payment/success?order_id={subscription_id}&sub_id={subscription_id}"
+        default_return_url = cls._build_return_url(return_url, subscription_id)
 
         sub_payload = {
             "subscription_id": subscription_id,
@@ -334,9 +345,9 @@ class CashfreeService:
         Handles Cashfree recurring subscription webhook events.
         """
         # Event type
-        event_type = payload.get("type") or payload.get("event")
+        event_type = (payload.get("type") or payload.get("event") or "").upper()
         data = payload.get("data") or {}
-        sub_data = data.get("subscription") or data
+        sub_data = data.get("subscription_details") or data.get("subscription") or data
 
         sub_id = sub_data.get("subscription_id")
         if not sub_id:
@@ -349,53 +360,55 @@ class CashfreeService:
             return {"success": False, "message": "Subscription not found"}
 
         now = datetime.now(timezone.utc)
-        auth_details = sub_data.get("authorization_details") or {}
-        sub_status = sub_data.get("subscription_status") or payload.get("status")
+        auth_details = sub_data.get("authorization_details") or data.get("authorization_details") or {}
+        sub_status = (
+            sub_data.get("subscription_status")
+            or sub_data.get("status")
+            or payload.get("status")
+            or ""
+        ).upper()
 
         # Activate plan if mandate approved / active
-        if event_type in ["SUBSCRIPTION_ACTIVE", "SUBSCRIPTION_NEW", "SUBSCRIPTION_ACTIVATED"] or sub_status == "ACTIVE":
-            if subscription.get("status") != "ACTIVE":
-                await db["payment_subscriptions"].update_one(
-                    {"subscription_id": sub_id},
-                    {
-                        "$set": {
-                            "status": "ACTIVE",
-                            "auth_status": auth_details.get("authorization_status", "SUCCESS"),
-                            "cf_subscription_id": sub_data.get("cf_subscription_id") or subscription.get("cf_subscription_id"),
-                            "activated_at": now,
-                            "updated_at": now,
-                            "last_webhook_payload": payload
-                        }
+        if sub_status in ["ACTIVE", "AUTHENTICATED"] or (
+            not sub_status and event_type in ["SUBSCRIPTION_ACTIVE", "SUBSCRIPTION_ACTIVATED"]
+        ):
+            # Keep activation idempotent and retryable if an earlier webhook only
+            # partially completed the local plan update.
+            await SubscriptionService.upgrade_plan(
+                db,
+                subscription["user_id"],
+                subscription["plan_id"],
+                billing_cycle=subscription["billing_cycle"],
+                reference_id=sub_id,
+                transaction_id=sub_id,
+                amount=subscription.get("auth_amount") or subscription.get("recurring_amount"),
+                payment_provider="cashfree",
+            )
+            await db["payment_subscriptions"].update_one(
+                {"subscription_id": sub_id},
+                {
+                    "$set": {
+                        "status": "ACTIVE",
+                        "auth_status": auth_details.get("authorization_status", "SUCCESS"),
+                        "cf_subscription_id": sub_data.get("cf_subscription_id") or subscription.get("cf_subscription_id"),
+                        "activated_at": subscription.get("activated_at") or now,
+                        "updated_at": now,
+                        "last_webhook_payload": payload,
                     }
-                )
-
-                # Grant user subscription & plan credits
-                user_id = subscription["user_id"]
-                plan_id = subscription["plan_id"]
-                cycle = subscription["billing_cycle"]
-                
-                try:
-                    await SubscriptionService.upgrade_plan(db, user_id, plan_id, billing_cycle=cycle)
-                    logger.info("Activated subscription for user %s with plan %s", user_id, plan_id)
-                except Exception as ex:
-                    logger.error("Failed to activate user subscription in SubscriptionService: %s", ex)
-
-                # Update transaction record and dispatch MSG91 invoice email
-                try:
-                    await db["payment_transactions"].update_one(
-                        {"order_id": sub_id},
-                        {"$set": {"status": "success", "completed_at": now, "verified_at": now, "updated_at": now}}
-                    )
-                    from app.services.invoice_service import InvoiceService
-                    cf_tx = await db["payment_transactions"].find_one({"order_id": sub_id})
-                    if cf_tx and not cf_tx.get("invoice_email_sent"):
-                        await InvoiceService.send_invoice_email(db, cf_tx)
-                except Exception as e:
-                    logger.warning("Failed to update payment_transactions on webhook active: %s", e)
-
+                },
+            )
+            await db["payment_transactions"].update_one(
+                {"order_id": sub_id},
+                {"$set": {"status": "success", "completed_at": now, "verified_at": now, "updated_at": now}}
+            )
+            cf_tx = await db["payment_transactions"].find_one({"order_id": sub_id})
+            if cf_tx and not cf_tx.get("invoice_email_sent"):
+                from app.services.invoice_service import InvoiceService
+                await InvoiceService.send_invoice_email(db, cf_tx)
+            logger.info("Activated subscription for user %s with plan %s", subscription["user_id"], subscription["plan_id"])
             return {"success": True, "message": "Subscription activated successfully"}
 
-        elif event_type in ["SUBSCRIPTION_FAILED", "SUBSCRIPTION_CANCELLED", "SUBSCRIPTION_TERMINATED"] or sub_status in ["FAILED", "CANCELLED"]:
+        elif event_type in ["SUBSCRIPTION_FAILED", "SUBSCRIPTION_CANCELLED", "SUBSCRIPTION_TERMINATED"] or sub_status in ["FAILED", "CANCELLED", "TERMINATED", "REJECTED", "EXPIRED"]:
             fail_reason = payload.get("message") or "Mandate authorization failed or cancelled"
             await db["payment_subscriptions"].update_one(
                 {"subscription_id": sub_id},
@@ -461,7 +474,8 @@ class CashfreeService:
                 res = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
                 if res.status_code == 200:
                     cf_data = res.json()
-                    cf_status = cf_data.get("subscription_status")
+                    cf_data = cf_data.get("subscription_details") or cf_data
+                    cf_status = cf_data.get("subscription_status") or cf_data.get("status")
                     prev_status = record.get("status")
                     if cf_status:
                         if cf_status != prev_status:
@@ -471,15 +485,18 @@ class CashfreeService:
                             )
                             record["status"] = cf_status
                         # Automatically activate plan in subscription collection
-                        if cf_status in ["ACTIVE", "AUTHENTICATED", "APPROVAL_PENDING"]:
-                            user_sub = await db["subscriptions"].find_one({"user_id": record["user_id"]})
-                            current_plan = (user_sub.get("plan") or user_sub.get("plan_id") or "").upper() if user_sub else ""
-                            target_plan = (record.get("plan_id") or "").upper()
-                            if current_plan != target_plan or not (user_sub and user_sub.get("verified_payment")):
-                                await SubscriptionService.upgrade_plan(
-                                    db, record["user_id"], record["plan_id"], billing_cycle=record.get("billing_cycle", "monthly")
-                                )
-                                logger.info("Upgraded user %s to plan %s via Cashfree sync", record["user_id"], record["plan_id"])
+                        if cf_status in ["ACTIVE", "AUTHENTICATED"]:
+                            await SubscriptionService.upgrade_plan(
+                                db,
+                                record["user_id"],
+                                record["plan_id"],
+                                billing_cycle=record.get("billing_cycle", "monthly"),
+                                reference_id=subscription_id,
+                                transaction_id=subscription_id,
+                                amount=record.get("auth_amount") or record.get("recurring_amount"),
+                                payment_provider="cashfree",
+                            )
+                            logger.info("Upgraded user %s to plan %s via Cashfree sync", record["user_id"], record["plan_id"])
         except Exception as e:
             logger.warning("Could not sync live Cashfree subscription status: %s", e)
 
@@ -496,7 +513,7 @@ class CashfreeService:
                     await InvoiceService.send_invoice_email(db, cf_tx)
             except Exception as e:
                 logger.warning("Could not dispatch invoice email during subscription status sync: %s", e)
-        elif record.get("status") in ["FAILED", "CANCELLED", "TERMINATED", "REJECTED"]:
+        elif record.get("status") in ["FAILED", "CANCELLED", "TERMINATED", "REJECTED", "EXPIRED"]:
             try:
                 fail_reason = record.get("failure_reason") or f"Subscription mandate {record.get('status', 'FAILED').lower()}"
                 await db["payment_transactions"].update_one(

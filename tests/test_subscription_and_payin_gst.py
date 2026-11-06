@@ -141,13 +141,13 @@ async def test_04_subscription_plans_api_returns_gst_breakdown():
         assert data["success"] is True
 
         plans_list = data["plans_list"]
-        starter = next(p for p in plans_list if p["id"] == "STARTER")
-        assert starter["base_price"] == 799.0
-        assert starter["currency"] == "INR"
-        assert starter["gst_percentage"] == 18.0
-        assert starter["gst_amount"] == 143.82
-        assert starter["total_payable"] == 942.82
-        assert starter["total_price"] == 942.82
+        pro = next(p for p in plans_list if p["id"] == "PRO_STARTER")
+        assert pro["base_price"] == 799.0
+        assert pro["currency"] == "INR"
+        assert pro["gst_percentage"] == 18.0
+        assert pro["gst_amount"] == 143.82
+        assert pro["total_payable"] == 942.82
+        assert pro["total_price"] == 942.82
 
         free = next(p for p in plans_list if p["id"] == "FREE")
         assert free["base_price"] == 0.0
@@ -158,10 +158,10 @@ async def test_04_subscription_plans_api_returns_gst_breakdown():
         # Also check /available-plans
         avail_res = await ac.get("/api/v1/subscription/available-plans")
         assert avail_res.status_code == 200
-        avail_starter = next(p for p in avail_res.json()["data"] if p["id"] == "STARTER")
-        assert avail_starter["base_price"] == 799.0
-        assert avail_starter["gst_amount"] == 143.82
-        assert avail_starter["total_payable"] == 942.82
+        avail_pro = next(p for p in avail_res.json()["data"] if p["id"] == "PRO_STARTER")
+        assert avail_pro["base_price"] == 799.0
+        assert avail_pro["gst_amount"] == 143.82
+        assert avail_pro["total_payable"] == 942.82
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. Payin Order Creation, Verification, Cancellation, & Failure
@@ -317,7 +317,7 @@ async def test_08_successful_payment_verification_and_plan_upgrade(mock_post):
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "STARTER"
         assert sub["status"] == "active"
-        assert sub["credits_remaining"] >= 105  # 5 free + 100 plan credits
+        assert sub["credits_remaining"] == 350  # 300 monthly credits + 50 one-time signup bonus
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Idempotency & Duplicate Callback Protection
@@ -406,4 +406,3 @@ async def test_10_transaction_report_and_pdf_receipt_consistency(mock_post):
         pdf_bytes = PDFService.generate_receipt_pdf(tx_doc)
         assert len(pdf_bytes) > 1000
         assert pdf_bytes.startswith(b"%PDF")
-

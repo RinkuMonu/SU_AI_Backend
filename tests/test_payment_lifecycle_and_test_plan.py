@@ -166,7 +166,7 @@ async def test_03_back_navigation_and_cancellation(mock_post):
         # Verify DB: user did not get upgraded, credits unchanged
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "FREE"
-        assert sub["credits_remaining"] == 5
+        assert sub["credits_remaining"] == 50
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -206,9 +206,9 @@ async def test_04_payment_success_and_single_activation(mock_post):
         # Verify subscription was activated
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "TEST_PLAN"
-        # 5 initial + 20 purchased = 25 credits
-        assert sub["credits_remaining"] == 25
-        assert sub["credits_total"] == 25
+        # The test plan retains its existing additive test-credit behavior.
+        assert sub["credits_remaining"] == 70
+        assert sub["credits_total"] == 70
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ async def test_05_duplicate_callback_idempotency(mock_post):
 
         # Ensure NO double-credit grants: still exactly 25
         sub = await db["subscriptions"].find_one({"user_id": user_id})
-        assert sub["credits_remaining"] == 25
+        assert sub["credits_remaining"] == 70
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -395,7 +395,7 @@ async def test_08_ai_credit_report_and_ledger(mock_post):
         assert summary_res.status_code == 200
         s_data = summary_res.json()["data"]
         assert s_data["plan_id"] == "TEST_PLAN"
-        assert s_data["credits_remaining"] == 25
+        assert s_data["credits_remaining"] == 70
 
         # Check credit transactions
         ledger_res = await ac.get(
@@ -446,13 +446,13 @@ async def test_09_test_plan_reset_and_flow_repeat(mock_post):
         assert r_data["success"] is True
         assert r_data["previous_plan"] == "TEST_PLAN"
         assert r_data["new_plan"] == "FREE"
-        assert r_data["credits_available"] == 5
+        assert r_data["credits_available"] == 50
         assert order_1 in r_data["preserved_paid_orders"]
 
         # Confirm DB subscription is FREE
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "FREE"
-        assert sub["credits_remaining"] == 5
+        assert sub["credits_remaining"] == 50
 
         # Confirm the genuine paid order was PRESERVED in payment_transactions (audit trail)
         paid_tx = await db["payment_transactions"].find_one({"order_id": order_1})
@@ -477,7 +477,7 @@ async def test_09_test_plan_reset_and_flow_repeat(mock_post):
         # Confirm active again with clean credits (5 + 20 = 25)
         me_res2 = await ac.get("/api/v1/subscription/me", headers={"Authorization": f"Bearer {token}"})
         assert me_res2.json()["data"]["plan_id"] == "TEST_PLAN"
-        assert me_res2.json()["data"]["credits_remaining"] == 25
+        assert me_res2.json()["data"]["credits_remaining"] == 70
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -490,10 +490,10 @@ async def test_10_all_plans_create_order_with_correct_prices(mock_post):
 
     plans_to_test = [
         {"plan_id": "TEST_PLAN", "expected_amount": 1.0, "expected_credits": 20},
-        {"plan_id": "STARTER", "expected_amount": 799.0, "expected_credits": 100},
-        {"plan_id": "GROWTH", "expected_amount": 2999.0, "expected_credits": 400},
-        {"plan_id": "BUSINESS", "expected_amount": 4999.0, "expected_credits": 1000},
-        {"plan_id": "INFLUENCER", "expected_amount": 9999.0, "expected_credits": 2500},
+        {"plan_id": "PRO_STARTER", "expected_amount": 799.0, "expected_credits": 300},
+        {"plan_id": "PRO_PLUS", "expected_amount": 2999.0, "expected_credits": 1500},
+        {"plan_id": "BUSINESS", "expected_amount": 4999.0, "expected_credits": 2500},
+        {"plan_id": "BUSINESS_PREMIUM", "expected_amount": 9999.0, "expected_credits": 2500},
     ]
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -520,7 +520,7 @@ async def test_10_all_plans_create_order_with_correct_prices(mock_post):
         # Ensure user's subscription is STILL FREE (creation never activates)
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "FREE"
-        assert sub["credits_remaining"] == 5
+        assert sub["credits_remaining"] == 50
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -584,7 +584,7 @@ async def test_11_eliminate_false_success_and_mismatches(mock_post):
         # Confirm user remains FREE and no credits granted
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "FREE"
-        assert sub["credits_remaining"] == 5
+        assert sub["credits_remaining"] == 50
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -649,4 +649,4 @@ async def test_13_failed_and_cancelled_callbacks_no_activation(mock_post):
         # Confirm user is still on FREE plan
         sub = await db["subscriptions"].find_one({"user_id": user_id})
         assert sub["plan_id"] == "FREE"
-        assert sub["credits_remaining"] == 5
+        assert sub["credits_remaining"] == 50

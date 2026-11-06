@@ -280,31 +280,32 @@ async def test_available_plans_and_pricing_structure():
         assert res.status_code == 200
         plans = res.json()["data"]
         plan_ids = [p["id"] for p in plans]
-        assert plan_ids == ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER"]
+        assert plan_ids == ["FREE", "PRO_STARTER", "PRO_PLUS", "BUSINESS", "BUSINESS_PREMIUM"]
 
-        # Check Starter
-        starter = next(p for p in plans if p["id"] == "STARTER")
-        assert starter["price"] == 799
-        assert starter["credits"] == 100
-        assert starter["billing_cycles"]["monthly"]["price"] == 799
-        assert starter["billing_cycles"]["quarterly"]["price"] == 2157
-        assert starter["billing_cycles"]["yearly"]["price"] == 7670
-        assert len(starter["highlights"]) == 3
+        # Check Pro
+        pro = next(p for p in plans if p["id"] == "PRO_STARTER")
+        assert pro["price"] == 799
+        assert pro["credits"] == 300
+        assert pro["signup_bonus"] == 50
+        assert pro["billing_cycles"]["monthly"]["price"] == 799
+        assert pro["billing_cycles"]["quarterly"]["price"] == 2157
+        assert pro["billing_cycles"]["yearly"]["price"] == 7670
+        assert len(pro["highlights"]) == 3
 
-        # Check Growth
-        growth = next(p for p in plans if p["id"] == "GROWTH")
-        assert growth["price"] == 2999
-        assert growth["credits"] == 400
+        # Check Pro Plus
+        pro_plus = next(p for p in plans if p["id"] == "PRO_PLUS")
+        assert pro_plus["price"] == 2999
+        assert pro_plus["credits"] == 1500
 
         # Check Business
         business = next(p for p in plans if p["id"] == "BUSINESS")
         assert business["price"] == 4999
-        assert business["credits"] == 1000
+        assert business["credits"] == 2500
 
-        # Check Influencer
-        influencer = next(p for p in plans if p["id"] == "INFLUENCER")
-        assert influencer["price"] == 9999
-        assert influencer["credits"] == 2500
+        # Check Business Premium
+        premium = next(p for p in plans if p["id"] == "BUSINESS_PREMIUM")
+        assert premium["price"] == 9999
+        assert premium["credits"] == 2500
 
 
 # --------------------------------------------------------------------------
@@ -625,4 +626,4 @@ async def test_sidebar_billing_and_plans_accessible_after_onboarding():
         # 4. Access /credits
         credits_res = await ac.get("/api/v1/subscription/credits", headers=headers)
         assert credits_res.status_code == 200
-        assert credits_res.json()["credits_remaining"] >= 1000
+        assert credits_res.json()["credits_remaining"] >= 2500

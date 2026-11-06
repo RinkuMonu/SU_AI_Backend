@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, status, Body
 from typing import Optional
 from bson import ObjectId
 from app.core.security import get_current_user
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
 from app.core.database import get_database
 from app.schemas.review import ReviewCreate, ReviewUpdate
 from app.services.review_service import (
@@ -49,9 +51,6 @@ async def list_reviews(
 ):
     business_id = await _resolve_business_id(current_user, db)
     reviews = await get_reviews(db, business_id)
-    if not reviews:
-        # Automatically generate reviews with OpenAI API!
-        reviews = await generate_sample_reviews_gemini(db, business_id, count=4)
     return {"success": True, "message": "Reviews fetched successfully", "data": reviews}
 
 @router.post("/generate-ai-reviews")
@@ -62,8 +61,13 @@ async def generate_ai_reviews(
     """
     Manually triggers generation of authentic customer reviews using OpenAI API.
     """
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    await SubscriptionService.check_feature_access(db, user_id, "ai_review_manager")
+    await CreditService.check_credits(db, user_id, "ai_review_manager")
     business_id = await _resolve_business_id(current_user, db)
     reviews = await generate_sample_reviews_gemini(db, business_id, count=4)
+    if reviews:
+        await CreditService.deduct_credits(db, user_id, "ai_review_manager")
     return {"success": True, "message": "Reviews generated with OpenAI API", "data": reviews}
 
 @router.get("/{review_id}")
@@ -121,7 +125,11 @@ async def generate_reply(
     current_user=Depends(get_current_user),
     db=Depends(get_database)
 ):
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    await SubscriptionService.check_feature_access(db, user_id, "ai_review_manager")
+    await CreditService.check_credits(db, user_id, "ai_review_manager")
     business_id = await _resolve_business_id(current_user, db)
     reply = await generate_ai_reply(db, business_id, review_id, custom_data=payload)
+    if reply:
+        await CreditService.deduct_credits(db, user_id, "ai_review_manager")
     return {"success": True, "data": reply}
-

@@ -8,6 +8,7 @@ from app.core.security import require_admin
 from app.ai.factory import AIProviderFactory
 from app.ai.providers.openai_provider import OpenAIProvider, sanitize_secrets
 from app.services.credit_service import FEATURE_PRICING
+from app.core.billing_config import UNPRICED_FEATURES
 
 @pytest.mark.asyncio
 async def test_01_centralized_model_config():
@@ -217,6 +218,13 @@ async def test_13_credit_deduction_and_pricing_intact():
     assert "ai_reel" in FEATURE_PRICING
     assert FEATURE_PRICING["ai_post"] >= 1
     assert FEATURE_PRICING["ai_photoshoot"] >= 1
+    assert FEATURE_PRICING["ai_photobooth"] == 2
+    assert FEATURE_PRICING["instagram_dm_ai"] == 1
+    assert FEATURE_PRICING["ai_review_manager"] == 1
+    assert FEATURE_PRICING["ai_photoshop"] == 2
+    assert FEATURE_PRICING["post_generation"] == 3
+    assert FEATURE_PRICING["indian_festival_engine"] == 3
+    assert "ai_photoshoot" in UNPRICED_FEATURES
 
 
 @pytest.mark.asyncio

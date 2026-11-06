@@ -64,8 +64,8 @@ async def free_user():
         "plan_id": "FREE",
         "plan": "FREE",
         "status": "active",
-        "credits_total": 5,
-        "credits_remaining": 5,
+        "credits_total": 50,
+        "credits_remaining": 50,
         "created_at": datetime.now(timezone.utc)
     })
     token = create_access_token(subject=str(uid))
@@ -97,8 +97,8 @@ async def paid_user():
         "plan_id": "STARTER",
         "plan": "STARTER",
         "status": "active",
-        "credits_total": 100,
-        "credits_remaining": 100,
+        "credits_total": 300,
+        "credits_remaining": 300,
         "created_at": datetime.now(timezone.utc)
     })
     token = create_access_token(subject=str(uid))

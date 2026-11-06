@@ -6,6 +6,21 @@ from datetime import datetime, timezone
 from app.main import app
 from app.core.database import connect_to_mongo, get_database, close_mongo_connection
 from app.core.security import create_access_token
+from app.services.cashfree_service import CashfreeService
+
+def test_cashfree_return_url_uses_generated_subscription_id():
+    subscription_id = "SUB_2CBCBB0D9D73"
+
+    return_url = CashfreeService._build_return_url(
+        "http://localhost:3000/payment/success?order_id={subscription_id}&sub_id={subscription_id}",
+        subscription_id,
+    )
+
+    assert return_url == (
+        "http://localhost:3000/payment/success"
+        f"?order_id={subscription_id}&sub_id={subscription_id}"
+    )
+    assert "{" not in return_url
 
 @pytest.fixture(autouse=True)
 async def setup_test_user():
@@ -125,3 +140,61 @@ async def test_create_and_verify_cashfree_subscription(setup_test_user):
             assert data["verified"] is True
             assert data["status"] == "ACTIVE"
 
+
+@pytest.mark.asyncio
+async def test_cashfree_status_changed_webhook_activates_plan_once(setup_test_user):
+    user_info = setup_test_user
+    db = user_info["db"]
+    user_id = user_info["user_id"]
+    subscription_id = f"SUB_WEBHOOK_{user_id[-8:]}"
+
+    await db["payment_subscriptions"].insert_one({
+        "user_id": user_id,
+        "subscription_id": subscription_id,
+        "cf_subscription_id": "CF_SUB_WEBHOOK",
+        "plan_id": "STARTER",
+        "billing_cycle": "monthly",
+        "auth_amount": 942.82,
+        "recurring_amount": 942.82,
+        "status": "INITIALIZED",
+    })
+    await db["payment_transactions"].insert_one({
+        "user_id": user_id,
+        "subscription_id": subscription_id,
+        "order_id": subscription_id,
+        "plan_id": "STARTER",
+        "status": "pending",
+        "amount": 942.82,
+    })
+
+    payload = {
+        "type": "SUBSCRIPTION_STATUS_CHANGED",
+        "data": {
+            "subscription_details": {
+                "subscription_id": subscription_id,
+                "cf_subscription_id": "CF_SUB_WEBHOOK",
+                "subscription_status": "ACTIVE",
+            },
+            "authorization_details": {"authorization_status": "SUCCESS"},
+        },
+    }
+
+    result = await CashfreeService.process_webhook(db, payload)
+    assert result["success"] is True
+
+    sub = await db["subscriptions"].find_one({"user_id": user_id})
+    assert sub["plan_id"] == "STARTER"
+    assert sub["credits_remaining"] == 350
+    tx_count = await db["credit_transactions"].count_documents({
+        "user_id": user_id,
+        "reference_id": subscription_id,
+    })
+    assert tx_count == 2
+
+    await CashfreeService.process_webhook(db, payload)
+    sub_after_retry = await db["subscriptions"].find_one({"user_id": user_id})
+    assert sub_after_retry["credits_remaining"] == 350
+    assert await db["credit_transactions"].count_documents({
+        "user_id": user_id,
+        "reference_id": subscription_id,
+    }) == 2

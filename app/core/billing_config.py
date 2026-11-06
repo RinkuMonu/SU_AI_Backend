@@ -1,14 +1,48 @@
 # Centralized configuration for SaaS Pricing Plans, Features, and Credit Costs
 
 FEATURE_PRICING = {
-    "ai_caption": 1,
-    "ai_post": 1,
-    "ai_photoshoot": 5,
-    "ai_reel": 10,
-    "ai_avatar": 15,
-    "ai_actor": 20,
-    "ai_ad": 5,
-    "website_builder": 10,
+    "ai_caption": 3,
+    "post_caption": 3,
+    "ai_post": 3,
+    "post_generation": 3,
+    "ai_image": 4,
+    "ai_content_image": 3,
+    "ai_photoshop": 2,
+    "ai_photobooth": 2,
+    "ai_reel": 5,
+    "ai_ad": 3,
+    "ai_marketing_agent": 5,
+    "social_media_calendar": 5,
+    "indian_festival_engine": 3,
+    "instagram_dm_ai": 1,
+    "ai_review_manager": 1,
+    "ai_brand_brain": 5,
+    "ai_ugc": 5,
+    "business_analytics": 2,
+    "leads_crm": 2,
+    "product_catalogue": 2,
+    "website_builder": 2,
+    "website-builder": 2,
+    "ai_website_builder": 2,
+    "uni_ai": 3,
+    "ai_advertisement_maker": 3,
+    "content_create": 3,
+    "ai_content": 3,
+}
+
+UNPRICED_FEATURES = {"ai_photoshoot", "ai_avatar", "ai_actor"}
+NON_CREDIT_FEATURES = {
+    "premium_influencer_marketing",
+    "premium_customer_support",
+    "premium_training",
+    "physical_training_provider",
+    "website_technical_support",
+    "company_logo",
+    "visiting_cards",
+    "employee_id_cards",
+    "company_letterhead",
+    "company_stamp",
+    "company_brand_kit",
 }
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -62,8 +96,8 @@ PLANS = {
         "price": 0,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 5,
-        "credits_badge": "5 Credits",
+        "credits": 50,
+        "credits_badge": "50 Credits · one time",
         "post_limit": 5,
         "reel_limit": 1,
         "team_members": 1,
@@ -72,7 +106,7 @@ PLANS = {
         "highlights": [
             "5 AI social media posts/month",
             "1 AI reel/month",
-            "5 AI credits/month"
+            "50 AI credits (one time)"
         ],
         "features": ["ai_assistant", "website_builder"],
         "gst_applicable": False,
@@ -104,25 +138,31 @@ PLANS = {
             }
         }
     },
-    "STARTER": {
-        "name": "Starter",
-        "plan_tier": "PLAN 2",
+    "PRO_STARTER": {
+        "name": "Pro",
+        "plan_tier": "PLAN 1",
         "price": 799,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 100,
-        "credits_badge": "100 Credits",
+        "credits": 300,
+        "credits_badge": "300 monthly + 50 signup bonus",
+        "signup_bonus": 50,
         "post_limit": 30,
         "reel_limit": 10,
         "team_members": 1,
-        "description": "For shopkeepers, freelancers and small businesses.",
+        "description": "Core AI creation, marketing, publishing and business tools.",
         "period_label": "/ month + GST",
         "highlights": [
-            "100 monthly credits",
-            "30 AI posts/month",
-            "10 AI reels/month"
+            "300 monthly credits",
+            "50 signup bonus credits (one time)",
+            "AI creation, marketing and publishing tools"
         ],
-        "features": ["ai_caption", "ai_post", "ai_photoshoot", "content_calendar", "website_builder"],
+        "features": [
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
+            "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
+            "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
+            "instagram_dm_ai", "ai_review_manager", "website_builder"
+        ],
         "gst_applicable": False,
         "gst_rate": 0.0,
         "gst_amount": 0.0,
@@ -152,27 +192,32 @@ PLANS = {
             }
         }
     },
-    "GROWTH": {
-        "name": "Growth",
-        "plan_tier": "PLAN 3",
+    "PRO_PLUS": {
+        "name": "Pro Plus",
+        "plan_tier": "PLAN 2",
         "price": 2999,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 400,
-        "credits_badge": "400 Credits",
+        "credits": 1500,
+        "credits_badge": "1,500 monthly + 50 signup bonus",
+        "signup_bonus": 50,
         "post_limit": 100,
         "reel_limit": 30,
         "team_members": 1,
-        "description": "For creator, D2C brands and growing businesses.",
+        "description": "Everything in Pro, plus advanced intelligence and business tools.",
         "period_label": "/ month + GST",
         "highlights": [
-            "400 monthly credits",
-            "100 AI posts/month",
-            "30 AI reels/month"
+            "1,500 monthly credits",
+            "50 signup bonus credits (one time)",
+            "Business analytics, CRM and AI intelligence"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "instagram_ai", "analytics"
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
+            "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
+            "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
+            "instagram_dm_ai", "ai_review_manager", "website_builder",
+            "business_analytics", "leads_crm", "product_catalogue",
+            "ai_brand_brain", "ai_ugc"
         ],
         "gst_applicable": False,
         "gst_rate": 0.0,
@@ -205,26 +250,30 @@ PLANS = {
     },
     "BUSINESS": {
         "name": "Business",
-        "plan_tier": "PLAN 4",
+        "plan_tier": "PLAN 3",
         "price": 4999,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 1000,
-        "credits_badge": "1000 Credits",
+        "credits": 2500,
+        "credits_badge": "2,500 monthly + 50 signup bonus",
+        "signup_bonus": 50,
         "post_limit": 200,
         "reel_limit": 60,
         "team_members": 5,
-        "description": "For established businesses",
+        "description": "Everything in Pro Plus, with the complete business service suite.",
         "period_label": "/ month + GST",
         "highlights": [
-            "1000 monthly credits",
-            "200 AI posts/month",
-            "60 AI reels/month"
+            "2,500 monthly credits",
+            "50 signup bonus credits (one time)",
+            "Complete AI creation and business intelligence suite"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "instagram_ai", "analytics",
-            "advanced_analytics", "crm", "competitor_analysis"
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
+            "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
+            "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
+            "instagram_dm_ai", "ai_review_manager", "website_builder",
+            "business_analytics", "leads_crm", "product_catalogue",
+            "ai_brand_brain", "ai_ugc"
         ],
         "gst_applicable": False,
         "gst_rate": 0.0,
@@ -255,29 +304,33 @@ PLANS = {
             }
         }
     },
-    "INFLUENCER": {
-        "name": "Influencer",
-        "plan_tier": "PLAN 5",
+    "BUSINESS_PREMIUM": {
+        "name": "Business Premium",
+        "plan_tier": "PLAN 4",
         "price": 9999,
         "currency": "INR",
         "billing_cycle": "monthly",
         "credits": 2500,
-        "credits_badge": "Influencer...",
+        "credits_badge": "2,500 monthly + 50 signup bonus",
+        "signup_bonus": 50,
         "post_limit": -1,
         "reel_limit": -1,
         "team_members": 10,
-        "description": "For brands that want creator partnerships",
+        "description": "Everything in Business, plus premium services and company brand kit.",
         "period_label": "/ month + GST",
         "highlights": [
-            "Influencer discovery & shortlisting",
-            "Creator audience",
-            "Brand collaboration"
+            "2,500 monthly credits",
+            "50 signup bonus credits (one time)",
+            "Premium services and company brand kit"
         ],
         "features": [
-            "influencer_discovery", "creator_audience", "brand_collaboration",
-            "ai_caption", "ai_post", "ai_avatar", "ai_actor", "ai_photoshoot",
-            "ads", "website_builder", "instagram_ai", "analytics",
-            "advanced_analytics", "crm", "competitor_analysis"
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
+            "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
+            "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
+            "instagram_dm_ai", "ai_review_manager", "website_builder",
+            "business_analytics", "leads_crm", "product_catalogue",
+            "ai_brand_brain", "ai_ugc", "premium_influencer_marketing",
+            "premium_customer_support", "premium_training", "company_brand_kit"
         ],
         "gst_applicable": False,
         "gst_rate": 0.0,
@@ -310,7 +363,7 @@ PLANS = {
     }
 }
 
-# Maintain "PRO" as backward-compatible alias for "GROWTH" and "BASIC" for "STARTER"
+# Preserve plan identifiers used by existing subscriptions and checkout links.
 PLANS["TEST_PLAN"] = {
     "name": "Test Plan (₹1)",
     "plan_tier": "TEST",
@@ -321,7 +374,7 @@ PLANS["TEST_PLAN"] = {
     "credits_badge": "20 Credits",
     "post_limit": 10,
     "reel_limit": 5,
-    "team_members": 1,
+    "team_members": 10,
     "description": "Dummy ₹1 test plan for testing payment gateway. Safe to delete.",
     "period_label": "/ test",
     "highlights": [
@@ -360,23 +413,28 @@ PLANS["TEST_PLAN"] = {
     }
 }
 
-PLANS["PRO"] = PLANS["GROWTH"]
-PLANS["BASIC"] = PLANS["STARTER"]
+PLANS["STARTER"] = PLANS["PRO_STARTER"]
+PLANS["BASIC"] = PLANS["PRO_STARTER"]
+PLANS["GROWTH"] = PLANS["PRO_PLUS"]
+PLANS["PRO"] = PLANS["PRO_PLUS"]
+PLANS["INFLUENCER"] = PLANS["BUSINESS_PREMIUM"]
 PLANS["TEST"] = PLANS["TEST_PLAN"]
 
 BILLING_CYCLES = ["monthly", "quarterly", "yearly"]
 
-DISPLAY_PLAN_ORDER = ["FREE", "STARTER", "GROWTH", "BUSINESS", "INFLUENCER", "TEST_PLAN"]
+DISPLAY_PLAN_ORDER = ["FREE", "PRO_STARTER", "PRO_PLUS", "BUSINESS", "BUSINESS_PREMIUM"]
 
 
 def get_formatted_plans(active_plan_id: str | None = None) -> list:
     """Returns a list of structured plan dictionaries with dynamic 18% GST breakdown ordered for frontend display."""
     result = []
     normalized_active = (active_plan_id or "").upper().strip()
-    if normalized_active == "PRO":
-        normalized_active = "GROWTH"
-    elif normalized_active == "BASIC":
-        normalized_active = "STARTER"
+    if normalized_active in ("STARTER", "BASIC"):
+        normalized_active = "PRO_STARTER"
+    elif normalized_active in ("PRO", "GROWTH", "PRO_PLUS"):
+        normalized_active = "PRO_PLUS"
+    elif normalized_active == "INFLUENCER":
+        normalized_active = "BUSINESS_PREMIUM"
 
     for key in DISPLAY_PLAN_ORDER:
         plan_data = PLANS[key]
