@@ -493,7 +493,7 @@ async def test_10_all_plans_create_order_with_correct_prices(mock_post):
         {"plan_id": "PRO_STARTER", "expected_amount": 799.0, "expected_credits": 300},
         {"plan_id": "PRO_PLUS", "expected_amount": 2999.0, "expected_credits": 1500},
         {"plan_id": "BUSINESS", "expected_amount": 4999.0, "expected_credits": 2500},
-        {"plan_id": "BUSINESS_PREMIUM", "expected_amount": 9999.0, "expected_credits": 5000},
+        {"plan_id": "BUSINESS_PREMIUM", "expected_amount": 9999.0, "expected_credits": 2500},
     ]
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

@@ -1,4 +1,6 @@
 from datetime import datetime, timezone
+from typing import Any
+from bson import ObjectId
 from fastapi import HTTPException, status
 from pymongo.collection import ReturnDocument
 from app.core.billing_config import PLANS
@@ -10,15 +12,77 @@ QUALIFYING_PAID_PLANS = {
 
 class SubscriptionService:
     @staticmethod
+    def _uid_query(uid: str):
+        s = str(uid or "").strip()
+        if ObjectId.is_valid(s):
+            return {"$in": [s, ObjectId(s)]}
+        return s
+    @staticmethod
+    async def _ensure_credit_balance(db, user_id: str, subscription: dict) -> dict:
+        plan_id = (subscription.get("plan_id") or subscription.get("plan") or "FREE").upper().strip()
+        plan_config = PLANS.get(plan_id, PLANS["FREE"])
+        remaining = subscription.get("credits_remaining")
+
+        if remaining is None:
+            latest_transaction = await db["credit_transactions"].find_one(
+                {"user_id": user_id},
+                sort=[("created_at", -1)],
+            )
+            if latest_transaction and latest_transaction.get("balance_after") is not None:
+                remaining = latest_transaction["balance_after"]
+            elif plan_id == "FREE":
+                remaining = 0
+            else:
+                remaining = plan_config.get("credits", 0)
+
+            await db["subscriptions"].update_one(
+                {
+                    "user_id": user_id,
+                    "$or": [
+                        {"credits_remaining": {"$exists": False}},
+                        {"credits_remaining": None},
+                    ],
+                },
+                {"$set": {"credits_remaining": remaining, "updated_at": datetime.now(timezone.utc)}},
+            )
+
+        if subscription.get("credits_total") is None:
+            total = max(remaining, plan_config.get("credits", 0))
+            await db["subscriptions"].update_one(
+                {
+                    "user_id": user_id,
+                    "$or": [
+                        {"credits_total": {"$exists": False}},
+                        {"credits_total": None},
+                    ],
+                },
+                {"$set": {"credits_total": total, "updated_at": datetime.now(timezone.utc)}},
+            )
+
+        return await db["subscriptions"].find_one({"user_id": SubscriptionService._uid_query(user_id)})
+
+    @staticmethod
     async def get_or_create_subscription(db, user_id: str):
         collection = db["subscriptions"]
-        existing = await collection.find_one({"user_id": user_id})
+        existing = await collection.find_one({"user_id": SubscriptionService._uid_query(user_id)})
         
         if existing:
-            if (existing.get("plan_id") or "FREE").upper() == "FREE":
+            stored_plan_id = str(existing.get("plan_id") or existing.get("plan") or "FREE")
+            if stored_plan_id.upper().strip() == "FREE":
+                normalize_filter: dict[str, Any] = {"user_id": user_id}
+                if "plan_id" in existing:
+                    normalize_filter["plan_id"] = existing["plan_id"]
+                else:
+                    normalize_filter["plan_id"] = {"$exists": False}
+                    if "plan" in existing:
+                        normalize_filter["plan"] = existing["plan"]
+                await collection.update_one(
+                    normalize_filter,
+                    {"$set": {"plan_id": "FREE", "plan": "FREE"}},
+                )
                 await SubscriptionService._grant_free_signup_credits(db, user_id)
-                existing = await collection.find_one({"user_id": user_id})
-            return existing
+            existing = await collection.find_one({"user_id": SubscriptionService._uid_query(user_id)})
+            return await SubscriptionService._ensure_credit_balance(db, user_id, existing)
             
         now = datetime.now(timezone.utc)
         default_plan_id = "FREE"
@@ -44,7 +108,7 @@ class SubscriptionService:
         if (result.get("plan_id") or "FREE").upper() == "FREE":
             await SubscriptionService._grant_free_signup_credits(db, user_id)
             result = await collection.find_one({"user_id": user_id})
-        return result
+        return await SubscriptionService._ensure_credit_balance(db, user_id, result)
 
     @staticmethod
     async def _grant_free_signup_credits(db, user_id: str) -> None:

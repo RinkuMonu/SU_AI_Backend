@@ -205,10 +205,12 @@ async def get_session(
 async def session_message(
     session_id: str,
     request: SendMessageRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
 
     user_id = str(current_user.id)
+    generated_or_revised_site = False
 
     try:
 
@@ -218,6 +220,7 @@ async def session_message(
             data = {}
 
         action = data.get("action")
+        generated_or_revised_site = action == "generate"
 
         # ---------------------------------------------
         # TEMPLATE SELECTION
@@ -247,6 +250,7 @@ async def session_message(
         # ---------------------------------------------
 
         elif action == "generate":
+            await CreditService.check_credits(db, user_id, "website_builder")
 
             session = await WebsiteBuilderService.get_session(
                 session_id,
@@ -259,7 +263,29 @@ async def session_message(
                     detail="Session not found"
                 )
 
-            await WebsiteBuilderService.generate_website(session)
+            # Ingest any business context passed in request data
+            if isinstance(data, dict):
+                b_name = data.get("business_name") or data.get("businessName")
+                b_cat = data.get("business_category") or data.get("businessCategory") or data.get("category")
+                if b_name:
+                    session.collected_data["Business Name"] = b_name
+                if b_cat:
+                    session.collected_data["Business Category"] = b_cat
+                if data.get("templateId") or data.get("template_id"):
+                    t_id = data.get("templateId") or data.get("template_id")
+                    session.selected_template = str(t_id)
+                    session.collected_data["selected_template_id"] = str(t_id)
+                if data.get("templateName") or data.get("template_name"):
+                    session.collected_data["selected_template_name"] = str(data.get("templateName") or data.get("template_name"))
+                if data.get("industry_details") or data.get("industryDetails"):
+                    session.collected_data["industry_details"] = str(data.get("industry_details") or data.get("industryDetails"))
+                if data.get("products_services") or data.get("productsServices"):
+                    session.collected_data["Products/Services"] = str(data.get("products_services") or data.get("productsServices"))
+                if data.get("logo"):
+                    session.collected_data["Logo"] = data.get("logo")
+                    session.collected_data["logo_status"] = "available"
+
+            await WebsiteBuilderService.generate_website(session, user_id=user_id)
 
             session = await WebsiteBuilderService.get_session(
                 session_id,
@@ -277,6 +303,22 @@ async def session_message(
         # ---------------------------------------------
 
         else:
+            await CreditService.check_credits(db, user_id, "website_builder")
+            previous_session = await WebsiteBuilderService.get_session(
+                session_id,
+                user_id
+            )
+            previous_project_id = (
+                str(previous_session.website_project_id)
+                if previous_session and previous_session.website_project_id
+                else None
+            )
+            previous_site = (
+                await WebsiteBuilderService.get_website(previous_project_id, user_id)
+                if previous_project_id
+                else None
+            )
+            previous_version = getattr(previous_site, "version", None)
 
             response = await WebsiteBuilderService.process_chat(
                 session_id=session_id,
@@ -293,6 +335,19 @@ async def session_message(
                     status_code=500,
                     detail="Website Builder returned an invalid session"
                 )
+            if session.website_project_id:
+                updated_site = await WebsiteBuilderService.get_website(
+                    str(session.website_project_id),
+                    user_id
+                )
+                updated_version = getattr(updated_site, "version", None)
+                generated_or_revised_site = bool(
+                    updated_site
+                    and (
+                        str(session.website_project_id) != previous_project_id
+                        or updated_version != previous_version
+                    )
+                )
 
         # ---------------------------------------------
         # FETCH GENERATED WEBSITE
@@ -306,6 +361,16 @@ async def session_message(
                 str(session.website_project_id),
                 user_id
             )
+
+        if generated_or_revised_site:
+            if not site or not getattr(site, "pages", None):
+                raise HTTPException(
+                    status_code=502,
+                    detail="Website generation did not return a usable result."
+                )
+            if action != "generate":
+                await CreditService.check_credits(db, user_id, "website_builder")
+            await CreditService.deduct_credits(db, user_id, "website_builder")
 
         last_message = (
             session.messages[-1]
@@ -357,18 +422,27 @@ async def session_message(
 async def revise_website(
     site_id: str,
     request: ReviseSiteRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
 
     user_id = str(current_user.id)
 
     try:
+        await CreditService.check_credits(db, user_id, "website_builder")
 
         site = await WebsiteBuilderService.revise_website(
             site_id,
             user_id,
             request.instructions
         )
+
+        if not site or not getattr(site, "pages", None):
+            raise HTTPException(
+                status_code=502,
+                detail="Website revision did not return a usable result."
+            )
+        await CreditService.deduct_credits(db, user_id, "website_builder")
 
         return {
             "generatedSiteData": format_site_payload(site)
@@ -497,7 +571,8 @@ async def get_site(
 async def edit_website(
     session_id: str,
     request: EditWebsiteRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
 
     user_id = str(current_user.id)
@@ -512,6 +587,8 @@ async def edit_website(
             status_code=404,
             detail="Session not found"
         )
+
+    await CreditService.check_credits(db, user_id, "website_builder")
 
     if not session.website_project_id:
         p_coll = await WebsiteBuilderService.get_project_collection()
@@ -636,6 +713,8 @@ async def edit_website(
             status_code=404,
             detail="Website project not found"
         )
+
+    await CreditService.deduct_credits(db, user_id, "website_builder")
 
     return EditWebsiteResponse(
         action=action,

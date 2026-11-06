@@ -1,10 +1,13 @@
 import asyncio
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch, MagicMock
 from httpx import Response, AsyncClient, ASGITransport
 
 from app.main import app
+from app.core.database import get_database
+from app.core.security import get_current_user
 from app.core.config import settings
 from app.services.gemini_service import (
     GeminiService,
@@ -384,10 +387,22 @@ async def test_automatic_switching_invalid_task():
 # 6. REST API Endpoint Integration Tests
 # =============================================================================
 
+@pytest.fixture
+def authenticated_ai_dependencies():
+    original_overrides = app.dependency_overrides.copy()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="test-user")
+    app.dependency_overrides[get_database] = lambda: MagicMock()
+    yield
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(original_overrides)
+
+
 @pytest.mark.asyncio
-async def test_api_generate_endpoint():
+async def test_api_generate_endpoint(authenticated_ai_dependencies):
     """Verify POST /api/v1/ai/generate route handles tasks and returns standard response."""
-    with patch("app.api.endpoints.ai.generate_with_gemini", new_callable=AsyncMock) as mock_dispatcher:
+    with patch("app.api.endpoints.ai.generate_with_openai", new_callable=AsyncMock) as mock_dispatcher, \
+         patch("app.api.endpoints.ai._check_generation_access", new_callable=AsyncMock, return_value="test-user"), \
+         patch("app.api.endpoints.ai.CreditService.deduct_credits", new_callable=AsyncMock):
         mock_dispatcher.return_value = {
             "success": True,
             "task": "marketing_content",

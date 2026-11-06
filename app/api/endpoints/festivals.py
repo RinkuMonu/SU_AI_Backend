@@ -6,6 +6,8 @@ from app.services.festival_service import (
     generate_festival_campaign,
     INDIAN_FESTIVALS,
 )
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 import logging
@@ -231,6 +233,10 @@ async def _handle_generation(festival_name: str, content_type: str, current_user
     if not festival:
         return {"success": False, "message": f"Festival '{festival_name}' not found."}
 
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    await SubscriptionService.check_feature_access(db, user_id, "indian_festival_engine")
+    await CreditService.check_credits(db, user_id, "indian_festival_engine")
+
     campaign_doc = await generate_festival_content(db, business_id, festival, content_type)
     if not campaign_doc:
         return {"success": False, "message": "AI failed to generate content."}
@@ -239,6 +245,7 @@ async def _handle_generation(festival_name: str, content_type: str, current_user
     import datetime
     campaign_doc["created_at"] = datetime.datetime.utcnow()
     result = await db["festival_campaigns"].insert_one(campaign_doc)
+    await CreditService.deduct_credits(db, user_id, "indian_festival_engine")
     campaign_doc["id"] = str(result.inserted_id)
     campaign_doc.pop("_id", None)
     campaign_doc["created_at"] = campaign_doc["created_at"].isoformat()

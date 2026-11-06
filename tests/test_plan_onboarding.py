@@ -305,7 +305,7 @@ async def test_available_plans_and_pricing_structure():
         # Check Business Premium
         premium = next(p for p in plans if p["id"] == "BUSINESS_PREMIUM")
         assert premium["price"] == 9999
-        assert premium["credits"] == 5000
+        assert premium["credits"] == 2500
 
 
 # --------------------------------------------------------------------------

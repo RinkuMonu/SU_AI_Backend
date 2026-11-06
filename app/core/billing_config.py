@@ -4,15 +4,16 @@ FEATURE_PRICING = {
     "ai_caption": 3,
     "post_caption": 3,
     "ai_post": 3,
+    "post_generation": 3,
     "ai_image": 4,
     "ai_content_image": 3,
-    "ai_photoshoot": 2,
+    "ai_photoshop": 2,
     "ai_photobooth": 2,
     "ai_reel": 5,
     "ai_ad": 3,
     "ai_marketing_agent": 5,
     "social_media_calendar": 5,
-    "indian_festival_engine": 5,
+    "indian_festival_engine": 3,
     "instagram_dm_ai": 1,
     "ai_review_manager": 1,
     "ai_brand_brain": 5,
@@ -21,15 +22,27 @@ FEATURE_PRICING = {
     "leads_crm": 2,
     "product_catalogue": 2,
     "website_builder": 2,
+    "website-builder": 2,
+    "ai_website_builder": 2,
+    "uni_ai": 3,
+    "ai_advertisement_maker": 3,
+    "content_create": 3,
+    "ai_content": 3,
 }
 
-UNPRICED_FEATURES = {"ai_avatar", "ai_actor"}
+UNPRICED_FEATURES = {"ai_photoshoot", "ai_avatar", "ai_actor"}
 NON_CREDIT_FEATURES = {
     "premium_influencer_marketing",
     "premium_customer_support",
     "premium_training",
     "physical_training_provider",
     "website_technical_support",
+    "company_logo",
+    "visiting_cards",
+    "employee_id_cards",
+    "company_letterhead",
+    "company_stamp",
+    "company_brand_kit",
 }
 
 from decimal import Decimal, ROUND_HALF_UP
@@ -145,7 +158,7 @@ PLANS = {
             "AI creation, marketing and publishing tools"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshoot",
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
             "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
             "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
             "instagram_dm_ai", "ai_review_manager", "website_builder"
@@ -199,7 +212,7 @@ PLANS = {
             "Business analytics, CRM and AI intelligence"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshoot",
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
             "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
             "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
             "instagram_dm_ai", "ai_review_manager", "website_builder",
@@ -255,7 +268,7 @@ PLANS = {
             "Complete AI creation and business intelligence suite"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshoot",
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
             "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
             "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
             "instagram_dm_ai", "ai_review_manager", "website_builder",
@@ -297,8 +310,8 @@ PLANS = {
         "price": 9999,
         "currency": "INR",
         "billing_cycle": "monthly",
-        "credits": 5000,
-        "credits_badge": "5,000 monthly + 50 signup bonus",
+        "credits": 2500,
+        "credits_badge": "2,500 monthly + 50 signup bonus",
         "signup_bonus": 50,
         "post_limit": -1,
         "reel_limit": -1,
@@ -306,12 +319,12 @@ PLANS = {
         "description": "Everything in Business, plus premium services and company brand kit.",
         "period_label": "/ month + GST",
         "highlights": [
-            "5,000 monthly credits",
+            "2,500 monthly credits",
             "50 signup bonus credits (one time)",
             "Premium services and company brand kit"
         ],
         "features": [
-            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshoot",
+            "ai_caption", "ai_post", "ai_image", "ai_content_image", "ai_photoshop", "ai_photoshoot",
             "ai_reel", "ai_avatar", "ai_actor", "ai_photobooth", "ai_ad",
             "ai_marketing_agent", "social_media_calendar", "indian_festival_engine",
             "instagram_dm_ai", "ai_review_manager", "website_builder",

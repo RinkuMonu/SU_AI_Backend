@@ -17,8 +17,8 @@ async def get_my_credits(
     # This automatically provisions the FREE plan for existing users who don't have one
     sub = await CreditService.get_or_create_subscription(db, current_user.id)
     
-    total = sub.get("credits_total", 50)
-    remaining = sub.get("credits_remaining", 50)
+    total = sub.get("credits_total", 0)
+    remaining = sub.get("credits_remaining", 0)
     used = total - remaining
     
     return {
