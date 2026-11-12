@@ -97,13 +97,23 @@ class CashfreeService:
             max_cycles = 12
 
         clean_name = f"{plan_data.get('name', plan_id)} {cycle.capitalize()}".replace("(", "").replace(")", "").strip()[:50]
+        rec_amt_float = float(recurring_amount)
+
+        # NPCI & RBI rules for recurring mandates:
+        # UPI AutoPay and Cards Standing Instructions (SI) are strictly limited to ₹15,000 maximum mandate limit.
+        # If recurring_amount <= 15,000, we must keep plan_max_amount <= 15,000 so Cashfree enables UPI and Cards!
+        if rec_amt_float <= 15000.0:
+            plan_max_amount = rec_amt_float
+        else:
+            plan_max_amount = rec_amt_float
+
         plan_payload = {
             "plan_id": cf_plan_id,
             "plan_name": clean_name,
             "plan_type": "PERIODIC",
             "plan_currency": plan_data.get("currency", "INR"),
-            "plan_recurring_amount": float(recurring_amount),
-            "plan_max_amount": float(max(recurring_amount * 2, 5000.0)),  # Mandate upper limit
+            "plan_recurring_amount": rec_amt_float,
+            "plan_max_amount": plan_max_amount,
             "plan_max_cycles": max_cycles,
             "plan_intervals": intervals,
             "plan_interval_type": interval_type
@@ -115,14 +125,23 @@ class CashfreeService:
             if get_res.status_code == 200:
                 p_data = get_res.json() if get_res.headers.get("content-type", "").startswith("application/json") else {}
                 existing_amt = float(p_data.get("plan_recurring_amount") or 0)
-                if abs(existing_amt - float(recurring_amount)) < 0.05:
+                existing_max = float(p_data.get("plan_max_amount") or 0)
+
+                # Amount matches AND (if amount <= 15k, existing_max must also be <= 15k so UPI & Cards are not hidden)
+                is_max_compliant = (rec_amt_float > 15000.0) or (existing_max <= 15000.0)
+                if abs(existing_amt - rec_amt_float) < 0.05 and is_max_compliant:
                     return cf_plan_id
-                # Existing plan amount mismatch (e.g. was 799.0 without GST), create versioned plan ID
-                cf_plan_id = f"{cf_plan_id}_{int(recurring_amount)}"
+
+                # If existing plan has max_amount > 15000 (which broke UPI/Cards) or amount mismatch, use V2 plan ID
+                cf_plan_id = f"{cf_plan_id}_V2"
                 plan_payload["plan_id"] = cf_plan_id
+                plan_payload["plan_max_amount"] = plan_max_amount
                 get_res2 = await client.get(f"{base_url}/plans/{cf_plan_id}", headers=headers)
                 if get_res2.status_code == 200:
-                    return cf_plan_id
+                    p_data2 = get_res2.json() if get_res2.headers.get("content-type", "").startswith("application/json") else {}
+                    existing_max2 = float(p_data2.get("plan_max_amount") or 0)
+                    if (rec_amt_float > 15000.0) or (existing_max2 <= 15000.0):
+                        return cf_plan_id
 
             # Create plan
             create_res = await client.post(f"{base_url}/plans", json=plan_payload, headers=headers)
@@ -226,7 +245,8 @@ class CashfreeService:
                 },
                 "customer_details": customer_details,
                 "authorization_details": {
-                    "authorization_amount": recurring_total
+                    "authorization_amount": recurring_total,
+                    "payment_methods": ["upi", "card", "enach"] if recurring_total <= 15000.0 else ["enach", "card", "upi"]
                 },
                 "subscription_meta": {
                     "return_url": default_return_url,
