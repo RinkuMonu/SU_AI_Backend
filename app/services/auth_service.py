@@ -269,6 +269,7 @@ class AuthService:
             "+919999999999",
             "+919876543211",
             "+917857889083",
+            "+919876549988",
         }
         is_dev_test = (
             clean_otp == "123456" and (
@@ -277,7 +278,7 @@ class AuthService:
                 phone_number in TEST_DEVELOPER_NUMBERS or 
                 cleaned_id in TEST_DEVELOPER_NUMBERS or 
                 clean_stripped in TEST_DEVELOPER_NUMBERS or
-                digits_10 in {"9876543210", "9999999999", "9876543211", "7857889083"}
+                digits_10 in {"9876543210", "9999999999", "9876543211", "7857889083", "9876549988"}
             )
         )
 
@@ -480,6 +481,7 @@ class AuthService:
         m = mode.lower().strip() if mode else None
         phone_number = None
 
+        digits_10 = re.sub(r"\D", "", cleaned_id)[-10:] if cleaned_id else ""
         try:
             phone_number = normalize_phone_number(cleaned_id, country_code=country_code)
         except InvalidPhoneNumberException as e:
@@ -514,7 +516,11 @@ class AuthService:
             )
 
         # Check existing OTP document for cooldown (60 seconds)
-        if doc and doc.get("last_sent_at"):
+        is_test_phone_early = bool(
+            digits_10 in {"9876549988", "9876543210", "9999999999"} or
+            phone_number in {"+919876549988", "+919876543210", "+919999999999"}
+        )
+        if not is_test_phone_early and doc and doc.get("last_sent_at"):
             last_sent = doc["last_sent_at"]
             if last_sent.tzinfo is None:
                 last_sent = last_sent.replace(tzinfo=timezone.utc)
@@ -528,7 +534,7 @@ class AuthService:
         window_start = doc.get("window_start") if doc else None
         if window_start and window_start.tzinfo is None:
             window_start = window_start.replace(tzinfo=timezone.utc)
-        if window_start and (now - window_start).total_seconds() < 3600:
+        if not is_test_phone_early and window_start and (now - window_start).total_seconds() < 3600:
             if doc.get("request_count", 0) >= 5:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -539,7 +545,15 @@ class AuthService:
             window_start = now
             request_count = 1
 
-        otp = generate_secure_otp(6)
+        is_test_phone = bool(
+            digits_10 in {"9876549988", "9876543210", "9999999999"} or
+            phone_number in {"+919876549988", "+919876543210", "+919999999999"}
+        )
+
+        if is_test_phone:
+            otp = "123456"
+        else:
+            otp = generate_secure_otp(6)
         otp_hash = get_password_hash(otp)
         expires_at = now + timedelta(minutes=10)
 
@@ -550,13 +564,19 @@ class AuthService:
             else getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
         ) or getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
 
-        # Send via SMSService (delegates to Fast2SMS for sms, or MSG91 WhatsApp for whatsapp)
-        await SMSService.send_otp(
-            phone_number=phone_number,
-            otp=otp,
-            channel=ch,
-            template_id=template_id
-        )
+        # Send via SMSService (bypass or silently catch external failure for test reviewer accounts)
+        try:
+            await SMSService.send_otp(
+                phone_number=phone_number,
+                otp=otp,
+                channel=ch,
+                template_id=template_id
+            )
+        except Exception as sms_err:
+            if is_test_phone:
+                logger.info(f"Test phone number {phone_number}: mocked SMS delivery with fixed OTP {otp}")
+            else:
+                raise sms_err
 
         otp_doc = {
             "user_id": str(existing_user["_id"]) if existing_user else None,
