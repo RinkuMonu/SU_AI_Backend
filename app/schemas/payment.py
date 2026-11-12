@@ -168,6 +168,8 @@ class CashfreeSubscriptionResponse(BaseModel):
     order_id: Optional[str] = None
     cf_subscription_id: Optional[str] = None
     subscription_session_id: Optional[str] = None
+    payment_session_id: Optional[str] = None
+    environment: Optional[str] = "production"
     payment_url: Optional[str] = None
     status: str
     auth_amount: float

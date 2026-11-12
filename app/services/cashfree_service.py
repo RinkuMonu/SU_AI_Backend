@@ -336,6 +336,8 @@ class CashfreeService:
             "order_id": subscription_id,
             "cf_subscription_id": cf_sub_id,
             "subscription_session_id": session_id,
+            "payment_session_id": session_id,
+            "environment": "production" if (settings.CASHFREE_ENV or "TEST").upper() == "PROD" else "sandbox",
             "payment_url": payment_url,
             "status": "INITIALIZED",
             "auth_amount": recurring_total,
