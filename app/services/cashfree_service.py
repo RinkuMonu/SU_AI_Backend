@@ -16,8 +16,8 @@ from app.services.credit_service import CreditService
 logger = logging.getLogger(__name__)
 
 class CashfreeService:
-    @staticmethod
-    def _build_return_url(return_url: Optional[str], subscription_id: str) -> str:
+    @classmethod
+    def _build_return_url(cls, return_url: Optional[str], subscription_id: str) -> str:
         url = (return_url or "").strip()
         if not url:
             base_frontend = getattr(settings, "CASHFREE_RETURN_URL", None) or getattr(settings, "FRONTEND_URL", "https://dhandagrow.com")
@@ -29,20 +29,28 @@ class CashfreeService:
                 .replace("{order_id}", subscription_id)
             )
 
-        # For localhost / 127.0.0.1 local development, keep http:// so browser doesn't hit ERR_SSL_PROTOCOL_ERROR
-        if "localhost" in url.lower() or "127.0.0.1" in url:
-            if url.startswith("https://localhost"):
-                url = "http://" + url[len("https://"):]
-            elif url.startswith("https://127.0.0.1"):
-                url = "http://" + url[len("https://"):]
-            elif not url.startswith("http://"):
-                url = f"http://{url.lstrip('/')}"
-        else:
-            # Cashfree Subscriptions API strictly enforces HTTPS for public production domains
+        is_prod = (settings.CASHFREE_ENV or "TEST").upper() == "PROD"
+
+        if is_prod:
+            # Cashfree Subscriptions and Orders APIs strictly mandate HTTPS for all URLs in production
             if url.startswith("http://"):
                 url = "https://" + url[len("http://"):]
             elif not url.startswith("https://"):
                 url = f"https://{url.lstrip('/')}"
+        else:
+            # For Sandbox / TEST local development, keep http:// for localhost so browser doesn't hit ERR_SSL_PROTOCOL_ERROR
+            if "localhost" in url.lower() or "127.0.0.1" in url:
+                if url.startswith("https://localhost"):
+                    url = "http://" + url[len("https://"):]
+                elif url.startswith("https://127.0.0.1"):
+                    url = "http://" + url[len("https://"):]
+                elif not url.startswith("http://"):
+                    url = f"http://{url.lstrip('/')}"
+            else:
+                if url.startswith("http://"):
+                    url = "https://" + url[len("http://"):]
+                elif not url.startswith("https://"):
+                    url = f"https://{url.lstrip('/')}"
 
         return url
 
@@ -196,6 +204,7 @@ class CashfreeService:
         session_id = None
         cf_sub_id = None
         cf_data = {}
+        last_error_detail = None
 
         if settings.CASHFREE_APP_ID and settings.CASHFREE_SECRET_KEY:
             base_url = cls.get_base_url()
@@ -237,8 +246,13 @@ class CashfreeService:
                         logger.info("Successfully created Cashfree AutoPay subscription %s (session %s)", subscription_id, session_id)
                     else:
                         logger.warning("Cashfree Subscriptions API status %s: %s; falling back to Orders API", res.status_code, res.text)
+                        try:
+                            last_error_detail = res.json().get("message") or res.text
+                        except Exception:
+                            last_error_detail = res.text
             except Exception as sub_err:
                 logger.warning("Cashfree Subscriptions API call error: %s", sub_err)
+                last_error_detail = str(sub_err)
 
             # Step C. Resilient fallback to Orders API if Subscriptions API did not return session
             if not session_id:
@@ -264,8 +278,13 @@ class CashfreeService:
                                 payment_url = f"https://payments.cashfree.com/order/#{session_id}" if is_prod else f"https://payments-test.cashfree.com/order/#{session_id}"
                         else:
                             logger.error("Cashfree order create returned %s: %s", res.status_code, res.text)
+                            try:
+                                last_error_detail = res.json().get("message") or res.text
+                            except Exception:
+                                last_error_detail = res.text
                 except Exception as ord_err:
                     logger.error("Cashfree order creation exception: %s", ord_err)
+                    last_error_detail = str(ord_err)
 
         # 2. Resilient Fallback: If Cashfree PG failed or returned no payment_url, try Finunique Payin
         if not payment_url and getattr(settings, "PAYIN_URL", None) and getattr(settings, "PAYIN_TOKEN", None):
@@ -303,7 +322,8 @@ class CashfreeService:
                 logger.error("Finunique Payin fallback failed: %s", payin_err)
 
         if not payment_url:
-            raise HTTPException(status_code=502, detail="Payment gateway temporarily unavailable. Please retry shortly.")
+            detail_msg = last_error_detail or "Payment gateway temporarily unavailable. Please retry shortly."
+            raise HTTPException(status_code=502, detail=f"Payment gateway error: {detail_msg}")
 
         now = datetime.now(timezone.utc)
         record = {
