@@ -182,44 +182,81 @@ class CashfreeService:
         subscription_id = f"SUB_{uuid.uuid4().hex[:12].upper()}"
         default_return_url = cls._build_return_url(return_url, subscription_id)
 
-        # 1. Attempt Primary: Cashfree PG Orders API
+        # 1. Primary Flow: Official Cashfree Subscriptions & AutoPay (Recurring Mandate) API
         payment_url = None
         session_id = None
-        cf_order_id = None
+        cf_sub_id = None
         cf_data = {}
 
         if settings.CASHFREE_APP_ID and settings.CASHFREE_SECRET_KEY:
-            order_payload = {
-                "order_id": subscription_id,
-                "order_amount": float(recurring_total),
-                "order_currency": plan.get("currency", "INR"),
-                "customer_details": customer_details,
-                "order_meta": {
-                    "return_url": default_return_url,
-                    "notify_url": getattr(settings, "CASHFREE_WEBHOOK_URL", None) or f"{(settings.BACKEND_URL or 'https://api.dhandagrow.com').rstrip('/')}/api/v1/payments/cashfree/webhook"
-                },
-                "order_note": f"DhandaGrow {plan.get('name', normalized_plan)} Subscription ({cycle.capitalize()})"
-            }
-
             base_url = cls.get_base_url()
             headers = cls.get_headers()
+            is_prod = (settings.CASHFREE_ENV or "TEST").upper() == "PROD"
+
+            # Step A. Ensure recurring plan exists on Cashfree
+            try:
+                cf_plan_id = await cls.ensure_cashfree_plan(normalized_plan, cycle, plan, recurring_total)
+            except Exception as plan_err:
+                logger.warning("ensure_cashfree_plan notice: %s", plan_err)
+                cf_plan_id = f"{normalized_plan}_{cycle.upper()}"
+
+            # Step B. Call Cashfree Subscriptions API for AutoPay mandate
+            sub_payload = {
+                "subscription_id": subscription_id,
+                "plan_details": {
+                    "plan_id": cf_plan_id
+                },
+                "customer_details": customer_details,
+                "authorization_details": {
+                    "authorization_amount": recurring_total
+                },
+                "subscription_meta": {
+                    "return_url": default_return_url,
+                    "notification_channel": ["EMAIL", "SMS"]
+                }
+            }
 
             try:
                 async with httpx.AsyncClient(timeout=25.0) as client:
-                    res = await client.post(f"{base_url}/orders", json=order_payload, headers=headers)
+                    res = await client.post(f"{base_url}/subscriptions", json=sub_payload, headers=headers)
                     if res.status_code in [200, 201]:
                         cf_data = res.json()
-                        session_id = cf_data.get("payment_session_id")
-                        cf_order_id = cf_data.get("cf_order_id")
+                        session_id = cf_data.get("subscription_session_id")
+                        cf_sub_id = cf_data.get("cf_subscription_id")
                         if session_id:
-                            if (settings.CASHFREE_ENV or "TEST").upper() == "PROD":
-                                payment_url = f"https://payments.cashfree.com/order/#{session_id}"
-                            else:
-                                payment_url = f"https://payments-test.cashfree.com/order/#{session_id}"
+                            payment_url = f"https://payments.cashfree.com/order/#{session_id}" if is_prod else f"https://payments-test.cashfree.com/order/#{session_id}"
+                        logger.info("Successfully created Cashfree AutoPay subscription %s (session %s)", subscription_id, session_id)
                     else:
-                        logger.error("Cashfree order create returned %s: %s", res.status_code, res.text)
-            except Exception as e:
-                logger.error("Cashfree order creation exception: %s", e)
+                        logger.warning("Cashfree Subscriptions API status %s: %s; falling back to Orders API", res.status_code, res.text)
+            except Exception as sub_err:
+                logger.warning("Cashfree Subscriptions API call error: %s", sub_err)
+
+            # Step C. Resilient fallback to Orders API if Subscriptions API did not return session
+            if not session_id:
+                order_payload = {
+                    "order_id": subscription_id,
+                    "order_amount": float(recurring_total),
+                    "order_currency": plan.get("currency", "INR"),
+                    "customer_details": customer_details,
+                    "order_meta": {
+                        "return_url": default_return_url,
+                        "notify_url": getattr(settings, "CASHFREE_WEBHOOK_URL", None) or f"{(settings.BACKEND_URL or 'https://api.dhandagrow.com').rstrip('/')}/api/v1/payments/cashfree/webhook"
+                    },
+                    "order_note": f"DhandaGrow {plan.get('name', normalized_plan)} Subscription ({cycle.capitalize()})"
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=25.0) as client:
+                        res = await client.post(f"{base_url}/orders", json=order_payload, headers=headers)
+                        if res.status_code in [200, 201]:
+                            cf_data = res.json()
+                            session_id = cf_data.get("payment_session_id")
+                            cf_sub_id = cf_data.get("cf_order_id")
+                            if session_id:
+                                payment_url = f"https://payments.cashfree.com/order/#{session_id}" if is_prod else f"https://payments-test.cashfree.com/order/#{session_id}"
+                        else:
+                            logger.error("Cashfree order create returned %s: %s", res.status_code, res.text)
+                except Exception as ord_err:
+                    logger.error("Cashfree order creation exception: %s", ord_err)
 
         # 2. Resilient Fallback: If Cashfree PG failed or returned no payment_url, try Finunique Payin
         if not payment_url and getattr(settings, "PAYIN_URL", None) and getattr(settings, "PAYIN_TOKEN", None):
@@ -258,8 +295,6 @@ class CashfreeService:
 
         if not payment_url:
             raise HTTPException(status_code=502, detail="Payment gateway temporarily unavailable. Please retry shortly.")
-
-        cf_sub_id = cf_order_id
 
         now = datetime.now(timezone.utc)
         record = {
