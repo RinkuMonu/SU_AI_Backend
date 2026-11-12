@@ -433,7 +433,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
     return {
         "success": True,
         "message": "OTP verified successfully. Logged in.",
-        "token_type": "cookie",
+        "token_type": "bearer",
+        "access_token": jwt_access_token,
+        "accessToken": jwt_access_token,
+        "token": jwt_access_token,
+        "refresh_token": jwt_refresh_token,
+        "refreshToken": jwt_refresh_token,
         "user": user_resp,
         "role": role,
         "phone_verified": True,
@@ -448,6 +453,12 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
         "can_access_dashboard": onb_state["can_access_dashboard"],
         "onboarding_completed": onb_state["onboarding_completed"],
         "onboardingCompleted": onb_state["onboarding_completed"],
+        "data": {
+            "access_token": jwt_access_token,
+            "accessToken": jwt_access_token,
+            "token": jwt_access_token,
+            "user": user_resp,
+        }
     }
 
 
