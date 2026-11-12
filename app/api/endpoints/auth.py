@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import secrets
 import urllib.parse
@@ -276,13 +275,11 @@ async def signup(request: Request, response: Response):
             #         "next_step": "role_selection"
             #     }
             # }
+            # [NEW] Token lives in the cookie now.
             return {
                 "success": True,
                 "message": "User registered successfully.",
-                "token_type": "bearer",
-                "access_token": access_token,
-                "accessToken": access_token,
-                "token": access_token,
+                "token_type": "cookie",
                 "user": user_dict,
                 "requires_role_selection": True,
                 "dashboard_route": "/select-role",
@@ -325,127 +322,144 @@ async def signup(request: Request, response: Response):
 @router.post("/verify-otp")
 @router.post("/otp/verify-phone")
 async def verify_otp(request: OTPVerifyRequest, response: Response = None):
-    try:
-        identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
-        if not identifier:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Phone number or identifier is required for OTP verification."
-            )
-
-        cc = request.country_code or request.countryCode
-        channel = request.channel or "sms"
-        mode = request.mode
-        result = await AuthService.verify_otp(identifier, request.otp, country_code=cc, channel=channel, mode=mode)
-
-        user = result if isinstance(result, User) else None
-        if isinstance(result, dict) and "user" in result and isinstance(result["user"], User):
-            user = result["user"]
-
-        v_token = getattr(user, "phone_verification_token", None) or getattr(user, "verification_token", None)
-        if not v_token and isinstance(result, dict):
-            v_token = result.get("verification_token") or result.get("phone_verification_token")
-        if not v_token:
-            db = get_database()
-            user_phone = (getattr(user, "phone_number", None) if user else None) or identifier
-            pv_doc = await db["phone_verifications"].find_one({"phone_number": user_phone}, sort=[("_id", -1)])
-            if pv_doc:
-                v_token = pv_doc.get("verification_token")
-            if not v_token:
-                v_token = secrets.token_urlsafe(32)
-                await db["phone_verifications"].insert_one({
-                    "phone_number": user_phone,
-                    "verification_token": v_token,
-                    "verified": True,
-                    "channel": channel,
-                    "verified_at": datetime.now(timezone.utc),
-                    "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
-                    "used": False,
-                    "user_id": str(user.id) if user else None
-                })
-
-        if not user:
-            if isinstance(result, User):
-                user = result
-            else:
-                users_col = await AuthService.get_collection()
-                clean_id = str(identifier).strip()
-                user_doc = await users_col.find_one(AuthService.build_phone_query(clean_id))
-                if user_doc:
-                    user = User(**user_doc)
-
-        if not user:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification failed.")
-
-        db = get_database()
-        jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id))
-        # [OLD] if response:
-        # [OLD]     set_refresh_cookie(response, jwt_refresh_token)
-        # [NEW] Set BOTH cookies.
-        if response:
-            set_auth_cookies(response, jwt_access_token, jwt_refresh_token)
-
-        u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
-        bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
-        onb_state = OnboardingService.determine_state(u_dict, bus_doc)
-
-        role = onb_state.get("role")
-        requires_role = onb_state["requires_role_selection"]
-        dashboard_route = onb_state["dashboard_route"]
-
-        user_resp = UserResponse(
-            id=str(user.id),
-            name=user.name,
-            phone_number=getattr(user, "phone_number", None),
-            phone_verified=getattr(user, "phone_verified", True),
-            email=getattr(user, "email", None),
-            role=role,
-            email_verified=getattr(user, "email_verified", True),
-            online_presence=onb_state.get("online_presence"),
-            onboarding_step=onb_state.get("onboarding_step", 1),
-            onboarding_status=onb_state.get("onboarding_status", "not_started"),
-            onboardingCompleted=onb_state.get("onboarding_completed", False),
-            onboarding_completed_at=getattr(user, "onboarding_completed_at", None)
+    identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
+    if not identifier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phone number or identifier is required for OTP verification."
         )
-        try:
-            from app.services.msg91_email_service import Msg91EmailService
-            asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_resp.model_dump(), request=None))
-        except Exception as em_err:
-            logger.warning(f"Could not dispatch login notification email: {em_err}")
 
-        is_new = bool(getattr(user, "is_new_user", False))
-        return {
-            "success": True,
-            "message": "OTP verified successfully. Logged in.",
-            "token_type": "bearer",
+    cc = request.country_code or request.countryCode
+    channel = request.channel or "sms"
+    mode = request.mode
+    result = await AuthService.verify_otp(identifier, request.otp, country_code=cc, channel=channel, mode=mode)
+
+    user = result if isinstance(result, User) else None
+    if isinstance(result, dict) and "user" in result and isinstance(result["user"], User):
+        user = result["user"]
+
+    v_token = getattr(user, "phone_verification_token", None) or getattr(user, "verification_token", None)
+    if not v_token and isinstance(result, dict):
+        v_token = result.get("verification_token") or result.get("phone_verification_token")
+    if not v_token:
+        db = get_database()
+        user_phone = (getattr(user, "phone_number", None) if user else None) or identifier
+        pv_doc = await db["phone_verifications"].find_one({"phone_number": user_phone}, sort=[("_id", -1)])
+        if pv_doc:
+            v_token = pv_doc.get("verification_token")
+        if not v_token:
+            v_token = secrets.token_urlsafe(32)
+            await db["phone_verifications"].insert_one({
+                "phone_number": user_phone,
+                "verification_token": v_token,
+                "verified": True,
+                "channel": channel,
+                "verified_at": datetime.now(timezone.utc),
+                "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+                "used": False,
+                "user_id": str(user.id) if user else None
+            })
+
+    if not user:
+        if isinstance(result, User):
+            user = result
+        else:
+            users_col = await AuthService.get_collection()
+            clean_id = str(identifier).strip()
+            user_doc = await users_col.find_one({"phone_number": clean_id})
+            if user_doc:
+                user = User(**user_doc)
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification failed.")
+
+    db = get_database()
+    jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id))
+    # [OLD] if response:
+    # [OLD]     set_refresh_cookie(response, jwt_refresh_token)
+    # [NEW] Set BOTH cookies.
+    if response:
+        set_auth_cookies(response, jwt_access_token, jwt_refresh_token)
+
+    u_dict = user.model_dump() if hasattr(user, "model_dump") else (user.dict() if hasattr(user, "dict") else dict(user))
+    bus_doc = await db["businesses"].find_one({"$or": [{"owner_id": str(user.id)}, {"ownerId": str(user.id)}]})
+    onb_state = OnboardingService.determine_state(u_dict, bus_doc)
+
+    role = onb_state.get("role")
+    requires_role = onb_state["requires_role_selection"]
+    dashboard_route = onb_state["dashboard_route"]
+
+    user_resp = UserResponse(
+        id=str(user.id),
+        name=user.name,
+        phone_number=getattr(user, "phone_number", None),
+        phone_verified=getattr(user, "phone_verified", True),
+        email=getattr(user, "email", None),
+        role=role,
+        email_verified=getattr(user, "email_verified", True),
+        online_presence=onb_state.get("online_presence"),
+        onboarding_step=onb_state.get("onboarding_step", 1),
+        onboarding_status=onb_state.get("onboarding_status", "not_started"),
+        onboardingCompleted=onb_state.get("onboarding_completed", False),
+        onboarding_completed_at=getattr(user, "onboarding_completed_at", None)
+    )
+    # [OLD] return TokenResponse(
+    #     access_token=jwt_access_token,
+    #     token=jwt_access_token,
+    #     user=user_resp,
+    #     role=role,
+    #     phone_verified=True,
+    #     requires_role_selection=requires_role,
+    #     dashboard_route=dashboard_route,
+    #     phone_verification_token=v_token,
+    #     verification_token=v_token,
+    #     next_step=onb_state["next_step"],
+    #     online_presence=onb_state.get("online_presence"),
+    #     onboarding_step=onb_state.get("onboarding_step", 1),
+    #     onboarding_status=onb_state.get("onboarding_status", "not_started"),
+    #     can_access_dashboard=onb_state["can_access_dashboard"],
+    #     onboarding_completed=onb_state["onboarding_completed"],
+    #     onboardingCompleted=onb_state["onboarding_completed"],
+    #     success=True,
+    #     message="OTP verified successfully. Logged in."
+    # )
+    # [NEW] No access_token in body — returned via cookie.
+    try:
+        from app.services.msg91_email_service import Msg91EmailService
+        asyncio.create_task(Msg91EmailService.send_login_notification_email(db, user_resp.model_dump(), request=None))
+    except Exception as em_err:
+        logger.warning(f"Could not dispatch login notification email: {em_err}")
+
+    return {
+        "success": True,
+        "message": "OTP verified successfully. Logged in.",
+        "token_type": "bearer",
+        "access_token": jwt_access_token,
+        "accessToken": jwt_access_token,
+        "token": jwt_access_token,
+        "refresh_token": jwt_refresh_token,
+        "refreshToken": jwt_refresh_token,
+        "user": user_resp,
+        "role": role,
+        "phone_verified": True,
+        "requires_role_selection": requires_role,
+        "dashboard_route": dashboard_route,
+        "phone_verification_token": v_token,
+        "verification_token": v_token,
+        "next_step": onb_state["next_step"],
+        "online_presence": onb_state.get("online_presence"),
+        "onboarding_step": onb_state.get("onboarding_step", 1),
+        "onboarding_status": onb_state.get("onboarding_status", "not_started"),
+        "can_access_dashboard": onb_state["can_access_dashboard"],
+        "onboarding_completed": onb_state["onboarding_completed"],
+        "onboardingCompleted": onb_state["onboarding_completed"],
+        "data": {
             "access_token": jwt_access_token,
             "accessToken": jwt_access_token,
             "token": jwt_access_token,
             "user": user_resp,
-            "is_new_user": is_new,
-            "isNewUser": is_new,
-            "role": role,
-            "phone_verified": True,
-            "requires_role_selection": requires_role,
-            "dashboard_route": dashboard_route,
-            "phone_verification_token": v_token,
-            "verification_token": v_token,
-            "next_step": onb_state["next_step"],
-            "online_presence": onb_state.get("online_presence"),
-            "onboarding_step": onb_state.get("onboarding_step", 1),
-            "onboarding_status": onb_state.get("onboarding_status", "not_started"),
-            "can_access_dashboard": onb_state["can_access_dashboard"],
-            "onboarding_completed": onb_state["onboarding_completed"],
-            "onboardingCompleted": onb_state["onboarding_completed"],
         }
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception(f"Unexpected error in verify_otp: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Verification service encountered an unexpected error. Please try again or request a new OTP."
-        )
+    }
 
 
 @router.post("/send-otp")
@@ -635,12 +649,10 @@ async def login(request: Request, response: Response):
     #         "next_step": onb_state["next_step"]
     #     }
     # }
+    # [NEW] No access_token in body.
     return {
         "success": True,
-        "token_type": "bearer",
-        "access_token": access_token,
-        "accessToken": access_token,
-        "token": access_token,
+        "token_type": "cookie",
         "user": user_dict,
         "role": role,
         "requires_role_selection": requires_role,

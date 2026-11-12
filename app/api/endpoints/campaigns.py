@@ -5,6 +5,8 @@ from app.core.security import get_current_user
 from app.core.database import get_database
 from app.services.business_service import BusinessService
 from app.services.campaign_service import CampaignService
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
 from app.schemas.campaign import CampaignCreate, CampaignUpdate, CampaignResponse
 
 router = APIRouter(
@@ -107,11 +109,14 @@ async def generate_campaign_ad_copy(
     business=Depends(get_current_business)
 ):
     db = get_database()
+    user_id = str(current_user.id)
+    await SubscriptionService.check_feature_access(db, user_id, "ai_ad")
+    await CreditService.check_credits(db, user_id, "ai_ad")
     campaign_svc = CampaignService(db)
     ad_copy = await campaign_svc.generate_ad_copy(
         campaign_id=campaign_id,
         business_id=str(business.id),
         context=context or {}
     )
+    await CreditService.deduct_credits(db, user_id, "ai_ad")
     return {"success": True, "data": ad_copy}
-

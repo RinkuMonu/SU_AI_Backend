@@ -1,15 +1,28 @@
 import pytest
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from httpx import Response, AsyncClient, ASGITransport
 
 from app.main import app
 from app.core.config import settings
+from app.core.database import get_database
+from app.core.security import get_current_user
 from app.services.gemini_service import GeminiService
 
 
+@pytest.fixture
+def authenticated_ai_dependencies():
+    original_overrides = app.dependency_overrides.copy()
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="test-user")
+    app.dependency_overrides[get_database] = lambda: object()
+    yield
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(original_overrides)
+
+
 @pytest.mark.asyncio
-async def test_generate_content_native_gemini_format():
+async def test_generate_content_native_gemini_format(authenticated_ai_dependencies):
     """
     Verify POST /api/v1/ai/generateContent accepts the exact native Google Gemini cURL
     payload with {"contents": [{"parts": [{"text": "..."}]}]} and returns structured output.
@@ -25,7 +38,9 @@ async def test_generate_content_native_gemini_format():
         }
     }
 
-    with patch.object(GeminiService, "generate_text_content", new_callable=AsyncMock) as mock_gen:
+    with patch.object(GeminiService, "generate_text_content", new_callable=AsyncMock) as mock_gen, \
+         patch("app.api.endpoints.ai._check_generation_access", new_callable=AsyncMock, return_value="test-user"), \
+         patch("app.api.endpoints.ai.CreditService.deduct_credits", new_callable=AsyncMock):
         mock_gen.return_value = mock_service_response
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -55,7 +70,7 @@ async def test_generate_content_native_gemini_format():
 
 
 @pytest.mark.asyncio
-async def test_generate_content_simple_prompt_format():
+async def test_generate_content_simple_prompt_format(authenticated_ai_dependencies):
     """Verify endpoint also accepts standard prompt format."""
     mock_service_response = {
         "text": "Smart systems learning from examples.",
@@ -64,7 +79,9 @@ async def test_generate_content_simple_prompt_format():
         "usage": {}
     }
 
-    with patch.object(GeminiService, "generate_text_content", new_callable=AsyncMock) as mock_gen:
+    with patch.object(GeminiService, "generate_text_content", new_callable=AsyncMock) as mock_gen, \
+         patch("app.api.endpoints.ai._check_generation_access", new_callable=AsyncMock, return_value="test-user"), \
+         patch("app.api.endpoints.ai.CreditService.deduct_credits", new_callable=AsyncMock):
         mock_gen.return_value = mock_service_response
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -79,7 +96,7 @@ async def test_generate_content_simple_prompt_format():
 
 
 @pytest.mark.asyncio
-async def test_generate_content_missing_prompt_400():
+async def test_generate_content_missing_prompt_400(authenticated_ai_dependencies):
     """Verify endpoint returns 400 when neither contents nor prompt is supplied."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.post("/api/v1/ai/generateContent", json={})

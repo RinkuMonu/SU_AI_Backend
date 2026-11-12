@@ -3,7 +3,6 @@ from app.core.security import get_current_user, require_role, require_businessma
 from app.core.database import get_database
 from app.services.subscription_service import SubscriptionService
 from app.services.credit_service import CreditService
-from app.core.billing_config import FEATURE_PRICING
 
 def _extract_user_id(current_user) -> str:
     if isinstance(current_user, dict):
@@ -24,7 +23,6 @@ def require_feature(feature_name: str):
 def require_credits(feature_name: str):
     async def dependency(current_user=Depends(get_current_user), db=Depends(get_database)):
         uid = _extract_user_id(current_user)
-        cost = FEATURE_PRICING.get(feature_name, 1)
         await CreditService.check_credits(db, uid, feature_name)
         return current_user
     return dependency

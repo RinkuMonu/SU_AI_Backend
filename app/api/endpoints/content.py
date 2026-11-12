@@ -216,7 +216,25 @@ async def generate_post(
         # ---------------------------------
         # 0. Credit Check
         # ---------------------------------
-        credit_feature = "ai_reel" if request.content_type == "reel" else "post_generation"
+        content_type = (request.content_type or "post").strip().lower()
+        credit_feature = {
+            "reel": "ai_reel",
+            "ad": "ai_ad",
+            "caption": "ai_caption",
+        }.get(content_type, "ai_post")
+        subscription = await SubscriptionService.get_or_create_subscription(db, user_id)
+        plan_id = (subscription.get("plan_id") or "FREE").upper().strip()
+        if plan_id == "FREE":
+            if credit_feature not in {"ai_post", "ai_caption", "ai_reel"}:
+                raise HTTPException(
+                    status_code=403,
+                    detail="FEATURE_NOT_AVAILABLE: This content type is not included in the Free plan.",
+                )
+        else:
+            await SubscriptionService.check_feature_access(db, user_id, credit_feature)
+
+        usage_type = "reel" if credit_feature == "ai_reel" else "post"
+        await SubscriptionService.check_usage_limit(db, user_id, usage_type)
         await CreditService.check_credits(db, user_id, credit_feature)
 
         # ---------------------------------
@@ -443,6 +461,7 @@ async def generate_post(
 
         # Deduct credits after successful generation
         await CreditService.deduct_credits(db, user_id, credit_feature)
+        await SubscriptionService.increment_usage(db, user_id, usage_type)
 
         return {
             "success": True,
@@ -701,4 +720,3 @@ async def delete_content(
 
     await db["contents"].delete_one({"_id": obj_id})
     return {"success": True, "message": "Content deleted"}
-

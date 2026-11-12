@@ -14,9 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.core.database import get_database
 from app.core.security import get_current_user
-from app.api.dependencies import require_feature
+from app.api.dependencies import require_feature, require_credits
 from app.services.analytics_service import AnalyticsService, VALID_RANGES
 from app.services.social_analytics_service import SocialAnalyticsService
+from app.services.credit_service import CreditService
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,10 @@ async def sync_social_metrics(
         )
 
 
-@router.post("/visual-forecast", dependencies=[Depends(require_feature("analytics"))])
+@router.post(
+    "/visual-forecast",
+    dependencies=[Depends(require_feature("business_analytics")), Depends(require_credits("business_analytics"))],
+)
 async def get_visual_forecast(
     request: dict = None,
     range_param: str = Query("30d", alias="range"),
@@ -143,7 +147,10 @@ async def get_visual_forecast(
             )
 
         forecast_data = await service.generate_visual_forecast(analytics_data, range_days)
+        await CreditService.deduct_credits(db, user_id, "business_analytics")
         return {"success": True, "data": forecast_data}
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error("Visual forecast failed for user %s: %s", current_user.get("id"), exc, exc_info=True)
         raise HTTPException(

@@ -24,6 +24,8 @@ from app.services.website_analysis_service import WebsiteAnalysisService
 
 from app.core.security import get_current_user, require_businessman, CurrentUser
 from app.core.database import get_database
+from app.services.credit_service import CreditService
+from app.services.subscription_service import SubscriptionService
 from app.utils.upload import save_image, ALLOWED_EXTENSIONS, MAX_FILE_SIZE
 
 
@@ -206,7 +208,11 @@ async def generate_ai_logo(
     directly to local storage (/uploads/brand/), and returns the verified asset reference.
     """
     owner_id = str(current_user["id"])
+    await SubscriptionService.check_feature_access(db, owner_id, "ai_image")
+    await CreditService.check_credits(db, owner_id, "ai_image")
     result = await generate_and_save_ai_logo(db, owner_id, request)
+    if result.get("logo_url"):
+        await CreditService.deduct_credits(db, owner_id, "ai_image")
     return {
         "success": True,
         "message": "AI Logo generated successfully",
@@ -316,6 +322,5 @@ async def analyze_website_for_brand_kit(
         "message": "Website analysis completed successfully for Brand Kit",
         "data": result
     }
-
 
 

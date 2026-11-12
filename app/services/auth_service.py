@@ -81,32 +81,11 @@ class AuthService:
         return None
 
     @staticmethod
-    def build_phone_query(phone: str) -> dict:
-        clean = str(phone).strip()
-        digits = re.sub(r"\D", "", clean)
-        digits_10 = digits[-10:] if len(digits) >= 10 else digits
-        candidates = [
-            {"phone_number": clean},
-            {"phone": clean},
-            {"contactNumber": clean},
-        ]
-        if digits_10:
-            candidates.extend([
-                {"phone_number": f"+91{digits_10}"},
-                {"phone_number": digits_10},
-                {"phone": f"+91{digits_10}"},
-                {"phone": digits_10},
-                {"phone_number": {"$regex": f"{digits_10}$"}},
-            ])
-        return {"$or": candidates}
-
-    @staticmethod
     async def get_user_by_phone(phone_number: str) -> User | None:
         if not phone_number:
             return None
         collection = await AuthService.get_collection()
-        query = AuthService.build_phone_query(phone_number)
-        doc = await collection.find_one(query)
+        doc = await collection.find_one({"phone_number": phone_number})
         if doc:
             return User(**doc)
         return None
@@ -290,19 +269,16 @@ class AuthService:
             "+919999999999",
             "+919876543211",
             "+917857889083",
-            "+919636260524",
-            "+918092562807",
-            "+918502969134",
+            "+919876549988",
         }
-        test_otps = {"123456", "000000", "111111", "999999"}
         is_dev_test = (
-            clean_otp in test_otps and (
+            clean_otp == "123456" and (
                 settings.ENVIRONMENT != "production" or 
                 "pytest" in sys.modules or
                 phone_number in TEST_DEVELOPER_NUMBERS or 
                 cleaned_id in TEST_DEVELOPER_NUMBERS or 
                 clean_stripped in TEST_DEVELOPER_NUMBERS or
-                digits_10 in {"9876543210", "9999999999", "9876543211", "7857889083", "9636260524", "8092562807", "8502969134"}
+                digits_10 in {"9876543210", "9999999999", "9876543211", "7857889083", "9876549988"}
             )
         )
 
@@ -315,7 +291,7 @@ class AuthService:
             recent_pv = await db["phone_verifications"].find_one({
                 "$or": query_candidates,
                 "verified": True,
-                "verified_at": {"$gte": now - timedelta(minutes=15)}
+                "verified_at": {"$gte": now - timedelta(minutes=3)}
             }, sort=[("verified_at", -1)])
 
             if recent_pv:
@@ -328,11 +304,15 @@ class AuthService:
                         pass
                 if not user_doc:
                     target_phone = phone_number or clean_stripped or cleaned_id
-                    user_doc = await users_col.find_one(AuthService.build_phone_query(target_phone))
+                    user_doc = await users_col.find_one({
+                        "$or": [
+                            {"phone_number": target_phone},
+                            {"phone_number": {"$regex": f"{digits_10}$"}} if digits_10 else {"phone_number": target_phone}
+                        ]
+                    })
                 if user_doc:
                     user = User(**user_doc)
                     setattr(user, "phone_verification_token", recent_pv.get("verification_token"))
-                    setattr(user, "is_new_user", False)
                     logger.info(f"Idempotent OTP verification returned recent session for: {mask_phone_number(cleaned_id)}")
                     return user
 
@@ -375,8 +355,7 @@ class AuthService:
                 elif isinstance(h, str):
                     candidate_hashes.append(h)
 
-            already_verified = bool(doc.get("verified") is True)
-            matched = is_dev_test or direct_match or already_verified or any(verify_password(clean_otp, h) for h in candidate_hashes)
+            matched = is_dev_test or direct_match or any(verify_password(clean_otp, h) for h in candidate_hashes)
 
             if not matched:
                 await collection.update_one({"_id": doc["_id"]}, {"$inc": {"attempts": 1}})
@@ -385,13 +364,8 @@ class AuthService:
                     detail="Invalid OTP."
                 )
 
-            # Mark verified so concurrent/duplicate submissions succeed, and remove after grace period
-            await collection.update_one({"_id": doc["_id"]}, {"$set": {"verified": True, "used_at": now}})
-            try:
-                # Cleanup older consumed OTPs asynchronously
-                await collection.delete_many({"phone_number": user_phone, "verified": True, "used_at": {"$lt": now - timedelta(minutes=5)}})
-            except Exception:
-                pass
+            # Single-use: delete OTP record upon successful verification
+            await collection.delete_one({"_id": doc["_id"]})
 
         user_phone = (doc.get("phone_number") if doc else None) or phone_number or cleaned_id
         otp_purpose = doc.get("purpose") if doc else None
@@ -400,7 +374,12 @@ class AuthService:
         # Look up existing registered user
         user_doc = None
         if user_phone:
-            user_doc = await users_col.find_one(AuthService.build_phone_query(user_phone))
+            user_doc = await users_col.find_one({
+                "$or": [
+                    {"phone_number": user_phone},
+                    {"phone_number": {"$regex": f"{digits_10}$"}} if digits_10 else {"phone_number": user_phone}
+                ]
+            })
         if not user_doc and doc and doc.get("user_id"):
             try:
                 from bson import ObjectId
@@ -432,10 +411,6 @@ class AuthService:
                 setattr(user, "phone_verification_token", verification_token)
             except Exception:
                 pass
-            try:
-                setattr(user, "is_new_user", False)
-            except Exception:
-                pass
             logger.info(f"User logged in via phone OTP verification: id={user.id}, phone={mask_phone_number(user_phone)}")
             return user
 
@@ -463,14 +438,8 @@ class AuthService:
         doc_insert = new_user.model_dump(by_alias=True, exclude={'id'})
         if not doc_insert.get("email"):
             doc_insert.pop("email", None)
-        doc_insert["phone"] = user_phone
         result = await users_col.insert_one(doc_insert)
         new_user.id = str(result.inserted_id)
-        # Verify persistence immediately
-        verify_insert = await users_col.find_one({"_id": result.inserted_id})
-        if not verify_insert:
-            logger.error(f"Failed to persist user in users collection: {mask_phone_number(user_phone)}")
-            raise HTTPException(status_code=500, detail="Database persistence error: user could not be saved.")
 
         # Provision default Free subscription
         try:
@@ -496,10 +465,6 @@ class AuthService:
         except Exception:
             pass
 
-        try:
-            setattr(new_user, "is_new_user", True)
-        except Exception:
-            pass
         logger.info(f"New user registered and logged in via phone OTP: id={new_user.id}, phone={mask_phone_number(user_phone)}")
         return new_user
 
@@ -516,6 +481,7 @@ class AuthService:
         m = mode.lower().strip() if mode else None
         phone_number = None
 
+        digits_10 = re.sub(r"\D", "", cleaned_id)[-10:] if cleaned_id else ""
         try:
             phone_number = normalize_phone_number(cleaned_id, country_code=country_code)
         except InvalidPhoneNumberException as e:
@@ -531,8 +497,7 @@ class AuthService:
         now = datetime.now(timezone.utc)
 
         # Check existing user
-        query_phone = AuthService.build_phone_query(phone_number)
-        existing_user = await users_col.find_one(query_phone)
+        existing_user = await users_col.find_one({"phone_number": phone_number})
 
         # Check existing OTP document
         doc = await collection.find_one({"phone_number": phone_number})
@@ -551,7 +516,11 @@ class AuthService:
             )
 
         # Check existing OTP document for cooldown (60 seconds)
-        if doc and doc.get("last_sent_at"):
+        is_test_phone_early = bool(
+            digits_10 in {"9876549988", "9876543210", "9999999999"} or
+            phone_number in {"+919876549988", "+919876543210", "+919999999999"}
+        )
+        if not is_test_phone_early and doc and doc.get("last_sent_at"):
             last_sent = doc["last_sent_at"]
             if last_sent.tzinfo is None:
                 last_sent = last_sent.replace(tzinfo=timezone.utc)
@@ -565,7 +534,7 @@ class AuthService:
         window_start = doc.get("window_start") if doc else None
         if window_start and window_start.tzinfo is None:
             window_start = window_start.replace(tzinfo=timezone.utc)
-        if window_start and (now - window_start).total_seconds() < 3600:
+        if not is_test_phone_early and window_start and (now - window_start).total_seconds() < 3600:
             if doc.get("request_count", 0) >= 5:
                 raise HTTPException(
                     status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -576,7 +545,15 @@ class AuthService:
             window_start = now
             request_count = 1
 
-        otp = generate_secure_otp(6)
+        is_test_phone = bool(
+            digits_10 in {"9876549988", "9876543210", "9999999999"} or
+            phone_number in {"+919876549988", "+919876543210", "+919999999999"}
+        )
+
+        if is_test_phone:
+            otp = "123456"
+        else:
+            otp = generate_secure_otp(6)
         otp_hash = get_password_hash(otp)
         expires_at = now + timedelta(minutes=10)
 
@@ -587,13 +564,19 @@ class AuthService:
             else getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
         ) or getattr(settings, "MSG91_TEMPLATE_ID_N_REG", None)
 
-        # Send via SMSService (delegates to Fast2SMS for sms, or MSG91 WhatsApp for whatsapp)
-        await SMSService.send_otp(
-            phone_number=phone_number,
-            otp=otp,
-            channel=ch,
-            template_id=template_id
-        )
+        # Send via SMSService (bypass or silently catch external failure for test reviewer accounts)
+        try:
+            await SMSService.send_otp(
+                phone_number=phone_number,
+                otp=otp,
+                channel=ch,
+                template_id=template_id
+            )
+        except Exception as sms_err:
+            if is_test_phone:
+                logger.info(f"Test phone number {phone_number}: mocked SMS delivery with fixed OTP {otp}")
+            else:
+                raise sms_err
 
         otp_doc = {
             "user_id": str(existing_user["_id"]) if existing_user else None,

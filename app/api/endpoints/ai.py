@@ -36,11 +36,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+async def _check_generation_access(db, current_user: User, feature: str) -> str:
+    user_id = str(current_user.id)
+    await SubscriptionService.check_feature_access(db, user_id, feature)
+    await CreditService.check_credits(db, user_id, feature)
+    return user_id
+
 
 @router.post("/generate", response_model=AIGenerateResponse)
 async def generate_with_ai_endpoint(
     request: AIGenerateRequest,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
     """
     Centralized OpenAI generation endpoint with automatic task-based model routing:
@@ -48,8 +55,18 @@ async def generate_with_ai_endpoint(
       - task='video_generation' or 'video': Generates storyboard & visual script via gpt-4.1-mini
       - task='image_generation' or 'image': Generates advertisement image via gpt-image-1-mini
     """
+    task = request.task.strip().lower()
+    feature = (
+        "ai_reel" if task in ("video_generation", "video")
+        else "ai_ad" if task in ("image_generation", "image")
+        else "ai_marketing_agent" if task in ("marketing_content", "text_generation", "text", "content")
+        else "ai_post"
+    )
+    user_id = await _check_generation_access(db, current_user, feature)
     try:
         result = await generate_with_openai(request)
+        if result.get("success") is True:
+            await CreditService.deduct_credits(db, user_id, feature)
         return AIGenerateResponse(**result)
     except Exception as e:
         logger.error(f"Error in /generate endpoint: {e}")
@@ -66,30 +83,45 @@ async def generate_with_ai_endpoint(
 async def generate_marketing_content_endpoint(
     prompt: str,
     model: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
     """Generates structured marketing content package using Gemini Function A."""
-    return await generate_with_openai(task="marketing_content", prompt=prompt, model=model)
+    user_id = await _check_generation_access(db, current_user, "ai_marketing_agent")
+    result = await generate_with_openai(task="marketing_content", prompt=prompt, model=model)
+    if result.get("success") is True:
+        await CreditService.deduct_credits(db, user_id, "ai_marketing_agent")
+    return result
 
 
 @router.post("/promotional-video", response_model=dict)
 async def generate_promotional_video_endpoint(
     prompt: str,
     model: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
     """Generates vertical 9:16 promotional video using Gemini Function B."""
-    return await generate_with_openai(task="video_generation", prompt=prompt, model=model)
+    user_id = await _check_generation_access(db, current_user, "ai_reel")
+    result = await generate_with_openai(task="video_generation", prompt=prompt, model=model)
+    if result.get("success") is True:
+        await CreditService.deduct_credits(db, user_id, "ai_reel")
+    return result
 
 
 @router.post("/advertisement-image", response_model=dict)
 async def generate_advertisement_image_endpoint(
     prompt: str,
     model: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
     """Generates premium advertisement image using Gemini Function C."""
-    return await generate_with_openai(task="image_generation", prompt=prompt, model=model)
+    user_id = await _check_generation_access(db, current_user, "ai_ad")
+    result = await generate_with_openai(task="image_generation", prompt=prompt, model=model)
+    if result.get("success") is True:
+        await CreditService.deduct_credits(db, user_id, "ai_ad")
+    return result
 
 
 @router.post("/generateContent", response_model=dict)
@@ -97,7 +129,8 @@ async def generate_advertisement_image_endpoint(
 async def generate_content_endpoint(
     payload: dict,
     model: Optional[str] = None,
-    current_user: Optional[User] = Depends(get_current_user_optional)
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_database),
 ):
     """
     Direct endpoint matching Google Gemini REST API generateContent:
@@ -121,6 +154,7 @@ async def generate_content_endpoint(
     if not extracted_prompt:
         raise HTTPException(status_code=400, detail="Missing required 'contents' or 'prompt' in request payload.")
 
+    user_id = await _check_generation_access(db, current_user, "ai_post")
     selected_model = model or payload.get("model") or getattr(settings, "OPENAI_TEXT_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini"
     service = AIService()
     try:
@@ -129,6 +163,7 @@ async def generate_content_endpoint(
             model=selected_model,
             options=payload.get("options") or {}
         )
+        await CreditService.deduct_credits(db, user_id, "ai_post")
         return {
             "success": True,
             "candidates": [
@@ -460,7 +495,14 @@ from app.schemas.ai import (
 )
 
 
-@router.post("/competitor-analysis", response_model=dict, dependencies=[Depends(require_feature("analytics"))])
+@router.post(
+    "/competitor-analysis",
+    response_model=dict,
+    dependencies=[
+        Depends(require_feature("business_analytics")),
+        Depends(require_credits("business_analytics")),
+    ],
+)
 async def analyze_competitors_endpoint(
     request: CompetitorAnalysisRequest,
     current_user=Depends(get_current_user),
@@ -472,6 +514,7 @@ async def analyze_competitors_endpoint(
     """
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     result = await MarketingIntelligenceService.analyze_competitors(db, user_id, request)
+    await CreditService.deduct_credits(db, user_id, "business_analytics")
     return {
         "success": True,
         "message": "Competitor analysis completed successfully",
@@ -518,7 +561,14 @@ async def analyze_website_endpoint(
     }
 
 
-@router.post("/trend-analysis", response_model=dict, dependencies=[Depends(require_feature("content_calendar"))])
+@router.post(
+    "/trend-analysis",
+    response_model=dict,
+    dependencies=[
+        Depends(require_feature("social_media_calendar")),
+        Depends(require_credits("social_media_calendar")),
+    ],
+)
 async def analyze_social_trends_endpoint(
     request: SocialTrendAnalysisRequest,
     current_user=Depends(get_current_user),
@@ -529,6 +579,7 @@ async def analyze_social_trends_endpoint(
     """
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     result = await MarketingIntelligenceService.analyze_social_trends(db, user_id, request)
+    await CreditService.deduct_credits(db, user_id, "social_media_calendar")
     return {
         "success": True,
         "message": "Social media trend analysis completed successfully",
@@ -536,7 +587,7 @@ async def analyze_social_trends_endpoint(
     }
 
 
-@router.post("/product-marketing", response_model=dict, dependencies=[Depends(require_feature("ai_post"))])
+@router.post("/product-marketing", response_model=dict, dependencies=[Depends(require_feature("ai_marketing_agent")), Depends(require_credits("ai_marketing_agent"))])
 async def generate_product_marketing_endpoint(
     request: ProductMarketingRequest,
     current_user=Depends(get_current_user),
@@ -547,6 +598,7 @@ async def generate_product_marketing_endpoint(
     """
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     result = await MarketingIntelligenceService.generate_product_marketing(db, user_id, request)
+    await CreditService.deduct_credits(db, user_id, "ai_marketing_agent")
     return {
         "success": True,
         "message": "Product marketing strategy generated successfully",
@@ -554,7 +606,7 @@ async def generate_product_marketing_endpoint(
     }
 
 
-@router.post("/brand-strategy", response_model=dict, dependencies=[Depends(require_feature("ai_caption"))])
+@router.post("/brand-strategy", response_model=dict, dependencies=[Depends(require_feature("ai_brand_brain")), Depends(require_credits("ai_brand_brain"))])
 async def generate_brand_strategy_endpoint(
     request: BrandStrategyRequest,
     current_user=Depends(get_current_user),
@@ -565,6 +617,7 @@ async def generate_brand_strategy_endpoint(
     """
     user_id = str(current_user.id if hasattr(current_user, "id") else current_user["id"])
     result = await MarketingIntelligenceService.generate_brand_strategy(db, user_id, request)
+    await CreditService.deduct_credits(db, user_id, "ai_brand_brain")
     return {
         "success": True,
         "message": "Brand strategy generated successfully",

@@ -20,6 +20,7 @@ from app.schemas.first_post import (
 from app.services.content_service import ContentService
 from app.services.plan_onboarding_service import QUALIFYING_PAID_PLANS
 from app.services.subscription_service import SubscriptionService
+from app.services.credit_service import CreditService
 from app.ai.services.post_generation import PostGenerationService
 
 logger = logging.getLogger(__name__)
@@ -305,7 +306,18 @@ class FirstPostService:
             return await cls._build_job_response(db, uid, recent_duplicate)
 
         job_id = f"fpjob_{uuid.uuid4().hex[:16]}"
-        choice = payload.content_choice or "post_maker"
+        choice = (payload.content_choice or "post_maker").strip().lower()
+        credit_feature = {
+            "post_maker": "ai_post",
+            "ai_photoshoot": "ai_photoshoot",
+            "reel_maker": "ai_reel",
+        }.get(choice)
+        if not credit_feature:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported first-post content choice: {choice}"
+            )
+        await CreditService.check_credits(db, uid, credit_feature)
 
         initial_doc = {
             "job_id": job_id,
@@ -331,7 +343,10 @@ class FirstPostService:
 
         # Execute generation pipeline
         try:
-            return await cls._execute_first_post_pipeline(db, uid, bus, job_id, payload)
+            response = await cls._execute_first_post_pipeline(db, uid, bus, job_id, payload)
+            if response.success:
+                await CreditService.deduct_credits(db, uid, credit_feature)
+            return response
         except Exception as e:
             logger.error(f"First post generation pipeline error for job {job_id}: {e}", exc_info=True)
             await db["first_post_jobs"].update_one(
