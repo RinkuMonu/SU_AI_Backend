@@ -100,6 +100,7 @@ class Settings(BaseSettings):
     CASHFREE_SECRET_KEY: str = ""
     CASHFREE_ENV: str = "TEST"
     CASHFREE_API_VERSION: str = "2023-08-01"
+    CASHFREE_RETURN_URL: Optional[str] = None
     
     GEOAPIFY_API_KEY: str = ""
     FIRECRAWL_API_KEY: Optional[str] = None

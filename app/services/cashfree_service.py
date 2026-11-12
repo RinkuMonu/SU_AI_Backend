@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import hashlib
 import base64
@@ -17,14 +18,24 @@ logger = logging.getLogger(__name__)
 class CashfreeService:
     @staticmethod
     def _build_return_url(return_url: Optional[str], subscription_id: str) -> str:
-        url = return_url or (
-            f"{settings.FRONTEND_URL}/payment/success"
-            f"?order_id={subscription_id}&sub_id={subscription_id}"
-        )
-        return (
-            url.replace("{subscription_id}", subscription_id)
-            .replace("{order_id}", subscription_id)
-        )
+        url = (return_url or "").strip()
+        if not url:
+            base_frontend = getattr(settings, "CASHFREE_RETURN_URL", None) or getattr(settings, "FRONTEND_URL", "https://dhandagrow.com")
+            base_frontend = str(base_frontend or "https://dhandagrow.com").strip().rstrip("/")
+            url = f"{base_frontend}/payment/success?order_id={subscription_id}&sub_id={subscription_id}"
+        else:
+            url = (
+                url.replace("{subscription_id}", subscription_id)
+                .replace("{order_id}", subscription_id)
+            )
+
+        # Cashfree Subscriptions API strictly enforces HTTPS for return_url
+        if url.startswith("http://"):
+            url = "https://" + url[len("http://"):]
+        elif not url.startswith("https://"):
+            url = f"https://{url.lstrip('/')}"
+
+        return url
 
     @classmethod
     def get_base_url(cls) -> str:
@@ -154,12 +165,6 @@ class CashfreeService:
         if not settings.CASHFREE_APP_ID or not settings.CASHFREE_SECRET_KEY:
             raise HTTPException(status_code=500, detail="Cashfree payment gateway configuration missing")
 
-        # 1. Ensure recurring plan exists on Cashfree
-        cf_plan_id = await cls.ensure_cashfree_plan(normalized_plan, cycle, plan, recurring_total)
-
-        # 2. Generate unique subscription reference
-        subscription_id = f"SUB_{uuid.uuid4().hex[:12].upper()}"
-
         # Clean customer phone (Cashfree requires valid phone, fallback to default 10-digit if absent)
         phone = "".join(filter(str.isdigit, str(user_phone or "")))
         if len(phone) < 10:
@@ -174,60 +179,87 @@ class CashfreeService:
             "customer_phone": phone
         }
 
+        subscription_id = f"SUB_{uuid.uuid4().hex[:12].upper()}"
         default_return_url = cls._build_return_url(return_url, subscription_id)
 
-        sub_payload = {
-            "subscription_id": subscription_id,
-            "plan_details": {
-                "plan_id": cf_plan_id
-            },
-            "customer_details": customer_details,
-            "authorization_details": {
-                "authorization_amount": recurring_total
-            },
-            "subscription_meta": {
-                "return_url": default_return_url,
-                "notification_channel": ["EMAIL", "SMS"]
-            }
-        }
-
-        base_url = cls.get_base_url()
-        headers = cls.get_headers()
-
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            res = await client.post(f"{base_url}/subscriptions", json=sub_payload, headers=headers)
-            
-            if res.status_code not in [200, 201]:
-                logger.error("Cashfree subscription create error: %s %s", res.status_code, res.text)
-                raise HTTPException(status_code=502, detail=f"Cashfree subscription initiation failed: {res.text}")
-
-            cf_data = res.json()
-
-        # Payment/Session URL for frontend checkout SDK or redirect
-        session_id = cf_data.get("subscription_session_id")
-        cf_sub_id = cf_data.get("cf_subscription_id")
-        
-        # Resolve Cashfree Hosted Subscriptions Checkout Page
+        # 1. Attempt Primary: Cashfree PG Orders API
         payment_url = None
-        if session_id:
+        session_id = None
+        cf_order_id = None
+        cf_data = {}
+
+        if settings.CASHFREE_APP_ID and settings.CASHFREE_SECRET_KEY:
+            order_payload = {
+                "order_id": subscription_id,
+                "order_amount": float(recurring_total),
+                "order_currency": plan.get("currency", "INR"),
+                "customer_details": customer_details,
+                "order_meta": {
+                    "return_url": default_return_url,
+                    "notify_url": getattr(settings, "CASHFREE_WEBHOOK_URL", None) or f"{(settings.BACKEND_URL or 'https://api.dhandagrow.com').rstrip('/')}/api/v1/payments/cashfree/webhook"
+                },
+                "order_note": f"DhandaGrow {plan.get('name', normalized_plan)} Subscription ({cycle.capitalize()})"
+            }
+
+            base_url = cls.get_base_url()
+            headers = cls.get_headers()
+
             try:
-                subs_checkout_base = "https://api.cashfree.com" if (settings.CASHFREE_ENV or "TEST").upper() == "PROD" else "https://sandbox.cashfree.com"
-                async with httpx.AsyncClient(timeout=10.0) as cf_client:
-                    chk_res = await cf_client.post(
-                        f"{subs_checkout_base}/pg/view/sessions/checkout/subs",
-                        data={
-                            "subs_session_id": session_id,
-                            "x_request_id": "x_request_id_form_subs_atom",
-                            "form_id": "form_subs_id_atom",
-                            "browser_meta": "e30=",
-                            "platform": "c"
-                        },
-                        follow_redirects=False
-                    )
-                    payment_url = chk_res.headers.get("location")
+                async with httpx.AsyncClient(timeout=25.0) as client:
+                    res = await client.post(f"{base_url}/orders", json=order_payload, headers=headers)
+                    if res.status_code in [200, 201]:
+                        cf_data = res.json()
+                        session_id = cf_data.get("payment_session_id")
+                        cf_order_id = cf_data.get("cf_order_id")
+                        if session_id:
+                            if (settings.CASHFREE_ENV or "TEST").upper() == "PROD":
+                                payment_url = f"https://payments.cashfree.com/order/#{session_id}"
+                            else:
+                                payment_url = f"https://payments-test.cashfree.com/order/#{session_id}"
+                    else:
+                        logger.error("Cashfree order create returned %s: %s", res.status_code, res.text)
             except Exception as e:
-                logger.warning("Could not resolve Cashfree hosted subs URL: %s", e)
-                payment_url = None
+                logger.error("Cashfree order creation exception: %s", e)
+
+        # 2. Resilient Fallback: If Cashfree PG failed or returned no payment_url, try Finunique Payin
+        if not payment_url and getattr(settings, "PAYIN_URL", None) and getattr(settings, "PAYIN_TOKEN", None):
+            try:
+                from app.services.payin_service import PayinService
+                payin_res = await PayinService.create_payment(
+                    db=db,
+                    user_id=user_id,
+                    user_email=user_email,
+                    plan_id=normalized_plan,
+                    billing_cycle=cycle,
+                    user_name=user_name,
+                    user_mobile=phone,
+                    frontend_url=getattr(settings, "FRONTEND_URL", "https://dhandagrow.com")
+                )
+                if payin_res.get("payment_url"):
+                    return {
+                        "success": True,
+                        "subscription_id": payin_res.get("order_id") or subscription_id,
+                        "order_id": payin_res.get("order_id") or subscription_id,
+                        "payment_url": payin_res.get("payment_url"),
+                        "status": "INITIALIZED",
+                        "auth_amount": recurring_total,
+                        "recurring_amount": recurring_total,
+                        "amount": recurring_total,
+                        "base_amount": base_amount,
+                        "gst_amount": gst_amount,
+                        "gst_rate": gst_rate,
+                        "plan_id": normalized_plan,
+                        "plan_name": plan.get("name", normalized_plan),
+                        "billing_cycle": cycle,
+                        "currency": "INR"
+                    }
+            except Exception as payin_err:
+                logger.error("Finunique Payin fallback failed: %s", payin_err)
+
+        if not payment_url:
+            raise HTTPException(status_code=502, detail="Payment gateway temporarily unavailable. Please retry shortly.")
+
+        cf_sub_id = cf_order_id
 
         now = datetime.now(timezone.utc)
         record = {
@@ -471,32 +503,45 @@ class CashfreeService:
         headers = cls.get_headers()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
+                res = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
+                cf_status = None
                 if res.status_code == 200:
                     cf_data = res.json()
-                    cf_data = cf_data.get("subscription_details") or cf_data
-                    cf_status = cf_data.get("subscription_status") or cf_data.get("status")
-                    prev_status = record.get("status")
-                    if cf_status:
-                        if cf_status != prev_status:
-                            await db["payment_subscriptions"].update_one(
-                                {"subscription_id": subscription_id},
-                                {"$set": {"status": cf_status, "updated_at": datetime.now(timezone.utc)}}
-                            )
-                            record["status"] = cf_status
-                        # Automatically activate plan in subscription collection
-                        if cf_status in ["ACTIVE", "AUTHENTICATED"]:
-                            await SubscriptionService.upgrade_plan(
-                                db,
-                                record["user_id"],
-                                record["plan_id"],
-                                billing_cycle=record.get("billing_cycle", "monthly"),
-                                reference_id=subscription_id,
-                                transaction_id=subscription_id,
-                                amount=record.get("auth_amount") or record.get("recurring_amount"),
-                                payment_provider="cashfree",
-                            )
-                            logger.info("Upgraded user %s to plan %s via Cashfree sync", record["user_id"], record["plan_id"])
+                    order_status = (cf_data.get("order_status") or "").upper()
+                    if order_status == "PAID":
+                        cf_status = "ACTIVE"
+                    elif order_status in ["EXPIRED", "TERMINATED", "FAILED"]:
+                        cf_status = "FAILED"
+                    else:
+                        cf_status = order_status
+                else:
+                    res2 = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
+                    if res2.status_code == 200:
+                        cf_data2 = res2.json()
+                        cf_data2 = cf_data2.get("subscription_details") or cf_data2
+                        cf_status = (cf_data2.get("subscription_status") or cf_data2.get("status") or "").upper()
+
+                prev_status = record.get("status")
+                if cf_status:
+                    if cf_status != prev_status:
+                        await db["payment_subscriptions"].update_one(
+                            {"subscription_id": subscription_id},
+                            {"$set": {"status": cf_status, "updated_at": datetime.now(timezone.utc)}}
+                        )
+                        record["status"] = cf_status
+                    # Automatically activate plan in subscription collection
+                    if cf_status in ["ACTIVE", "AUTHENTICATED", "PAID", "SUCCESS"]:
+                        await SubscriptionService.upgrade_plan(
+                            db,
+                            record["user_id"],
+                            record["plan_id"],
+                            billing_cycle=record.get("billing_cycle", "monthly"),
+                            reference_id=subscription_id,
+                            transaction_id=subscription_id,
+                            amount=record.get("auth_amount") or record.get("recurring_amount"),
+                            payment_provider="cashfree",
+                        )
+                        logger.info("Upgraded user %s to plan %s via Cashfree sync", record["user_id"], record["plan_id"])
         except Exception as e:
             logger.warning("Could not sync live Cashfree subscription status: %s", e)
 
