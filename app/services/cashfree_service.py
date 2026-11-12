@@ -29,11 +29,20 @@ class CashfreeService:
                 .replace("{order_id}", subscription_id)
             )
 
-        # Cashfree Subscriptions API strictly enforces HTTPS for return_url
-        if url.startswith("http://"):
-            url = "https://" + url[len("http://"):]
-        elif not url.startswith("https://"):
-            url = f"https://{url.lstrip('/')}"
+        # For localhost / 127.0.0.1 local development, keep http:// so browser doesn't hit ERR_SSL_PROTOCOL_ERROR
+        if "localhost" in url.lower() or "127.0.0.1" in url:
+            if url.startswith("https://localhost"):
+                url = "http://" + url[len("https://"):]
+            elif url.startswith("https://127.0.0.1"):
+                url = "http://" + url[len("https://"):]
+            elif not url.startswith("http://"):
+                url = f"http://{url.lstrip('/')}"
+        else:
+            # Cashfree Subscriptions API strictly enforces HTTPS for public production domains
+            if url.startswith("http://"):
+                url = "https://" + url[len("http://"):]
+            elif not url.startswith("https://"):
+                url = f"https://{url.lstrip('/')}"
 
         return url
 
