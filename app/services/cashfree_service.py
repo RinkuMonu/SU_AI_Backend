@@ -246,11 +246,12 @@ class CashfreeService:
                 "customer_details": customer_details,
                 "authorization_details": {
                     "authorization_amount": recurring_total,
-                    "payment_methods": ["upi", "card", "enach"] if recurring_total <= 15000.0 else ["enach", "card", "upi"]
+                    "payment_methods": ["card", "upi", "enach"] if recurring_total <= 15000.0 else ["enach", "card", "upi"]
                 },
                 "subscription_meta": {
                     "return_url": default_return_url,
-                    "notification_channel": ["EMAIL", "SMS"]
+                    "notification_channel": ["EMAIL", "SMS"],
+                    "payment_methods": "card,upi,enach"
                 }
             }
 
