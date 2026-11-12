@@ -549,23 +549,37 @@ class CashfreeService:
         headers = cls.get_headers()
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
                 cf_status = None
-                if res.status_code == 200:
-                    cf_data = res.json()
-                    order_status = (cf_data.get("order_status") or "").upper()
-                    if order_status == "PAID":
-                        cf_status = "ACTIVE"
-                    elif order_status in ["EXPIRED", "TERMINATED", "FAILED"]:
-                        cf_status = "FAILED"
-                    else:
-                        cf_status = order_status
-                else:
+                # Optimize: If it's a recurring mandate (starts with SUB_), query Subscriptions API first
+                if subscription_id.startswith("SUB_"):
                     res2 = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
                     if res2.status_code == 200:
                         cf_data2 = res2.json()
                         cf_data2 = cf_data2.get("subscription_details") or cf_data2
                         cf_status = (cf_data2.get("subscription_status") or cf_data2.get("status") or "").upper()
+                    else:
+                        res = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
+                        if res.status_code == 200:
+                            cf_data = res.json()
+                            order_status = (cf_data.get("order_status") or "").upper()
+                            cf_status = "ACTIVE" if order_status == "PAID" else ("FAILED" if order_status in ["EXPIRED", "TERMINATED", "FAILED"] else order_status)
+                else:
+                    res = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
+                    if res.status_code == 200:
+                        cf_data = res.json()
+                        order_status = (cf_data.get("order_status") or "").upper()
+                        if order_status == "PAID":
+                            cf_status = "ACTIVE"
+                        elif order_status in ["EXPIRED", "TERMINATED", "FAILED"]:
+                            cf_status = "FAILED"
+                        else:
+                            cf_status = order_status
+                    else:
+                        res2 = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
+                        if res2.status_code == 200:
+                            cf_data2 = res2.json()
+                            cf_data2 = cf_data2.get("subscription_details") or cf_data2
+                            cf_status = (cf_data2.get("subscription_status") or cf_data2.get("status") or "").upper()
 
                 prev_status = record.get("status")
                 if cf_status:
