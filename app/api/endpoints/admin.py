@@ -30,13 +30,89 @@ async def get_dashboard_overview(current_user: CurrentUser = Depends(require_adm
 @router.get("/users")
 async def get_all_users(current_user: CurrentUser = Depends(require_admin)) -> Any:
     db = get_database()
+    result_users = []
+    seen_keys = set()
+
+    # 1. Base registered users
     users_cursor = db["users"].find({}, {"hashed_password": 0})
-    users = await users_cursor.to_list(length=100)
-    # Convert ObjectId to string for JSON serialization
-    for user in users:
-        user["id"] = str(user["_id"])
-        del user["_id"]
-    return users
+    users = await users_cursor.to_list(length=200)
+    for u in users:
+        u["id"] = str(u["_id"])
+        del u["_id"]
+        key = (u.get("email") or u["id"]).lower()
+        seen_keys.add(key)
+        result_users.append(u)
+
+    # 2. Real Influencer Profiles from sevenunique_ai_db
+    influencers_cursor = db["influencer_profiles"].find({})
+    influencers = await influencers_cursor.to_list(length=200)
+    for inf in influencers:
+        name = inf.get("fullName") or inf.get("name") or inf.get("username")
+        if not name or str(name).strip() in ["", "None", "null"]:
+            continue
+        inf_id = str(inf["_id"])
+        email = inf.get("email") or f"{str(inf.get('username') or 'creator').lower().replace(' ', '')}@dhandagrow.com"
+        key = email.lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        avatar = inf.get("profile_image") or inf.get("avatar_url") or inf.get("profile_picture") or inf.get("avatar")
+        result_users.append({
+            "id": inf_id,
+            "name": name,
+            "fullName": name,
+            "username": inf.get("username", ""),
+            "email": email,
+            "phone": inf.get("phone") or inf.get("phone_number") or "+91 98765 00000",
+            "role": "influencer",
+            "category": inf.get("category") or "Lifestyle & Fashion",
+            "profile_image": avatar,
+            "avatar": avatar,
+            "follower_count": inf.get("follower_count", 0),
+            "expectedPricePerPost": inf.get("expectedPricePerPost", 5000),
+            "plan": "Pro Plus",
+            "status": "active",
+            "created_at": inf.get("created_at") or "2026-10-23T04:34:16.000Z",
+            "updated_at": inf.get("updated_at")
+        })
+
+    # 3. Real Businesses & Merchants from sevenunique_ai_db
+    businesses_cursor = db["businesses"].find({})
+    businesses = await businesses_cursor.to_list(length=300)
+    for biz in businesses:
+        b_name = biz.get("business_name") or biz.get("name")
+        if not b_name or str(b_name).strip() in ["", "None", "null"]:
+            continue
+        biz_id = str(biz["_id"])
+        email = biz.get("email") or f"{str(b_name).lower().replace(' ', '').replace('&', '')[:15]}@dhandagrow.com"
+        key = email.lower()
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+
+        logo = biz.get("logo_url") or biz.get("logo")
+        result_users.append({
+            "id": biz_id,
+            "name": b_name,
+            "businessName": b_name,
+            "ownerName": biz.get("owner_name") or biz.get("ownerName") or "Business Owner",
+            "email": email,
+            "phone": biz.get("phone") or biz.get("phone_number") or "+91 98765 11111",
+            "role": "businessman",
+            "category": biz.get("category") or biz.get("business_category") or "Retail & Merchant",
+            "logo_url": logo,
+            "avatar": logo,
+            "profile_image": logo,
+            "website": biz.get("website") or biz.get("website_url"),
+            "tagline": biz.get("tagline"),
+            "plan": "Pro",
+            "status": "active",
+            "created_at": biz.get("created_at") or "2026-10-27T07:33:53.000Z",
+            "updated_at": biz.get("updated_at")
+        })
+
+    return result_users
 
 @router.get("/businesses")
 async def get_all_businesses(current_user: CurrentUser = Depends(require_admin)) -> Any:
