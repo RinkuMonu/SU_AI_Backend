@@ -175,3 +175,4 @@ for blog in initial_blogs:
     )
 
 print('Seeded successfully! Total blogs:', db['blogs'].count_documents({}))
+

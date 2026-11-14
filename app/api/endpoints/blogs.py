@@ -217,3 +217,4 @@ async def admin_delete_blog(
     if res.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Blog post not found")
     return {"success": True, "message": "Blog post deleted successfully", "id": id}
+
