@@ -222,7 +222,11 @@ class Settings(BaseSettings):
     MSG91_FROM_EMAIL: Optional[str] = None
     MSG91_AUTO_DEBIT_TEMPLATE: str = "autopay_debit_initiated"
     MSG91_PAYMENT_FAILED_TEMPLATE: str = "payment_failed_28"
-    MSG91_LOGIN_TEMPLATE: str = "login_notification_template_2"
+    MSG91_LOGIN_TEMPLATE: str = "login_templete"
+
+    COMPANY_NAME: str = "Dhanda Grow"
+    SUPPORT_EMAIL: str = "support@dhandagrow.com"
+    SECURITY_URL: str = "https://dhandagrow.com/security"
 
     # Legacy aliases
     MSG91_EMAIL_TEMPLATE_ID: str = "autopay_debit_initiated"

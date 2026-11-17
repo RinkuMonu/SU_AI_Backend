@@ -1774,8 +1774,6 @@ Language choice must be strictly from: {json.dumps(VALID_CONTENT_LANGUAGES)}."""
             {
                 "$set": bus_updates,
                 "$setOnInsert": {
-                    "name": bus_updates.get("business_name") or "My Business",
-                    "business_name": bus_updates.get("business_name") or "My Business",
                     "location": "India",
                     "created_at": now
                 }

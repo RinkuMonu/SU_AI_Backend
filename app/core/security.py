@@ -14,13 +14,19 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-def create_access_token(subject: Union[str, Any], expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(
+    subject: Union[str, Any],
+    expires_delta: Optional[timedelta] = None,
+    session_id: Optional[str] = None
+) -> str:
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
         expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     to_encode = {"exp": expire, "sub": str(subject)}
+    if session_id:
+        to_encode["sid"] = str(session_id)
     encoded_jwt = jwt.encode(to_encode, settings.JWT_ACCESS_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
@@ -135,6 +141,17 @@ async def get_current_user(
         if user_doc is None:
             raise credentials_exception
 
+    # Enforce Single Device Login Session Check
+    token_sid = payload.get("sid") or payload.get("session_id")
+    active_sid = user_doc.get("active_session_id")
+    if active_sid:
+        if not token_sid or str(token_sid) != str(active_sid):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Your session has expired because your account was logged in on another device.",
+                headers={"WWW-Authenticate": "Bearer", "X-Session-Status": "LOGGED_OUT_BY_ANOTHER_DEVICE"}
+            )
+
     business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
     def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:
@@ -228,6 +245,12 @@ async def get_current_user_optional(
             is_pending = True
             if not user_doc:
                 return None
+
+        # Enforce Single Device Login Session Check
+        token_sid = payload.get("sid") or payload.get("session_id")
+        active_sid = user_doc.get("active_session_id")
+        if active_sid and (not token_sid or str(token_sid) != str(active_sid)):
+            return None
         business = await db["businesses"].find_one({"$or": [{"ownerId": str(user_doc["_id"])}, {"owner_id": str(user_doc["_id"])}, {"user_id": str(user_doc["_id"])}, {"userId": str(user_doc["_id"])}]})
 
         def normalize_role(role: Optional[str], account_type: Optional[str] = None) -> Optional[str]:

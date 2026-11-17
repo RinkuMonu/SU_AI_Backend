@@ -32,6 +32,8 @@ class User(MongoBaseModel):
     onboarding_step: Optional[int] = 1
     online_presence: Optional[str] = None
     selected_services: Optional[List[str]] = None
+    active_session_id: Optional[str] = None
+    active_device: Optional[dict] = None
 
     # Business Registration Fields
     business_logo: Optional[str] = None

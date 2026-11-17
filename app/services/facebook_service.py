@@ -659,25 +659,8 @@ class FacebookService:
         except Exception as e:
             logger.warning(f"Could not auto-link Facebook pages during login: {e}")
 
-        # Generate JWT session tokens
-        jwt_access_token = AuthService.create_token(
-            user.id,
-            settings.JWT_ACCESS_SECRET,
-            timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        )
-        jwt_refresh_token = AuthService.create_token(
-            user.id,
-            settings.JWT_REFRESH_SECRET,
-            timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-
-        rs = RefreshSession(
-            userId=str(user.id),
-            hashedToken=get_password_hash(hashlib.sha256(jwt_refresh_token.encode()).hexdigest()),
-            expiresAt=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-        )
-        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
-
+        # Generate JWT session tokens via canonical single-device session creator
+        jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
         return user, jwt_access_token, jwt_refresh_token
 
     @staticmethod

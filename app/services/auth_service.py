@@ -867,9 +867,8 @@ class AuthService:
         # Clear OTP records for this email
         await db["otps"].delete_many({"email": email})
 
-        # Generate tokens for onboarding session
-        access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-        refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
+        # Generate tokens for onboarding session with single device enforcement
+        access_token, refresh_token = await AuthService.create_session(db, str(user.id))
 
         return user, access_token, refresh_token
 
@@ -1120,7 +1119,7 @@ class AuthService:
         return user
 
     @staticmethod
-    async def login(req: LoginRequest):
+    async def login(req: LoginRequest, request: Optional[Any] = None):
         db = get_database()
         email = req.email.lower().strip()
         doc = await db["users"].find_one({"email": email})
@@ -1137,18 +1136,8 @@ class AuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
         if is_pending:
             user.onboardingCompleted = False
-            
-        access_token = AuthService.create_token(user.id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-        refresh_token = AuthService.create_token(user.id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-        
-        # Save refresh session
-        rs = RefreshSession(
-            userId=str(user.id),
-            hashedToken=get_password_hash(hashlib.sha256(refresh_token.encode()).hexdigest()),
-            expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        )
-        await db["refresh_sessions"].insert_one(rs.model_dump(by_alias=True, exclude={"id"}))
-        
+
+        access_token, refresh_token = await AuthService.create_session(db, str(user.id), request=request)
         return user, access_token, refresh_token
 
     @staticmethod
@@ -1161,9 +1150,12 @@ class AuthService:
             user_id = payload.get("sub")
             if user_id:
                 await db["refresh_sessions"].update_many(
-                    {"userId": user_id, "isRevoked": False},
-                    {"$set": {"isRevoked": True}}
+                    {"userId": str(user_id), "isRevoked": False},
+                    {"$set": {"isRevoked": True, "revokedReason": "user_logout"}}
                 )
+                u_filter = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"_id": user_id}
+                await db["users"].update_one(u_filter, {"$set": {"active_session_id": None}})
+                await db["pending_users"].update_one(u_filter, {"$set": {"active_session_id": None}})
         except jwt.InvalidTokenError:
             pass
 
@@ -1173,9 +1165,20 @@ class AuthService:
         try:
             payload = jwt.decode(refresh_token, settings.JWT_REFRESH_SECRET, algorithms=[settings.JWT_ALGORITHM])
             user_id = payload.get("sub")
+            token_sid = payload.get("sid") or payload.get("session_id")
             if not user_id:
                 raise HTTPException(status_code=401, detail="Invalid token")
-            
+
+            # Check single device active_session_id
+            u_filter = {"_id": ObjectId(user_id)} if ObjectId.is_valid(user_id) else {"_id": user_id}
+            user_doc = await db["users"].find_one(u_filter) or await db["pending_users"].find_one(u_filter)
+            if user_doc and user_doc.get("active_session_id"):
+                if not token_sid or str(token_sid) != str(user_doc.get("active_session_id")):
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Session expired. Your account has been logged in on another device."
+                    )
+
             # Check if token is in db and not revoked
             sessions = await db["refresh_sessions"].find({"userId": user_id, "isRevoked": False, "expiresAt": {"$gt": datetime.now(timezone.utc)}}).to_list(length=None)
             valid_session = None
@@ -1183,55 +1186,139 @@ class AuthService:
                 if verify_password(hashlib.sha256(refresh_token.encode()).hexdigest(), s["hashedToken"]):
                     valid_session = s
                     break
-                    
+
             if not valid_session:
                 raise HTTPException(status_code=401, detail="Session revoked or invalid")
-                
-            # Rotate refresh token
+
+            # Rotate refresh token keeping the same active session_id
             await db["refresh_sessions"].update_one({"_id": valid_session["_id"]}, {"$set": {"isRevoked": True}})
-            
-            access_token = AuthService.create_token(user_id, settings.JWT_ACCESS_SECRET, timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-            new_refresh_token = AuthService.create_token(user_id, settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-            
+
+            access_token = create_access_token(subject=user_id, session_id=token_sid)
+            new_refresh_token = AuthService.create_token(
+                user_id,
+                settings.JWT_REFRESH_SECRET,
+                timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+                session_id=token_sid
+            )
+
             new_rs = RefreshSession(
                 userId=str(user_id),
                 hashedToken=get_password_hash(hashlib.sha256(new_refresh_token.encode()).hexdigest()),
                 expiresAt=datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
             )
-            await db["refresh_sessions"].insert_one(new_rs.model_dump(by_alias=True, exclude={"id"}))
-            
+            new_rs_doc = new_rs.model_dump(by_alias=True, exclude={"id"})
+            new_rs_doc["sessionId"] = token_sid
+            await db["refresh_sessions"].insert_one(new_rs_doc)
+
             return access_token, new_refresh_token
-            
+
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token expired")
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Invalid token")
 
     @staticmethod
-    def create_token(subject: str, secret: str, expires_delta: timedelta) -> str:
+    def create_token(subject: str, secret: str, expires_delta: timedelta, session_id: Optional[str] = None) -> str:
         expire = datetime.now(timezone.utc) + expires_delta
         to_encode = {"exp": expire, "sub": str(subject)}
+        if session_id:
+            to_encode["sid"] = str(session_id)
         return jwt.encode(to_encode, secret, algorithm=settings.JWT_ALGORITHM)
 
     @staticmethod
-    async def create_session(db, user_id: str) -> Tuple[str, str]:
+    async def create_session(
+        db,
+        user_id: str,
+        request: Optional[Any] = None,
+        device_info: Optional[Dict[str, Any]] = None,
+        send_login_email: bool = True
+    ) -> Tuple[str, str]:
         """
         Canonical session creation across auth flows (Google, social, password, OTP):
-        Generates access token, persistent refresh token, and records hashed RefreshSession in DB.
+        Enforces SINGLE DEVICE LOGIN:
+        - Generates a unique session_id (sid).
+        - Revokes all prior refresh sessions for this user in DB.
+        - Sets active_session_id and active_device on the user doc in MongoDB.
+        - Dispatches MSG91 new device login email notification asynchronously using 'login_templete'.
         """
+        import asyncio
+        from app.services.msg91_email_service import Msg91EmailService
+
         now = datetime.now(timezone.utc)
-        access_token = create_access_token(subject=str(user_id))
-        refresh_token = AuthService.create_token(
-            str(user_id),
-            settings.JWT_REFRESH_SECRET,
-            timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        uid_str = str(user_id)
+        session_id = secrets.token_hex(16)
+
+        # 1. Parse client device and OS details from request or device_info
+        req_context = Msg91EmailService.extract_request_context(request) if request else {}
+        if device_info and isinstance(device_info, dict):
+            req_context.update(device_info)
+
+        dev_name = req_context.get("device") or req_context.get("deviceName") or "Web Browser"
+        os_name = req_context.get("os") or "Unknown OS"
+        ip_addr = req_context.get("ip") or req_context.get("ipAddress") or "127.0.0.1"
+        loc_str = req_context.get("location") or req_context.get("deviceLocation") or "Location unavailable"
+
+        active_device_data = {
+            "sessionId": session_id,
+            "device": dev_name,
+            "os": os_name,
+            "ip": ip_addr,
+            "location": loc_str,
+            "loggedInAt": now
+        }
+
+        # 2. Revoke ALL prior refresh sessions for this user in DB
+        await db["refresh_sessions"].update_many(
+            {"userId": uid_str, "isRevoked": False},
+            {"$set": {"isRevoked": True, "revokedReason": "new_login_on_another_device", "revokedAt": now}}
         )
+
+        # 3. Update active_session_id and active_device on user in both users and pending_users
+        u_filter = {"_id": ObjectId(uid_str)} if ObjectId.is_valid(uid_str) else {"_id": uid_str}
+        update_data = {
+            "active_session_id": session_id,
+            "active_device": active_device_data,
+            "last_login_at": now
+        }
+        await db["users"].update_one(u_filter, {"$set": update_data})
+        user_doc = await db["users"].find_one(u_filter)
+        if not user_doc:
+            await db["pending_users"].update_one(u_filter, {"$set": update_data})
+            user_doc = await db["pending_users"].find_one(u_filter)
+
+        # 4. Generate access token and refresh token containing the new session_id
+        access_token = create_access_token(subject=uid_str, session_id=session_id)
+        refresh_token = AuthService.create_token(
+            uid_str,
+            settings.JWT_REFRESH_SECRET,
+            timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+            session_id=session_id
+        )
+
+        # 5. Record new RefreshSession in DB
         rs = RefreshSession(
-            userId=str(user_id),
+            userId=uid_str,
             hashedToken=get_password_hash(hashlib.sha256(refresh_token.encode()).hexdigest()),
             expiresAt=now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
         )
-        await db['refresh_sessions'].insert_one(rs.model_dump(by_alias=True, exclude={'id'}))
+        rs_doc = rs.model_dump(by_alias=True, exclude={'id'})
+        rs_doc["sessionId"] = session_id
+        await db['refresh_sessions'].insert_one(rs_doc)
+
+        # 6. Dispatches MSG91 Login Notification Email asynchronously
+        if send_login_email and user_doc:
+            try:
+                asyncio.create_task(
+                    Msg91EmailService.send_login_notification_email(
+                        db=db,
+                        user_or_id=user_doc,
+                        request=request,
+                        location_data=req_context
+                    )
+                )
+            except Exception as e:
+                logger.warning(f"Could not launch login notification email task: {e}")
+
         return access_token, refresh_token
 
     @staticmethod

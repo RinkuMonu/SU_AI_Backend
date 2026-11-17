@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import secrets
 import urllib.parse
@@ -321,7 +322,7 @@ async def signup(request: Request, response: Response):
 
 @router.post("/verify-otp")
 @router.post("/otp/verify-phone")
-async def verify_otp(request: OTPVerifyRequest, response: Response = None):
+async def verify_otp(request: OTPVerifyRequest, http_request: Request = None, response: Response = None):
     identifier = request.phone_number or request.phone or request.mobile or (str(request.email) if request.email else None)
     if not identifier:
         raise HTTPException(
@@ -374,7 +375,7 @@ async def verify_otp(request: OTPVerifyRequest, response: Response = None):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification failed.")
 
     db = get_database()
-    jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id))
+    jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, str(user.id), request=http_request)
     # [OLD] if response:
     # [OLD]     set_refresh_cookie(response, jwt_refresh_token)
     # [NEW] Set BOTH cookies.
@@ -517,7 +518,7 @@ async def login(request: Request, response: Response):
             try:
                 from app.schemas.auth import LoginRequest
                 login_req = LoginRequest(email=email, password=password)
-                user, access_token, refresh_token = await AuthService.login(login_req)
+                user, access_token, refresh_token = await AuthService.login(login_req, request=request)
                 # [OLD] set_refresh_cookie(response, refresh_token)
                 # [NEW] Set BOTH cookies.
                 set_auth_cookies(response, access_token, refresh_token)
@@ -556,9 +557,15 @@ async def login(request: Request, response: Response):
                 return {
                     "success": True,
                     "message": "Logged in successfully",
-                    "token_type": "cookie",
+                    "access_token": access_token,
+                    "accessToken": access_token,
+                    "token": access_token,
+                    "token_type": "bearer",
                     "user": user_dict,
                     "data": {
+                        "access_token": access_token,
+                        "accessToken": access_token,
+                        "token": access_token,
                         "user": user_dict
                     }
                 }
@@ -566,7 +573,8 @@ async def login(request: Request, response: Response):
                 raise auth_exc
         raise auth_exc
 
-    access_token = create_access_token(subject=str(user.id))
+    db = get_database()
+    access_token, refresh_token = await AuthService.create_session(db, str(user.id), request=request)
     u_phone = getattr(user, "phone_number", None) or getattr(user, "phone", None)
     u_role = getattr(user, "role", None)
     u_pv = getattr(user, "phone_verified", False)
@@ -586,9 +594,6 @@ async def login(request: Request, response: Response):
     }
 
     try:
-        refresh_token = AuthService.create_token(str(user.id), settings.JWT_REFRESH_SECRET, timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS))
-        # [OLD] set_refresh_cookie(response, refresh_token)
-        # [NEW] Set BOTH cookies.
         set_auth_cookies(response, access_token, refresh_token)
     except Exception as e:
         logger.error(f"Failed to set auth cookies in login: {e}")
@@ -652,7 +657,10 @@ async def login(request: Request, response: Response):
     # [NEW] No access_token in body.
     return {
         "success": True,
-        "token_type": "cookie",
+        "access_token": access_token,
+        "accessToken": access_token,
+        "token": access_token,
+        "token_type": "bearer",
         "user": user_dict,
         "role": role,
         "requires_role_selection": requires_role,
@@ -665,6 +673,9 @@ async def login(request: Request, response: Response):
         "can_access_dashboard": onb_state["can_access_dashboard"],
         "next_step": onb_state["next_step"],
         "data": {
+            "access_token": access_token,
+            "accessToken": access_token,
+            "token": access_token,
             "user": user_dict,
             "role": role,
             "requires_role_selection": requires_role,
@@ -685,7 +696,7 @@ async def login(request: Request, response: Response):
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/token")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login_for_access_token(request: Request = None, form_data: OAuth2PasswordRequestForm = Depends()):
     user_in = UserLogin(username=form_data.username, password=form_data.password)
     try:
         user = await AuthService.authenticate_user(user_in)
@@ -695,7 +706,8 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             content={"detail": str(e), "code": "PHONE_NOT_VERIFIED"}
         )
 
-    access_token = create_access_token(subject=str(user.id))
+    db = get_database()
+    access_token, _ = await AuthService.create_session(db, str(user.id), request=request)
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -1773,6 +1785,7 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         phone_number=raw_phone,
         country_code=country_code,
         phone_verification_token=phone_verification_token,
+        request=request,
     )
 
     if request and "signup" in str(request.url.path) and response:
@@ -1816,6 +1829,8 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "token": access_token_jwt,
+        "access_token": access_token_jwt,
     }
 
     user_payload["online_presence"] = onb_state.get("online_presence")
@@ -1847,7 +1862,12 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "is_existing_user": is_existing,
         "user_exists": is_existing,
         "next_step": next_step,
-        "token_type": "cookie",
+        "token_type": "bearer",
+        "access_token": access_token_jwt,
+        "accessToken": access_token_jwt,
+        "token": access_token_jwt,
+        "refresh_token": refresh_token_jwt,
+        "refreshToken": refresh_token_jwt,
         "role": role,
         "requires_role_selection": requires_role,
         "dashboard_route": dashboard_route,
@@ -1859,6 +1879,11 @@ async def google_login(req: GoogleAuthLoginRequest, response: Response, request:
         "can_access_dashboard": onb_state["can_access_dashboard"],
         "user": user_payload,
         "data": {
+            "access_token": access_token_jwt,
+            "accessToken": access_token_jwt,
+            "token": access_token_jwt,
+            "refresh_token": refresh_token_jwt,
+            "refreshToken": refresh_token_jwt,
             "role": role,
             "requires_role_selection": requires_role,
             "dashboard_route": dashboard_route,
@@ -1968,6 +1993,8 @@ async def instagram_login(req: InstagramAuthLoginRequest, response: Response):
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "token": access_token_jwt,
+        "access_token": access_token_jwt,
     }
 
     # [OLD] return {
@@ -2058,6 +2085,8 @@ async def linkedin_login(req: LinkedInAuthLoginRequest, response: Response):
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "token": access_token_jwt,
+        "access_token": access_token_jwt,
     }
 
     # [OLD] return {
@@ -2375,6 +2404,8 @@ async def auth_facebook_login(
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "token": access_token_jwt,
+        "access_token": access_token_jwt,
     }
 
     return {
@@ -2462,6 +2493,8 @@ async def auth_instagram_login(
         "onboardingCompleted": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_completed": bool(getattr(user, "onboardingCompleted", False)),
         "onboarding_step": getattr(user, "onboarding_step", 1) or 1,
+        "token": access_token_jwt,
+        "access_token": access_token_jwt,
     }
 
     return {

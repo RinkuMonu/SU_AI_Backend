@@ -119,7 +119,8 @@ class GoogleService:
         mode: str = 'login',
         phone_number: Optional[str] = None,
         country_code: Optional[str] = None,
-        phone_verification_token: Optional[str] = None
+        phone_verification_token: Optional[str] = None,
+        request: Optional[Any] = None
     ) -> Tuple[User, str, str]:
         user_info = None
         client_id, _ = GoogleService.get_credentials()
@@ -264,7 +265,7 @@ class GoogleService:
                             user = User.from_mongo(user_doc)
                             user.phone_verified = True
                             user.id = user_id
-                            jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
+                            jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id, request=request)
                             return user, jwt_access_token, jwt_refresh_token
                         else:
                             raise HTTPException(
@@ -324,6 +325,6 @@ class GoogleService:
             logger.info(f"New user registered directly into users via Google: id={user.id}, email={email}")
 
         # Issue access & refresh tokens via canonical session creator
-        jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id)
+        jwt_access_token, jwt_refresh_token = await AuthService.create_session(db, user.id, request=request)
         return user, jwt_access_token, jwt_refresh_token
 

@@ -1,8 +1,8 @@
 import httpx
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone, timedelta
+from typing import Dict, Any, Optional, List, Tuple
 from bson import ObjectId
 
 from app.core.config import settings
@@ -45,7 +45,7 @@ class Msg91EmailService:
         from_email = (
             getattr(settings, "MSG91_FROM_EMAIL", None)
             or getattr(settings, "MSG91_EMAIL_FROM_EMAIL", None)
-            or f"no-reply@{domain}"
+            or f"DhandaGrow@{domain}"
         )
         if "{YOUR_REGISTERED_DOMAIN}" in str(from_email):
             from_email = from_email.replace("{YOUR_REGISTERED_DOMAIN}", domain)
@@ -448,52 +448,71 @@ class Msg91EmailService:
     # =========================================================================
 
     @classmethod
-    def _parse_device_from_user_agent(cls, user_agent: str) -> str:
-        """Parses human-friendly device & browser name from User-Agent string."""
+    def parse_device_and_os(cls, user_agent: str, custom_device: Optional[str] = None) -> Tuple[str, str]:
+        """Parses human-friendly device & browser name and OS from User-Agent or custom header."""
+        if custom_device:
+            return custom_device.strip(), "Mobile App"
+
         if not user_agent:
-            return "Standard Web Browser"
+            return "Web Browser", "Unknown OS"
 
         ua = user_agent.lower()
         browser = "Web Browser"
-        os_name = "Desktop"
+        os_name = "Desktop OS"
 
-        # Browser detection
+        # OS detection
+        if "windows nt 10.0" in ua:
+            os_name = "Windows 10/11"
+        elif "windows nt 6.3" in ua:
+            os_name = "Windows 8.1"
+        elif "windows" in ua:
+            os_name = "Windows"
+        elif "android" in ua:
+            os_name = "Android"
+        elif "iphone" in ua:
+            os_name = "iOS (iPhone)"
+        elif "ipad" in ua:
+            os_name = "iPadOS (iPad)"
+        elif "macintosh" in ua or "mac os" in ua:
+            os_name = "macOS"
+        elif "linux" in ua:
+            os_name = "Linux"
+        elif "cros" in ua:
+            os_name = "Chrome OS"
+
+        # Browser / Device detection
         if "edg/" in ua or "edge" in ua:
             browser = "Microsoft Edge"
         elif "chrome" in ua and "crios" not in ua and "android" not in ua:
             browser = "Google Chrome"
         elif "crios" in ua:
             browser = "Chrome Mobile"
+        elif "android" in ua and "chrome" in ua:
+            browser = "Chrome Mobile (Android)"
         elif "safari" in ua and "chrome" not in ua:
             browser = "Apple Safari"
         elif "firefox" in ua or "fxios" in ua:
             browser = "Mozilla Firefox"
         elif "opera" in ua or "opr/" in ua:
             browser = "Opera"
+        elif "okhttp" in ua or "dart" in ua:
+            browser = "Mobile App"
+        elif "mobile" in ua:
+            browser = "Mobile Browser"
 
-        # OS detection
-        if "windows" in ua:
-            os_name = "Windows"
-        elif "android" in ua:
-            os_name = "Android"
-        elif "iphone" in ua:
-            os_name = "iPhone"
-        elif "ipad" in ua:
-            os_name = "iPad"
-        elif "macintosh" in ua or "mac os" in ua:
-            os_name = "macOS"
-        elif "linux" in ua:
-            os_name = "Linux"
-
-        return f"{browser} on {os_name}"
+        return browser, os_name
 
     @classmethod
     def extract_request_context(cls, request: Any) -> Dict[str, Any]:
-        """Extracts client IP, device name, and reliable location headers if available."""
+        """Extracts client IP, device, OS, and location headers if available."""
         if not request:
             return {
+                "ip": "127.0.0.1",
                 "ipAddress": "127.0.0.1",
+                "device": "Web Browser",
                 "deviceName": "Web Browser",
+                "os": "Unknown OS",
+                "location": "Location unavailable",
                 "deviceLocation": "Location unavailable",
                 "lat": "",
                 "long": "",
@@ -511,27 +530,37 @@ class Msg91EmailService:
             or "127.0.0.1"
         )
 
-        # 2. User Agent / Device Name
+        # 2. User Agent / Device Name & OS
         user_agent = headers.get("user-agent", "")
-        device_name = cls._parse_device_from_user_agent(user_agent)
+        custom_device = headers.get("x-device-name") or headers.get("x-device-model") or headers.get("x-platform")
+        device_name, os_name = cls.parse_device_and_os(user_agent, custom_device)
 
         # 3. Location from verified headers if present
         city = headers.get("cf-ipcity") or headers.get("x-geo-city") or ""
         country = headers.get("cf-ipcountry") or headers.get("x-geo-country") or ""
+        region = headers.get("cf-region") or headers.get("x-geo-region") or ""
         lat = headers.get("cf-iplatitude") or headers.get("x-geo-latitude") or ""
         lon = headers.get("cf-iplongitude") or headers.get("x-geo-longitude") or ""
         pincode = headers.get("cf-postal-code") or headers.get("x-geo-postal-code") or ""
 
         if city and country:
             location_str = f"{city}, {country}"
+        elif region and country:
+            location_str = f"{region}, {country}"
         elif country:
-            location_str = country
+            location_str = "India" if str(country).upper() == "IN" else country
+        elif ip.startswith("127.") or ip.startswith("192.168.") or ip.startswith("10.") or ip == "::1":
+            location_str = "Local Network"
         else:
             location_str = "Location unavailable"
 
         return {
+            "ip": ip,
             "ipAddress": ip,
-            "deviceName": device_name,
+            "device": device_name,
+            "deviceName": f"{device_name} on {os_name}",
+            "os": os_name,
+            "location": location_str,
             "deviceLocation": location_str,
             "lat": lat,
             "long": lon,
@@ -547,9 +576,10 @@ class Msg91EmailService:
         location_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Dispatches 'login_notification_template_2' email notification after a successful login.
+        Dispatches 'login_templete' email notification after a successful login.
         Throttles duplicate login notifications from the same IP within 60 seconds.
-        Does not change existing authentication logic.
+        Variables sent match the user MSG91 template specification:
+        - company_name, variable, name, device, os, location, ip, time, secure_link, support_email, year
         """
         now = datetime.now(timezone.utc)
 
@@ -586,12 +616,17 @@ class Msg91EmailService:
         if location_data and isinstance(location_data, dict):
             req_meta.update({k: str(v) for k, v in location_data.items() if v is not None})
 
-        ip_addr = req_meta["ipAddress"]
+        ip_addr = req_meta.get("ip") or req_meta.get("ipAddress") or "127.0.0.1"
+        device_name = req_meta.get("device") or req_meta.get("deviceName") or "Web Browser"
+        os_name = req_meta.get("os") or "Desktop OS"
+        location_str = req_meta.get("location") or req_meta.get("deviceLocation") or "Location unavailable"
+
+        template_id = getattr(settings, "MSG91_LOGIN_TEMPLATE", None) or "login_templete"
 
         # 3. Duplicate prevention: throttle multiple login emails within 60s for the same user & IP
         one_min_ago = now - timedelta(seconds=60)
         recent_log = await db["msg91_email_logs"].find_one({
-            "template_id": "login_notification_template_2",
+            "template_id": template_id,
             "user_id": user_id,
             "ip_address": ip_addr,
             "status": "SENT",
@@ -601,26 +636,35 @@ class Msg91EmailService:
             logger.info("Recent login email already sent to user %s from IP %s. Skipping duplicate.", user_id, ip_addr)
             return {"success": True, "skipped": True, "status": "ALREADY_SENT", "message": "Throttled duplicate login email"}
 
-        # 4. Dynamic variables matching MSG91 template specification
-        # Format loginTime in clear, readable format (e.g. 03 Nov 2026, 04:55 PM IST)
-        # IST offset: +5:30
+        # 4. Dynamic variables matching MSG91 'login_templete' specification:
+        # company_name, variable, name, device, os, location, ip, time, secure_link, support_email, year
         ist_time = now + timedelta(hours=5, minutes=30)
         login_time_str = ist_time.strftime("%d %b %Y, %I:%M %p IST")
         current_year_str = str(now.year)
+        company_name = getattr(settings, "COMPANY_NAME", "DhandaGrow")
+        support_email = getattr(settings, "SUPPORT_EMAIL", "help@dhandagrow.com")
+        secure_link = getattr(settings, "SECURITY_URL", "https://dhandagrow.com/settings")
 
         variables = {
+            "company_name": company_name,
+            "variable": "Account Login Alert",
+            "name": user_name,
+            "device": device_name,
+            "os": os_name,
+            "location": location_str,
+            "ip": ip_addr,
+            "time": login_time_str,
+            "secure_link": secure_link,
+            "support_email": support_email,
+            "year": current_year_str,
+            # Backward-compatibility aliases
             "userName": user_name,
             "loginTime": login_time_str,
-            "deviceLocation": req_meta.get("deviceLocation") or "Location unavailable",
-            "lat": req_meta.get("lat") or "",
-            "long": req_meta.get("long") or "",
-            "pincode": req_meta.get("pincode") or "",
+            "deviceLocation": location_str,
+            "deviceName": f"{device_name} on {os_name}",
             "ipAddress": ip_addr,
-            "deviceName": req_meta.get("deviceName") or "Web Browser",
-            "currentYear": current_year_str
+            "currentYear": current_year_str,
         }
-
-        template_id = getattr(settings, "MSG91_LOGIN_TEMPLATE", "login_notification_template_2")
 
         # 5. Dispatch request to MSG91
         res = await cls._send_msg91_api(
