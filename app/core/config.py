@@ -231,8 +231,8 @@ class Settings(BaseSettings):
     # Legacy aliases
     MSG91_EMAIL_TEMPLATE_ID: str = "autopay_debit_initiated"
     MSG91_EMAIL_PAYMENT_FAILED_TEMPLATE_ID: str = "payment_failed_28"
-    MSG91_EMAIL_FROM_EMAIL: str = "no-reply@dhandagrow.com"
-    MSG91_EMAIL_FROM_NAME: str = "dhandagrow"
+    MSG91_EMAIL_FROM_EMAIL: str = "DhandaGrow@dhandagrow.com"
+    MSG91_EMAIL_FROM_NAME: str = "DhandaGrow"
     MSG91_EMAIL_DOMAIN: str = "dhandagrow.com"
     MSG91_EMAIL_REPLY_TO: Optional[str] = "dhandagrow@dhandagrow.com"
 
@@ -244,7 +244,7 @@ class Settings(BaseSettings):
 
     def get_msg91_from_email(self) -> str:
         domain = self.get_msg91_registered_domain()
-        return self.MSG91_FROM_EMAIL or self.MSG91_EMAIL_FROM_EMAIL or os.getenv("MSG91_FROM_EMAIL") or f"no-reply@{domain}"
+        return self.MSG91_FROM_EMAIL or self.MSG91_EMAIL_FROM_EMAIL or os.getenv("MSG91_FROM_EMAIL") or f"DhandaGrow@{domain}"
 
     _backend_env = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), ".env")
     model_config = SettingsConfigDict(env_file=(_backend_env, ".env"), env_file_encoding="utf-8", extra="allow")

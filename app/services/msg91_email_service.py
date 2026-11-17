@@ -40,6 +40,15 @@ class Msg91EmailService:
         return domain.strip()
 
     @classmethod
+    def get_from_name(cls) -> str:
+        name = (
+            getattr(settings, "MSG91_FROM_NAME", None)
+            or getattr(settings, "MSG91_EMAIL_FROM_NAME", None)
+            or "DhandaGrow"
+        )
+        return str(name).strip()
+
+    @classmethod
     def get_from_email(cls) -> str:
         domain = cls.get_registered_domain()
         from_email = (
@@ -75,6 +84,7 @@ class Msg91EmailService:
 
         domain = cls.get_registered_domain()
         from_email = cls.get_from_email()
+        from_name = cls.get_from_name()
 
         payload = {
             "recipients": [
@@ -89,6 +99,7 @@ class Msg91EmailService:
                 }
             ],
             "from": {
+                "name": from_name,
                 "email": from_email
             },
             "domain": domain,
