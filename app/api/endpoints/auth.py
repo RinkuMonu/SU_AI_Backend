@@ -1894,6 +1894,18 @@ async def google_callback(
     from fastapi.responses import RedirectResponse
     import urllib.parse
     frontend_base = settings.FRONTEND_URL or "http://localhost:3000"
+    if state and "origin_" in state:
+        try:
+            import base64
+            encoded_origin = state.split("origin_")[1].split("_")[0]
+            padding = len(encoded_origin) % 4
+            if padding:
+                encoded_origin += "=" * (4 - padding)
+            decoded_origin = base64.b64decode(encoded_origin).decode("utf-8").strip()
+            if decoded_origin.startswith("http://localhost:") or decoded_origin.startswith("http://127.0.0.1:") or "dhandagrow.com" in decoded_origin:
+                frontend_base = decoded_origin.rstrip("/")
+        except Exception:
+            pass
     if error:
         return RedirectResponse(url=f"{frontend_base}/login/user?error={error}")
     if code:

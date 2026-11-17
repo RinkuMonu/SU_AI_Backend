@@ -254,7 +254,7 @@ class CashfreeService:
                     },
                     "subscription_meta": {
                         "return_url": default_return_url,
-                        "notification_channel": ["EMAIL", "SMS"],
+                        "notification_channel": ["EMAIL"],
                         "payment_methods": "card,upi,enach"
                     }
                 }
@@ -266,8 +266,7 @@ class CashfreeService:
                             session_id = cf_data.get("subscription_session_id")
                             cf_sub_id = cf_data.get("cf_subscription_id")
                             gateway_flow = "subscription"
-                            if session_id:
-                                payment_url = f"https://payments.cashfree.com/order/#{session_id}" if is_prod else f"https://payments-test.cashfree.com/order/#{session_id}"
+                            payment_url = cf_data.get("payment_link") or cf_data.get("payment_url")
                             logger.info("Created Cashfree AutoPay subscription %s (session %s)", subscription_id, session_id)
                         else:
                             last_error_detail = res.text
@@ -295,8 +294,7 @@ class CashfreeService:
                             session_id = cf_data.get("payment_session_id")
                             cf_sub_id = str(cf_data.get("cf_order_id") or "")
                             gateway_flow = "order"
-                            if session_id:
-                                payment_url = f"https://payments.cashfree.com/order/#{session_id}" if is_prod else f"https://payments-test.cashfree.com/order/#{session_id}"
+                            payment_url = cf_data.get("payment_link") or cf_data.get("payment_url")
                             logger.info("Successfully created Cashfree PG Order %s with all payment methods: Cards, UPI, Netbanking (session %s)", subscription_id, session_id)
                         else:
                             logger.error("Cashfree order create returned %s: %s", res.status_code, res.text)
@@ -309,7 +307,7 @@ class CashfreeService:
                     last_error_detail = str(ord_err)
 
         # 2. Resilient Fallback: If Cashfree PG failed or returned no payment_url, try Finunique Payin
-        if not payment_url and getattr(settings, "PAYIN_URL", None) and getattr(settings, "PAYIN_TOKEN", None):
+        if not payment_url and not session_id and getattr(settings, "PAYIN_URL", None) and getattr(settings, "PAYIN_TOKEN", None):
             try:
                 from app.services.payin_service import PayinService
                 payin_res = await PayinService.create_payment(
@@ -343,7 +341,7 @@ class CashfreeService:
             except Exception as payin_err:
                 logger.error("Finunique Payin fallback failed: %s", payin_err)
 
-        if not payment_url:
+        if not payment_url and not session_id:
             detail_msg = last_error_detail or "Payment gateway temporarily unavailable. Please retry shortly."
             raise HTTPException(status_code=502, detail=f"Payment gateway error: {detail_msg}")
 

@@ -197,15 +197,10 @@ class OpenAIFashionService:
 
 
             if b64_data:
-
                 import base64
-            local_file.parent.mkdir(parents=True, exist_ok=True)
-
-
+                local_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(local_file, "wb") as f:
-
                     f.write(base64.b64decode(b64_data))
-
                 download_ok = True
 
             elif img_res.get("url"):
