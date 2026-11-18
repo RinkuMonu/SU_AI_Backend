@@ -141,10 +141,10 @@ async def get_current_user(
         if user_doc is None:
             raise credentials_exception
 
-    # Enforce Single Device Login Session Check
+    # Enforce Single Device Login Session Check (exempt admin accounts and system tokens)
     token_sid = payload.get("sid") or payload.get("session_id")
     active_sid = user_doc.get("active_session_id")
-    if active_sid:
+    if active_sid and user_doc.get("role") != "admin" and not payload.get("system_admin"):
         if not token_sid or str(token_sid) != str(active_sid):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
