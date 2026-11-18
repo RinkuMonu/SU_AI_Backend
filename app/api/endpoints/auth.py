@@ -390,6 +390,20 @@ async def verify_otp(request: OTPVerifyRequest, http_request: Request = None, re
     requires_role = onb_state["requires_role_selection"]
     dashboard_route = onb_state["dashboard_route"]
 
+    if onb_state.get("onboarding_completed") and not getattr(user, "onboardingCompleted", False):
+        try:
+            await db["users"].update_one(
+                {"_id": ObjectId(str(user.id))},
+                {"$set": {
+                    "onboardingCompleted": True,
+                    "onboarding_completed": True,
+                    "onboarding_status": "completed",
+                    "role": role or "businessman"
+                }}
+            )
+        except Exception as sync_err:
+            logger.debug(f"Could not persist onboarding completion in verify_otp: {sync_err}")
+
     user_resp = UserResponse(
         id=str(user.id),
         name=user.name,
@@ -607,6 +621,20 @@ async def login(request: Request, response: Response):
     requires_role = onb_state["requires_role_selection"]
     dashboard_route = onb_state["dashboard_route"]
 
+    if onb_state.get("onboarding_completed") and not getattr(user, "onboardingCompleted", False):
+        try:
+            await db["users"].update_one(
+                {"_id": ObjectId(str(user.id))},
+                {"$set": {
+                    "onboardingCompleted": True,
+                    "onboarding_completed": True,
+                    "onboarding_status": "completed",
+                    "role": role or "businessman"
+                }}
+            )
+        except Exception as sync_err:
+            logger.debug(f"Could not persist onboarding completion in verify_otp: {sync_err}")
+
     user_dict["online_presence"] = onb_state.get("online_presence")
     user_dict["onboarding_step"] = onb_state.get("onboarding_step", 1)
     user_dict["onboarding_status"] = onb_state.get("onboarding_status", "not_started")
@@ -795,6 +823,10 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
     )
     username = doc.get("username") or (prof.get("username") if prof else None)
 
+    onb_state = OnboardingService.determine_state(doc, biz)
+    is_completed_val = bool(onb_state.get("onboarding_completed", False))
+    resolved_role = onb_state.get("role") or doc.get("role") or "businessman"
+
     user_dict = {
         "id": uid,
         "_id": uid,
@@ -808,8 +840,8 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "phone": user_phone,
         "contactNumber": user_phone,
         "phone_verified": phone_verified,
-        "accountType": doc.get("accountType", "personal" if doc.get("role") == "influencer" else "business"),
-        "role": doc.get("role", "businessman") or "businessman",
+        "accountType": doc.get("accountType", "personal" if resolved_role == "influencer" else "business"),
+        "role": resolved_role,
         "emailVerified": email_ver,
         "email_verified": email_ver,
         "isVerified": email_ver,
@@ -819,9 +851,28 @@ async def get_me(current_user: CurrentUser = Depends(get_current_user)):
         "preferredLanguage": doc.get("preferredLanguage"),
         "businessName": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("businessName") or doc.get("business_name")),
         "business_name": (biz.get("name") or biz.get("businessName") or biz.get("business_name")) if biz else (doc.get("business_name") or doc.get("businessName")),
-        "onboardingCompleted": doc.get("onboardingCompleted", False),
-        "onboarding_step": doc.get("onboarding_step", 1),
+        "onboardingCompleted": is_completed_val,
+        "onboarding_completed": is_completed_val,
+        "is_completed": is_completed_val,
+        "onboarding_status": onb_state.get("onboarding_status", "completed" if is_completed_val else "not_started"),
+        "onboarding_step": onb_state.get("onboarding_step", 1),
+        "can_access_dashboard": onb_state.get("can_access_dashboard", is_completed_val),
+        "dashboard_route": onb_state.get("dashboard_route", "/dashboard/business"),
     }
+
+    if is_completed_val and not doc.get("onboardingCompleted"):
+        try:
+            await db["users"].update_one(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "onboardingCompleted": True,
+                    "onboarding_completed": True,
+                    "onboarding_status": "completed",
+                    "role": resolved_role
+                }}
+            )
+        except Exception as upd_err:
+            logger.debug(f"Could not sync user onboardingCompleted flag in get_me: {upd_err}")
 
     return {
         **user_dict,

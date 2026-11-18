@@ -96,6 +96,16 @@ class OnboardingService:
             elif r not in ["", "none", "null", "user"]:
                 role = r
 
+        # Auto-detect businessman if user has a business document or business name in DB
+        has_existing_business = bool(
+            (business_doc and (business_doc.get("name") or business_doc.get("businessName") or business_doc.get("business_name"))) or
+            user_doc.get("businessName") or
+            user_doc.get("business_name") or
+            user_doc.get("business_id")
+        )
+        if not role and has_existing_business:
+            role = "businessman"
+
         # 1. No role selected yet
         if not role:
             return {
@@ -124,11 +134,12 @@ class OnboardingService:
         if role == "influencer":
             is_completed = bool(
                 user_doc.get("influencer_onboarding_completed", False) or
+                user_doc.get("onboardingCompleted", False) or
+                user_doc.get("onboarding_completed", False) or
+                str(user_doc.get("onboarding_status", "")).lower() == "completed" or
                 (
                     user_doc.get("role") == "influencer" and
-                    bool(user_doc.get("onboardingCompleted", False) or user_doc.get("onboarding_completed", False)) and
-                    int(user_doc.get("onboarding_step", 1) or 1) >= 7 and
-                    str(user_doc.get("onboarding_status", "")).lower() == "completed"
+                    int(user_doc.get("onboarding_step", 1) or 1) >= 7
                 )
             )
             step = int(user_doc.get("onboarding_step", 1) or 1)
@@ -179,8 +190,12 @@ class OnboardingService:
 
         # 3. Businessman role
         is_completed = bool(
-            user_doc.get("onboardingCompleted", False) or
-            user_doc.get("onboarding_completed_at")
+            user_doc.get("onboardingCompleted") is True or
+            user_doc.get("onboarding_completed") is True or
+            user_doc.get("is_completed") is True or
+            str(user_doc.get("onboarding_status", "")).lower() == "completed" or
+            user_doc.get("onboarding_completed_at") or
+            has_existing_business
         )
 
         online_presence = (
@@ -219,15 +234,16 @@ class OnboardingService:
         onboarding_step = user_doc.get("onboarding_step", 1) or 1
 
         if is_completed:
+            presence_val = online_presence or "website"
             return {
                 "role": "businessman",
                 "onboarding_status": "completed",
                 "onboarding_step": max(onboarding_step, 2),
-                "online_presence": online_presence,
-                "canonical_presence": canonical_presence,
-                "business_source": business_source,
-                "presence": online_presence,
-                "business_type": business_type or online_presence,
+                "online_presence": presence_val,
+                "canonical_presence": canonical_presence or presence_val,
+                "business_source": business_source or presence_val,
+                "presence": presence_val,
+                "business_type": business_type or presence_val,
                 "selling_model": selling_model,
                 "selected_platforms": selected_platforms,
                 "selected_services": selected_services,

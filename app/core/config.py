@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     CASHFREE_SECRET_KEY: str = ""
     CASHFREE_ENV: str = "PROD"
     CASHFREE_API_VERSION: str = "2023-08-01"
-    CASHFREE_FLOW: str = "ORDER"
+    CASHFREE_FLOW: str = "SUBSCRIPTION"
     CASHFREE_RETURN_URL: Optional[str] = None
     
     GEOAPIFY_API_KEY: str = ""

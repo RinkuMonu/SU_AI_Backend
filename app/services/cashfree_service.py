@@ -218,24 +218,24 @@ class CashfreeService:
         subscription_id = f"SUB_{uuid.uuid4().hex[:12].upper()}"
         default_return_url = cls._build_return_url(return_url, subscription_id)
 
-        # 1. Primary Flow: Cashfree Payment Gateway Orders API
-        # Provides complete multi-channel checkout: Credit Cards, Debit Cards, UPI (QR, Apps, ID), Net Banking, and Wallets.
-        # This completely resolves the missing card options issue caused by recurring mandate card restrictions.
+        # 1. Primary Flow: Official Cashfree Subscriptions & AutoPay (Recurring Mandates)
+        # Sets up recurring UPI AutoPay, Cards Standing Instructions, and eNACH mandates.
+        # Cashfree Orders API is kept strictly as a fallback if subscriptions mandate fails.
         payment_url = None
         session_id = None
         cf_sub_id = None
         cf_data = {}
         last_error_detail = None
-        gateway_flow = "order"
+        gateway_flow = "subscription"
 
         if settings.CASHFREE_APP_ID and settings.CASHFREE_SECRET_KEY:
             base_url = cls.get_base_url()
             headers = cls.get_headers()
             is_prod = (settings.CASHFREE_ENV or "TEST").upper() == "PROD"
-            cf_flow = getattr(settings, "CASHFREE_FLOW", "ORDER").upper()
+            cf_flow = getattr(settings, "CASHFREE_FLOW", "SUBSCRIPTION").upper()
 
             if cf_flow == "SUBSCRIPTION":
-                # Optional pure recurring mandate flow if explicitly configured
+                # Primary AutoPay recurring mandate flow
                 try:
                     cf_plan_id = await cls.ensure_cashfree_plan(normalized_plan, cycle, plan, recurring_total)
                 except Exception as plan_err:
@@ -250,12 +250,11 @@ class CashfreeService:
                     "customer_details": customer_details,
                     "authorization_details": {
                         "authorization_amount": recurring_total,
-                        "payment_methods": ["card", "upi", "enach"] if recurring_total <= 15000.0 else ["enach", "card", "upi"]
+                        "payment_methods": ["upi", "card", "enach"] if recurring_total <= 15000.0 else ["enach", "card", "upi"]
                     },
                     "subscription_meta": {
                         "return_url": default_return_url,
-                        "notification_channel": ["EMAIL"],
-                        "payment_methods": "card,upi,enach"
+                        "notification_channel": ["EMAIL"]
                     }
                 }
                 try:
@@ -270,10 +269,12 @@ class CashfreeService:
                             logger.info("Created Cashfree AutoPay subscription %s (session %s)", subscription_id, session_id)
                         else:
                             last_error_detail = res.text
+                            logger.warning("Cashfree subscriptions API returned %s: %s; falling back to Orders API", res.status_code, res.text)
                 except Exception as sub_err:
                     last_error_detail = str(sub_err)
+                    logger.error("Cashfree subscriptions API exception: %s", sub_err)
 
-            # Standard & Default Flow: Cashfree PG Orders (Cards + UPI + NetBanking + Wallets enabled)
+            # Secondary Fallback Flow: Cashfree PG Orders (Cards + UPI + NetBanking + Wallets enabled)
             if not session_id:
                 order_payload = {
                     "order_id": subscription_id,
@@ -649,39 +650,75 @@ class CashfreeService:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 cf_status = None
-                
-                # Check Orders API first (Cashfree PG orders)
-                res = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
-                if res.status_code == 200:
-                    cf_data = res.json()
-                    order_status = (cf_data.get("order_status") or "").upper()
-                    if order_status == "PAID":
-                        cf_status = "ACTIVE"
-                    elif order_status in ["EXPIRED", "TERMINATED", "FAILED"]:
-                        cf_status = "FAILED"
-                    else:
-                        cf_status = order_status
+                is_sub_flow = (
+                    record.get("gateway_flow") == "subscription"
+                    or str(subscription_id).startswith("SUB_")
+                    or bool(record.get("cf_subscription_id"))
+                )
 
-                    if cf_status == "ACTIVE":
-                        try:
-                            pay_res = await client.get(f"{base_url}/orders/{subscription_id}/payments", headers=headers)
-                            if pay_res.status_code == 200:
-                                payments_list = pay_res.json()
-                                if isinstance(payments_list, list) and payments_list:
-                                    cf_payment_details = next(
-                                        (p for p in payments_list if (p.get("payment_status") or "").upper() == "SUCCESS"),
-                                        payments_list[0]
-                                    )
-                        except Exception as pay_err:
-                            logger.warning("Could not fetch detailed payments for order %s: %s", subscription_id, pay_err)
+                # Prioritize checking Subscriptions API when flow is a recurring mandate
+                if is_sub_flow:
+                    res_sub = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
+                    if res_sub.status_code == 200:
+                        cf_data_sub = res_sub.json()
+                        sub_details = cf_data_sub.get("subscription_details") or cf_data_sub
+                        sub_stat = (sub_details.get("subscription_status") or sub_details.get("status") or "").upper()
+                        auth_det = sub_details.get("authorization_details") or {}
+                        auth_stat = (auth_det.get("authorization_status") or "").upper()
 
-                # Fallback to Subscriptions API (recurring mandates)
+                        if sub_stat in ["ACTIVE", "AUTHENTICATED", "PAID", "SUCCESS"] or auth_stat in ["SUCCESS", "ACTIVE"]:
+                            cf_status = "ACTIVE"
+                        elif sub_stat in ["FAILED", "CANCELLED", "TERMINATED", "REJECTED", "EXPIRED"] or auth_stat in ["FAILED", "USER_DROPPED"]:
+                            cf_status = "FAILED"
+                        else:
+                            cf_status = sub_stat or auth_stat or "INITIALIZED"
+
+                        if auth_det:
+                            pay_method = auth_det.get("payment_method") or "AutoPay Mandate"
+                            bank_ref = (
+                                auth_det.get("authorization_reference")
+                                or auth_det.get("payment_id")
+                                or str(sub_details.get("cf_subscription_id") or "")
+                            )
+                            cf_payment_details = {
+                                "payment_group": f"AutoPay ({pay_method.upper()})" if pay_method else "AutoPay Mandate",
+                                "bank_reference": bank_ref,
+                                "cf_payment_id": auth_det.get("payment_id") or sub_details.get("cf_subscription_id")
+                            }
+
+                # If not a subscription or Subscriptions check didn't return a status, check Orders API
                 if not cf_status:
-                    res2 = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
-                    if res2.status_code == 200:
-                        cf_data2 = res2.json()
-                        cf_data2 = cf_data2.get("subscription_details") or cf_data2
-                        cf_status = (cf_data2.get("subscription_status") or cf_data2.get("status") or "").upper()
+                    res_ord = await client.get(f"{base_url}/orders/{subscription_id}", headers=headers)
+                    if res_ord.status_code == 200:
+                        cf_data_ord = res_ord.json()
+                        order_status = (cf_data_ord.get("order_status") or "").upper()
+                        if order_status == "PAID":
+                            cf_status = "ACTIVE"
+                        elif order_status in ["EXPIRED", "TERMINATED", "FAILED"]:
+                            cf_status = "FAILED"
+                        else:
+                            cf_status = order_status
+
+                        if cf_status == "ACTIVE":
+                            try:
+                                pay_res = await client.get(f"{base_url}/orders/{subscription_id}/payments", headers=headers)
+                                if pay_res.status_code == 200:
+                                    payments_list = pay_res.json()
+                                    if isinstance(payments_list, list) and payments_list:
+                                        cf_payment_details = next(
+                                            (p for p in payments_list if (p.get("payment_status") or "").upper() == "SUCCESS"),
+                                            payments_list[0]
+                                        )
+                            except Exception as pay_err:
+                                logger.warning("Could not fetch detailed payments for order %s: %s", subscription_id, pay_err)
+
+                # Fallback check Subscriptions API if not checked yet
+                if not cf_status and not is_sub_flow:
+                    res_sub_fb = await client.get(f"{base_url}/subscriptions/{subscription_id}", headers=headers)
+                    if res_sub_fb.status_code == 200:
+                        cf_data_sub = res_sub_fb.json()
+                        sub_details = cf_data_sub.get("subscription_details") or cf_data_sub
+                        cf_status = (sub_details.get("subscription_status") or sub_details.get("status") or "").upper()
 
                 prev_status = record.get("status")
                 if cf_status:

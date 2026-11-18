@@ -188,9 +188,20 @@ async def get_onboarding_status(current_user=Depends(get_current_user)):
             )
         )
     else:
+        has_business = bool(
+            business_completed or
+            (business_doc and (business_doc.get("name") or business_doc.get("businessName") or business_doc.get("business_name"))) or
+            (user_doc and (user_doc.get("businessName") or user_doc.get("business_name")))
+        )
         is_overall_completed = bool(
-            user_doc.get("onboardingCompleted", False) or
-            user_doc.get("onboarding_completed_at") or
+            (user_doc and (
+                user_doc.get("onboardingCompleted") is True or
+                user_doc.get("onboarding_completed") is True or
+                user_doc.get("is_completed") is True or
+                str(user_doc.get("onboarding_status", "")).lower() == "completed" or
+                user_doc.get("onboarding_completed_at")
+            )) or
+            has_business or
             (business_completed and (is_social_completed or is_social_skipped) and (is_plan_completed or is_plan_skipped))
         )
 
