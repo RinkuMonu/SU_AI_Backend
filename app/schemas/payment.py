@@ -212,6 +212,32 @@ class CashfreeSubscriptionVerifyRequest(BaseModel):
     subscription_id: Optional[str] = None
     order_id: Optional[str] = None
 
+class CashfreeOrderCreateRequest(BaseModel):
+    plan_id: str = Field(..., description="Plan ID: PRO_STARTER, PRO_PLUS, BUSINESS, or BUSINESS_PREMIUM")
+    billing_cycle: Optional[str] = Field("monthly", description="monthly, quarterly, or yearly")
+    customer_phone: Optional[str] = Field(None, description="10-digit customer mobile number")
+    return_url: Optional[str] = Field(None, description="Frontend redirect URL after payment")
+
+class CashfreeOrderResponse(BaseModel):
+    success: bool
+    order_id: str
+    cf_order_id: Optional[str] = None
+    transaction_id: Optional[str] = None
+    payment_session_id: Optional[str] = None
+    payment_url: Optional[str] = None
+    status: str
+    amount: float
+    base_amount: Optional[float] = None
+    gst_rate: Optional[float] = None
+    gst_percentage: Optional[float] = None
+    gst_amount: Optional[float] = None
+    total_payable: Optional[float] = None
+    currency: Optional[str] = "INR"
+    plan_id: str
+    plan_name: Optional[str] = None
+    billing_cycle: Optional[str] = "monthly"
+    environment: Optional[str] = "production"
+
 class WebhookResponse(BaseModel):
     success: bool
     message: str

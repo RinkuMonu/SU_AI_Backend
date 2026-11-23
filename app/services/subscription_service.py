@@ -320,7 +320,11 @@ class SubscriptionService:
         existing_signup_bonus = await tx_col.find_one({
             "user_id": user_id,
             "transaction_type": "grant",
-            "reference_id": signup_bonus_ref,
+            "$or": [
+                {"reference_id": signup_bonus_ref},
+                {"bonus_reference": signup_bonus_ref},
+                {"feature": "paid_signup_bonus"}
+            ]
         })
         if not existing_signup_bonus:
             existing_signup_bonus = await db["subscription_history"].find_one({
@@ -396,7 +400,8 @@ class SubscriptionService:
                         "transaction_type": "grant",
                         "amount": signup_bonus,
                         "feature": "paid_signup_bonus",
-                        "reference_id": signup_bonus_ref,
+                        "reference_id": credit_ref,
+                        "bonus_reference": signup_bonus_ref,
                         "balance_before": monthly_credits,
                         "balance_after": credits_granted,
                         "created_at": now,

@@ -12,6 +12,8 @@ from app.schemas.payment import (
     CashfreeSubscriptionResponse,
     CashfreeSubscriptionStatusResponse,
     CashfreeSubscriptionVerifyRequest,
+    CashfreeOrderCreateRequest,
+    CashfreeOrderResponse,
     WebhookResponse,
     PaymentCreateRequest,
     PaymentCreateResponse,
@@ -268,6 +270,74 @@ async def reset_test_plan_endpoint(
 
     result = await PayinService.reset_test_subscription(db, target_user_id, admin_override=admin_override)
     return TestPlanResetResponse(**result)
+
+
+# ---------------------------------------------------------------------------
+# Cashfree Payment Gateway Orders Endpoints
+# ---------------------------------------------------------------------------
+
+@router.post("/cashfree/order/create", response_model=CashfreeOrderResponse)
+@router.post("/cashfree/create", response_model=CashfreeOrderResponse)
+async def create_cashfree_order(
+    request: CashfreeOrderCreateRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Create a Cashfree payment order (Cards, UPI, NetBanking, Wallets).
+    Returns unique order_id, transaction_id, and payment_session_id for checkout.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    user_email = current_user.get("email", "user@example.com")
+    user_name = current_user.get("name") or current_user.get("fullName") or "Subscriber"
+    user_phone = request.customer_phone or current_user.get("phone") or current_user.get("phone_number")
+
+    result = await CashfreeService.create_order(
+        db=db,
+        user_id=user_id,
+        user_email=user_email,
+        plan_id=request.plan_id,
+        billing_cycle=request.billing_cycle or "monthly",
+        user_name=user_name,
+        user_phone=user_phone,
+        return_url=request.return_url
+    )
+    return result
+
+
+@router.get("/cashfree/order/{order_id}", response_model=PaymentVerifyResponse)
+async def get_cashfree_order_status(
+    order_id: str,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Retrieve and verify Cashfree payment order status.
+    """
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    return await CashfreeService.verify_order(
+        db=db,
+        order_id=order_id,
+        current_user_id=user_id
+    )
+
+
+@router.post("/cashfree/order/verify", response_model=PaymentVerifyResponse)
+async def verify_cashfree_order(
+    request: PaymentVerifyRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Database = Depends(get_database)
+):
+    """
+    Client-triggered server-side order verification with Cashfree.
+    """
+    order_id = request.order_id.strip()
+    user_id = str(current_user.get("id") or current_user.get("_id") or "")
+    return await CashfreeService.verify_order(
+        db=db,
+        order_id=order_id,
+        current_user_id=user_id
+    )
 
 
 # ---------------------------------------------------------------------------

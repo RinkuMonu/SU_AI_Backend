@@ -31,26 +31,24 @@ class CashfreeService:
 
         is_prod = (settings.CASHFREE_ENV or "TEST").upper() == "PROD"
 
-        if is_prod:
-            # Cashfree Subscriptions and Orders APIs strictly mandate HTTPS for all URLs in production
+        if "localhost" in url.lower() or "127.0.0.1" in url:
+            if url.startswith("https://localhost"):
+                url = "http://" + url[len("https://"):]
+            elif url.startswith("https://127.0.0.1"):
+                url = "http://" + url[len("https://"):]
+            elif not url.startswith("http://"):
+                url = f"http://{url.lstrip('/')}"
+        elif is_prod:
+            # Cashfree Subscriptions and Orders APIs strictly mandate HTTPS for all public URLs in production
             if url.startswith("http://"):
                 url = "https://" + url[len("http://"):]
             elif not url.startswith("https://"):
                 url = f"https://{url.lstrip('/')}"
         else:
-            # For Sandbox / TEST local development, keep http:// for localhost so browser doesn't hit ERR_SSL_PROTOCOL_ERROR
-            if "localhost" in url.lower() or "127.0.0.1" in url:
-                if url.startswith("https://localhost"):
-                    url = "http://" + url[len("https://"):]
-                elif url.startswith("https://127.0.0.1"):
-                    url = "http://" + url[len("https://"):]
-                elif not url.startswith("http://"):
-                    url = f"http://{url.lstrip('/')}"
-            else:
-                if url.startswith("http://"):
-                    url = "https://" + url[len("http://"):]
-                elif not url.startswith("https://"):
-                    url = f"https://{url.lstrip('/')}"
+            if url.startswith("http://"):
+                url = "https://" + url[len("http://"):]
+            elif not url.startswith("https://"):
+                url = f"https://{url.lstrip('/')}"
 
         return url
 
@@ -155,6 +153,402 @@ class CashfreeService:
 
             logger.error("Failed to create Cashfree plan %s: %s %s", cf_plan_id, create_res.status_code, create_res.text)
             raise HTTPException(status_code=502, detail=f"Failed to register billing plan with Cashfree: {create_res.text}")
+
+    @classmethod
+    async def create_order(
+        cls,
+        db,
+        user_id: str,
+        user_email: str,
+        plan_id: str,
+        billing_cycle: str = "monthly",
+        user_name: Optional[str] = None,
+        user_phone: Optional[str] = None,
+        return_url: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Creates an official Cashfree PG Order (Cards, UPI, NetBanking, Wallets)
+        following Cashfree API version 2023-08-01.
+        Returns unique order_id, transaction_id, and payment_session_id for checkout.
+        """
+        if not settings.CASHFREE_APP_ID or not settings.CASHFREE_SECRET_KEY:
+            raise HTTPException(status_code=500, detail="Cashfree payment gateway configuration missing")
+
+        normalized_plan = (plan_id or "").upper().strip()
+        if normalized_plan not in PLANS:
+            raise HTTPException(status_code=400, detail="Invalid plan selected")
+
+        plan = PLANS[normalized_plan]
+        if plan.get("price", 0) == 0:
+            raise HTTPException(status_code=400, detail="Cannot create payment for FREE plan")
+
+        cycle = (billing_cycle or "monthly").lower().strip()
+        if cycle not in ["monthly", "quarterly", "yearly"]:
+            raise HTTPException(status_code=400, detail="Invalid billing cycle. Must be monthly, quarterly, or yearly")
+
+        # Determine pricing
+        cycle_pricing = plan.get("billing_cycles", {}).get(cycle)
+        if cycle_pricing and "price" in cycle_pricing:
+            base_amount = float(cycle_pricing["price"])
+        else:
+            base_amount = float(plan.get("base_price", plan["price"]))
+
+        # Decimal-safe 18% GST calculation
+        gst_info = calculate_plan_gst(base_amount)
+        gst_rate = gst_info["gst_rate"]
+        gst_percentage = gst_info["gst_percentage"]
+        gst_amount = gst_info["gst_amount"]
+        total_amount = gst_info["total_payable"]
+
+        # Clean customer phone (Cashfree requires valid phone, fallback to default 10-digit if absent)
+        phone = "".join(filter(str.isdigit, str(user_phone or "")))
+        if len(phone) < 10:
+            phone = "9999999999"
+        else:
+            phone = phone[-10:]
+
+        clean_email = (user_email or "").strip()
+        if not clean_email or "@" not in clean_email:
+            clean_email = f"user_{user_id[:12]}@dhandagrow.com"
+
+        customer_details = {
+            "customer_id": f"CUST_{user_id[:20]}",
+            "customer_name": (user_name or "Subscriber").strip()[:50],
+            "customer_email": clean_email,
+            "customer_phone": phone
+        }
+
+        order_id = f"ORDER_CF_{uuid.uuid4().hex[:12].upper()}"
+        default_return_url = cls._build_return_url(return_url, order_id)
+        notify_url = getattr(settings, "CASHFREE_WEBHOOK_URL", None) or f"{(settings.BACKEND_URL or 'https://api.dhandagrow.com').rstrip('/')}/api/v1/payments/cashfree/webhook"
+
+        order_payload = {
+            "order_id": order_id,
+            "order_amount": float(total_amount),
+            "order_currency": plan.get("currency", "INR"),
+            "customer_details": customer_details,
+            "order_meta": {
+                "return_url": default_return_url,
+                "notify_url": notify_url
+            },
+            "order_note": f"DhandaGrow {plan.get('name', normalized_plan)} Plan ({cycle.capitalize()})"
+        }
+
+        base_url = cls.get_base_url()
+        headers = cls.get_headers()
+
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            res = await client.post(f"{base_url}/orders", json=order_payload, headers=headers)
+            if res.status_code not in [200, 201]:
+                logger.error("Cashfree order create failed %s: %s", res.status_code, res.text)
+                err_msg = res.text
+                try:
+                    err_json = res.json()
+                    err_msg = err_json.get("message") or res.text
+                except Exception:
+                    pass
+                raise HTTPException(status_code=502, detail=f"Cashfree order creation failed: {err_msg}")
+
+            cf_data = res.json()
+
+        session_id = cf_data.get("payment_session_id")
+        cf_order_id = str(cf_data.get("cf_order_id") or "")
+        payment_url = cf_data.get("payment_link") or cf_data.get("payment_url")
+        order_status = cf_data.get("order_status", "ACTIVE")
+
+        now = datetime.now(timezone.utc)
+        from app.services.payin_service import PayinService
+        try:
+            tx_seq_id = await PayinService.generate_transaction_id(db)
+        except Exception:
+            tx_seq_id = f"GROWG{uuid.uuid4().hex[:6].upper()}"
+
+        tx_record = {
+            "transaction_id": tx_seq_id,
+            "order_id": order_id,
+            "cf_order_id": cf_order_id,
+            "payment_session_id": session_id,
+            "user_id": user_id,
+            "user_email": clean_email,
+            "user_name": user_name or "Subscriber",
+            "user_phone": phone,
+            "plan_id": normalized_plan,
+            "plan_name": plan.get("name", normalized_plan),
+            "billing_cycle": cycle,
+            "amount": total_amount,
+            "base_amount": base_amount,
+            "gst_amount": gst_amount,
+            "gst_rate": gst_rate,
+            "gst_percentage": gst_percentage,
+            "total_payable": total_amount,
+            "currency": "INR",
+            "payment_mode": "Cards / UPI / NetBanking",
+            "payment_gateway": "Cashfree Payment Gateway",
+            "payment_provider": "cashfree",
+            "status": "pending",
+            "payment_url": payment_url,
+            "created_at": now,
+            "updated_at": now
+        }
+        await db["payment_transactions"].insert_one(tx_record)
+
+        sub_record = {
+            "user_id": user_id,
+            "customer_email": clean_email,
+            "subscription_id": order_id,
+            "order_id": order_id,
+            "cf_order_id": cf_order_id,
+            "payment_session_id": session_id,
+            "gateway_flow": "order",
+            "payment_url": payment_url,
+            "plan_id": normalized_plan,
+            "plan_name": plan.get("name"),
+            "billing_cycle": cycle,
+            "amount": total_amount,
+            "auth_amount": total_amount,
+            "recurring_amount": total_amount,
+            "base_amount": base_amount,
+            "gst_amount": gst_amount,
+            "gst_rate": gst_rate,
+            "gst_percentage": gst_percentage,
+            "total_payable": total_amount,
+            "currency": plan.get("currency", "INR"),
+            "status": "INITIALIZED",
+            "created_at": now,
+            "updated_at": now,
+            "raw_init_response": cf_data
+        }
+        await db["payment_subscriptions"].insert_one(sub_record)
+
+        # Dispatch non-blocking payment initiated notification email
+        try:
+            from app.services.msg91_email_service import Msg91EmailService
+            asyncio.create_task(Msg91EmailService.send_auto_debit_initiated_email(db, tx_record))
+        except Exception as mail_err:
+            logger.warning("Could not queue payment initiated email: %s", mail_err)
+
+        return {
+            "success": True,
+            "order_id": order_id,
+            "cf_order_id": cf_order_id,
+            "transaction_id": tx_seq_id,
+            "payment_session_id": session_id,
+            "payment_url": payment_url,
+            "status": order_status,
+            "amount": total_amount,
+            "base_amount": base_amount,
+            "gst_rate": gst_rate,
+            "gst_percentage": gst_percentage,
+            "gst_amount": gst_amount,
+            "total_payable": total_amount,
+            "currency": "INR",
+            "plan_id": normalized_plan,
+            "plan_name": plan.get("name", normalized_plan),
+            "billing_cycle": cycle,
+            "environment": "production" if (settings.CASHFREE_ENV or "TEST").upper() == "PROD" else "sandbox"
+        }
+
+    @classmethod
+    async def verify_order(cls, db, order_id: str, current_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Verifies Cashfree order status with Cashfree PG API, updates DB records,
+        activates plan upon verified payment success, generates tax invoice, and returns verification details.
+        """
+        clean_order_id = str(order_id or "").strip()
+        tx = await db["payment_transactions"].find_one({
+            "$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]
+        })
+        sub = await db["payment_subscriptions"].find_one({
+            "$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]
+        })
+        if not tx and not sub:
+            raise HTTPException(status_code=404, detail="Order not found")
+
+        record = tx or sub
+        if current_user_id and str(record.get("user_id")) != str(current_user_id):
+            raise HTTPException(status_code=403, detail="Not authorized to verify this order")
+
+        # If already success, return immediately
+        if tx and tx.get("status") == "success":
+            return {
+                "success": True,
+                "status": "success",
+                "order_id": clean_order_id,
+                "transaction_id": tx.get("transaction_id"),
+                "verified": True,
+                "message": "Payment verified and subscription is active",
+                "plan_id": tx.get("plan_id"),
+                "amount": tx.get("amount"),
+                "base_amount": tx.get("base_amount"),
+                "gst_rate": tx.get("gst_rate"),
+                "gst_percentage": tx.get("gst_percentage"),
+                "gst_amount": tx.get("gst_amount"),
+                "total_payable": tx.get("total_payable") or tx.get("amount"),
+                "payment_mode": tx.get("payment_mode", "Cards / UPI / NetBanking"),
+                "provider_reference": tx.get("provider_reference")
+            }
+
+        # Query Cashfree PG API
+        base_url = cls.get_base_url()
+        headers = cls.get_headers()
+        now = datetime.now(timezone.utc)
+
+        cf_order_status = None
+        payment_details = None
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                res_ord = await client.get(f"{base_url}/orders/{clean_order_id}", headers=headers)
+                if res_ord.status_code == 200:
+                    cf_data = res_ord.json()
+                    cf_order_status = (cf_data.get("order_status") or "").upper()
+                    
+                    # Fetch payments list for mode and reference
+                    res_pay = await client.get(f"{base_url}/orders/{clean_order_id}/payments", headers=headers)
+                    if res_pay.status_code == 200:
+                        pay_list = res_pay.json()
+                        if isinstance(pay_list, list) and pay_list:
+                            payment_details = next(
+                                (p for p in pay_list if (p.get("payment_status") or "").upper() == "SUCCESS"),
+                                pay_list[0]
+                            )
+        except Exception as api_err:
+            logger.warning("Cashfree order verification API error for %s: %s", clean_order_id, api_err)
+
+        user_id = record.get("user_id")
+        plan_id = record.get("plan_id")
+        cycle = record.get("billing_cycle", "monthly")
+        amount = record.get("amount") or record.get("auth_amount") or 0.0
+
+        if cf_order_status == "PAID" or (payment_details and (payment_details.get("payment_status") or "").upper() == "SUCCESS"):
+            # Verified successful payment!
+            # 1. Activate plan
+            await SubscriptionService.upgrade_plan(
+                db,
+                user_id,
+                plan_id,
+                billing_cycle=cycle,
+                reference_id=clean_order_id,
+                transaction_id=(tx.get("transaction_id") if tx else clean_order_id),
+                amount=amount,
+                payment_provider="cashfree"
+            )
+
+            # 2. Extract payment details
+            pay_mode = "Cards / UPI / NetBanking"
+            prov_ref = None
+            if payment_details:
+                pg_group = payment_details.get("payment_group")
+                if pg_group:
+                    pay_mode = pg_group.replace("_", " ").title()
+                prov_ref = payment_details.get("bank_reference") or str(payment_details.get("cf_payment_id") or "")
+
+            # 3. Update DB records
+            await db["payment_subscriptions"].update_one(
+                {"$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]},
+                {"$set": {"status": "ACTIVE", "activated_at": now, "updated_at": now}}
+            )
+            await db["payment_transactions"].update_one(
+                {"$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]},
+                {"$set": {
+                    "status": "success",
+                    "payment_mode": pay_mode,
+                    "provider_reference": prov_ref or (tx.get("provider_reference") if tx else None),
+                    "completed_at": now,
+                    "verified_at": now,
+                    "updated_at": now
+                }}
+            )
+
+            # 4. Generate invoice and dispatch invoice email
+            updated_tx = await db["payment_transactions"].find_one({
+                "$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]
+            })
+            if updated_tx and not updated_tx.get("invoice_email_sent"):
+                from app.services.invoice_service import InvoiceService
+                await InvoiceService.send_invoice_email(db, updated_tx)
+
+            return {
+                "success": True,
+                "status": "success",
+                "order_id": clean_order_id,
+                "transaction_id": (tx.get("transaction_id") if tx else None),
+                "verified": True,
+                "message": "Payment verified and subscription activated successfully",
+                "plan_id": plan_id,
+                "amount": amount,
+                "base_amount": record.get("base_amount"),
+                "gst_rate": record.get("gst_rate"),
+                "gst_percentage": record.get("gst_percentage"),
+                "gst_amount": record.get("gst_amount"),
+                "total_payable": record.get("total_payable") or amount,
+                "payment_mode": pay_mode,
+                "provider_reference": prov_ref
+            }
+
+        elif cf_order_status in ["EXPIRED", "TERMINATED", "FAILED"] or (payment_details and (payment_details.get("payment_status") or "").upper() in ["FAILED", "USER_DROPPED", "CANCELLED"]):
+            fail_reason = (
+                payment_details.get("payment_message") if payment_details else None
+            ) or f"Payment order is {cf_order_status.lower() if cf_order_status else 'failed'}"
+
+            await db["payment_subscriptions"].update_one(
+                {"$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]},
+                {"$set": {"status": "FAILED", "failure_reason": fail_reason, "updated_at": now}}
+            )
+            await db["payment_transactions"].update_one(
+                {"$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}], "status": {"$ne": "success"}},
+                {"$set": {"status": "failed", "failure_reason": fail_reason, "updated_at": now}}
+            )
+
+            updated_tx = await db["payment_transactions"].find_one({
+                "$or": [{"order_id": clean_order_id}, {"subscription_id": clean_order_id}]
+            })
+            if updated_tx and not updated_tx.get("payment_failed_email_sent"):
+                from app.services.invoice_service import InvoiceService
+                await InvoiceService.send_payment_failed_email(db, updated_tx, failure_reason=fail_reason)
+
+            return {
+                "success": False,
+                "status": "failed",
+                "order_id": clean_order_id,
+                "transaction_id": (tx.get("transaction_id") if tx else None),
+                "verified": False,
+                "message": fail_reason,
+                "plan_id": plan_id,
+                "amount": amount,
+                "base_amount": record.get("base_amount"),
+                "gst_rate": record.get("gst_rate"),
+                "gst_percentage": record.get("gst_percentage"),
+                "gst_amount": record.get("gst_amount"),
+                "total_payable": record.get("total_payable") or amount,
+                "payment_mode": record.get("payment_mode", "Unknown"),
+                "provider_reference": record.get("provider_reference")
+            }
+
+        # Otherwise pending
+        return {
+            "success": False,
+            "status": "pending",
+            "order_id": clean_order_id,
+            "transaction_id": (tx.get("transaction_id") if tx else None),
+            "verified": False,
+            "message": "Payment is pending completion",
+            "plan_id": plan_id,
+            "amount": amount,
+            "base_amount": record.get("base_amount"),
+            "gst_rate": record.get("gst_rate"),
+            "gst_percentage": record.get("gst_percentage"),
+            "gst_amount": record.get("gst_amount"),
+            "total_payable": record.get("total_payable") or amount,
+            "payment_mode": record.get("payment_mode", "Unknown"),
+            "provider_reference": record.get("provider_reference")
+        }
+
+    @classmethod
+    async def get_order_status(cls, db, order_id: str, current_user_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Retrieves order status from DB and syncs with Cashfree if needed.
+        """
+        return await cls.verify_order(db, order_id, current_user_id)
 
     @classmethod
     async def create_subscription(
@@ -485,12 +879,31 @@ class CashfreeService:
             logger.warning("Cashfree webhook missing subscription_id / order_id in payload: %s", payload)
             return {"success": False, "message": "Missing subscription_id / order_id"}
 
+        # Prevent duplicate webhook processing (idempotency)
+        existing_tx = await db["payment_transactions"].find_one({
+            "$or": [{"order_id": sub_id}, {"subscription_id": sub_id}]
+        })
+        if existing_tx and existing_tx.get("status") == "success":
+            logger.info("Cashfree webhook received for already verified successful transaction %s. Idempotent skip.", sub_id)
+            return {"success": True, "message": "Order already processed (idempotent)"}
+
         subscription = await db["payment_subscriptions"].find_one({
             "$or": [{"subscription_id": sub_id}, {"order_id": sub_id}]
         })
-        if not subscription:
+        if not subscription and not existing_tx:
             logger.warning("Subscription / Order %s not found in database", sub_id)
             return {"success": False, "message": "Subscription / Order not found"}
+
+        record = subscription or existing_tx
+        user_id = record.get("user_id")
+        plan_id = record.get("plan_id")
+        cycle = record.get("billing_cycle", "monthly")
+        amount = (
+            (subscription.get("auth_amount") or subscription.get("recurring_amount") or subscription.get("amount"))
+            if subscription
+            else existing_tx.get("amount")
+        )
+        tx_id = (existing_tx.get("transaction_id") if existing_tx else sub_id)
 
         now = datetime.now(timezone.utc)
         auth_details = sub_data.get("authorization_details") or data.get("authorization_details") or {}
@@ -501,10 +914,12 @@ class CashfreeService:
             or ""
         ).upper()
         payment_status = (payment_data.get("payment_status") or "").upper()
+        order_status = (order_data.get("order_status") or "").upper()
 
         is_success = (
             event_type in ["PAYMENT_SUCCESS_WEBHOOK", "SUBSCRIPTION_ACTIVE", "SUBSCRIPTION_ACTIVATED", "ORDER_PAID"]
             or payment_status == "SUCCESS"
+            or order_status == "PAID"
             or sub_status in ["ACTIVE", "AUTHENTICATED", "PAID", "SUCCESS"]
         )
 
@@ -512,27 +927,28 @@ class CashfreeService:
         if is_success:
             await SubscriptionService.upgrade_plan(
                 db,
-                subscription["user_id"],
-                subscription["plan_id"],
-                billing_cycle=subscription.get("billing_cycle", "monthly"),
+                user_id,
+                plan_id,
+                billing_cycle=cycle,
                 reference_id=sub_id,
-                transaction_id=sub_id,
-                amount=subscription.get("auth_amount") or subscription.get("recurring_amount"),
+                transaction_id=tx_id,
+                amount=amount,
                 payment_provider="cashfree",
             )
-            await db["payment_subscriptions"].update_one(
-                {"$or": [{"subscription_id": sub_id}, {"order_id": sub_id}]},
-                {
-                    "$set": {
-                        "status": "ACTIVE",
-                        "auth_status": auth_details.get("authorization_status", "SUCCESS"),
-                        "cf_subscription_id": sub_data.get("cf_subscription_id") or str(payment_data.get("cf_payment_id") or subscription.get("cf_subscription_id") or ""),
-                        "activated_at": subscription.get("activated_at") or now,
-                        "updated_at": now,
-                        "last_webhook_payload": payload,
-                    }
-                },
-            )
+            if subscription:
+                await db["payment_subscriptions"].update_one(
+                    {"$or": [{"subscription_id": sub_id}, {"order_id": sub_id}]},
+                    {
+                        "$set": {
+                            "status": "ACTIVE",
+                            "auth_status": auth_details.get("authorization_status", "SUCCESS"),
+                            "cf_subscription_id": sub_data.get("cf_subscription_id") or str(payment_data.get("cf_payment_id") or subscription.get("cf_subscription_id") or ""),
+                            "activated_at": subscription.get("activated_at") or now,
+                            "updated_at": now,
+                            "last_webhook_payload": payload,
+                        }
+                    },
+                )
             pay_group = payment_data.get("payment_group")
             pay_mode = pay_group.replace("_", " ").title() if pay_group else "Cards / UPI / NetBanking"
             prov_ref = payment_data.get("bank_reference") or str(payment_data.get("cf_payment_id") or "")
@@ -551,7 +967,7 @@ class CashfreeService:
             if cf_tx and not cf_tx.get("invoice_email_sent"):
                 from app.services.invoice_service import InvoiceService
                 await InvoiceService.send_invoice_email(db, cf_tx)
-            logger.info("Activated subscription/order for user %s with plan %s via webhook", subscription["user_id"], subscription["plan_id"])
+            logger.info("Activated subscription/order for user %s with plan %s via webhook", user_id, plan_id)
             return {"success": True, "message": "Subscription / Order activated successfully"}
 
         elif (

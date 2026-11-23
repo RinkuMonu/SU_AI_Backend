@@ -244,9 +244,15 @@ class InvoiceService:
             except Exception as ex:
                 logger.warning("Error fetching user/business details for transaction %s: %s", order_id, ex)
 
-        recipient_email = tx.get("user_email")
-        if (not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email)) and user_doc:
-            recipient_email = user_doc.get("email")
+        recipient_email = None
+        if user_doc:
+            recipient_email = (
+                user_doc.get("profile_settings", {}).get("email")
+                or user_doc.get("profile", {}).get("email")
+                or user_doc.get("email")
+            )
+        if not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email):
+            recipient_email = tx.get("user_email")
 
         recipient_name = tx.get("user_name")
         if (not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]) and user_doc:
@@ -774,9 +780,15 @@ class InvoiceService:
             except Exception as ex:
                 logger.warning("Error fetching user/business details for transaction %s: %s", order_id, ex)
 
-        recipient_email = tx.get("user_email")
-        if (not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email)) and user_doc:
-            recipient_email = user_doc.get("email")
+        recipient_email = None
+        if user_doc:
+            recipient_email = (
+                user_doc.get("profile_settings", {}).get("email")
+                or user_doc.get("profile", {}).get("email")
+                or user_doc.get("email")
+            )
+        if not recipient_email or recipient_email in ["N/A", "null", "none"] or "@" not in str(recipient_email):
+            recipient_email = tx.get("user_email")
 
         recipient_name = tx.get("user_name")
         if (not recipient_name or recipient_name in ["N/A", "null", "Valued Customer"]) and user_doc:

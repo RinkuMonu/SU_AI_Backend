@@ -58,6 +58,7 @@ async def create_auth_user(db, name: str = "Studio Merchant"):
         "plan_id": "pro_annual",
         "plan_name": "Pro Annual Plan",
         "status": "active",
+        "verified_payment": True,
         "credits_remaining": 100,
         "credits_total": 100,
         "created_at": datetime.now(timezone.utc),
